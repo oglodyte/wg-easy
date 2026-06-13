@@ -14,7 +14,6 @@ jobs:
   docker-build:
     name: Build Docker
     runs-on: ${{ matrix.arch.os }}
-    if: github.repository_owner == 'wg-easy'
     permissions:
       packages: write
     strategy:
@@ -33,16 +32,19 @@ jobs:
           ref: master
 
       - name: Prepare
+        id: prepare
         run: |
           platform=${{ matrix.arch.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${owner}/wg-easy" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: |
-            ghcr.io/wg-easy/wg-easy
+            ${{ steps.prepare.outputs.image }}
           flavor: |
             latest=false
 
@@ -66,7 +68,7 @@ jobs:
           context: .
           platforms: ${{ matrix.arch.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          tags: ghcr.io/wg-easy/wg-easy
+          tags: ${{ steps.prepare.outputs.image }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=build-${{ env.PLATFORM_PAIR }}
           cache-to: type=gha,mode=min,scope=build-${{ env.PLATFORM_PAIR }}
@@ -88,7 +90,6 @@ jobs:
   docker-merge:
     name: Merge & Deploy Docker
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'wg-easy'
     permissions:
       packages: write
     needs: docker-build
@@ -107,23 +108,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Login to Codeberg
-        uses: docker/login-action@v4
-        with:
-          registry: codeberg.org
-          username: ${{ secrets.CODEBERG_USER }}
-          password: ${{ secrets.CODEBERG_PASS }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Prepare image name
+        id: prepare
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${owner}/wg-easy" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: |
-            ghcr.io/wg-easy/wg-easy
-            codeberg.org/wg-easy/wg-easy
+            ${{ steps.prepare.outputs.image }}
           flavor: |
             latest=false
           tags: |
@@ -131,13 +130,17 @@ jobs:
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE_NAME: ${{ steps.prepare.outputs.image }}
         run: |
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'ghcr.io/wg-easy/wg-easy@sha256:%s ' *)
+            $(for digest in *; do printf '%s@sha256:%s ' "$IMAGE_NAME" "$digest"; done)
 
       - name: Inspect image
+        env:
+          IMAGE_NAME: ${{ steps.prepare.outputs.image }}
         run: |
-          docker buildx imagetools inspect ghcr.io/wg-easy/wg-easy:${{ steps.meta.outputs.version }}
+          docker buildx imagetools inspect "${IMAGE_NAME}:${{ steps.meta.outputs.version }}"
 
   docs:
     name: Build & Deploy Docs
