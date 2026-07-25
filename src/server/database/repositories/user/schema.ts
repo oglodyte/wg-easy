@@ -1,7 +1,10 @@
 import { sql, relations } from 'drizzle-orm';
 import { int, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
-import { client } from '../../schema';
+import { client } from '../client/schema';
+
+import type { Role } from '#shared/utils/permissions';
+import type { OAUTH_PROVIDER } from '#server/utils/oauth';
 
 export const user = sqliteTable(
   'users_table',
@@ -10,7 +13,7 @@ export const user = sqliteTable(
     username: text().notNull().unique(),
     /** `password == null` means password login disabled */
     password: text(),
-    email: text(),
+    email: text().unique(),
     name: text().notNull(),
     role: int().$type<Role>().notNull(),
     totpKey: text('totp_key'),

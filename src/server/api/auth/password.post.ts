@@ -1,3 +1,9 @@
+import { createError, defineEventHandler, readValidatedBody } from 'h3';
+
+import Database from '#server/utils/Database';
+import { SERVER_DEBUG, WG_ENV } from '#server/utils/config';
+import { useWGSession } from '#server/utils/session';
+import { assertUnreachable, validateZod } from '#server/utils/types';
 import { UserLoginSchema } from '#db/repositories/user/types';
 
 export default defineEventHandler(async (event) => {
@@ -32,6 +38,8 @@ export default defineEventHandler(async (event) => {
             type: 'password',
             userId: result.userId,
             remember,
+            // 5min
+            expires_at: Date.now() + 5 * 60 * 1000,
           },
         });
         return { status: 'TOTP_REQUIRED' as const };

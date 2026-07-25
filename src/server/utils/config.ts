@@ -1,6 +1,13 @@
 import { createDebug } from 'obug';
 import packageJson from '@@/package.json';
 
+import { exec } from '#server/utils/cmd';
+import {
+  OAUTH_PROVIDERS,
+  isConfiguredOauthProvider,
+  isValidOauthProvider,
+} from '#server/utils/oauth';
+
 export const RELEASE = 'v' + packageJson.version;
 
 export const SERVER_DEBUG = createDebug('Server');
@@ -44,7 +51,7 @@ export const WG_ENV = {
   DISABLE_IPV6: process.env.DISABLE_IPV6 === 'true',
   WG_EXECUTABLE: await detectAwg(),
   DISABLE_VERSION_CHECK: process.env.DISABLE_VERSION_CHECK === 'true',
-  /** List of enabled OAuth providers */
+  /** List of enabled and configured OAuth providers */
   OAUTH_PROVIDERS: oauthProviders,
   /** List of allowed OAuth domains */
   OAUTH_ALLOWED_DOMAINS: process.env.OAUTH_ALLOWED_DOMAINS?.split(',').map(

@@ -27,7 +27,7 @@ jobs:
           # - platform: linux/arm/v7
           #   os: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Prepare
         id: prepare
@@ -134,8 +134,14 @@ jobs:
         env:
           IMAGE_NAME: ${{ steps.prepare.outputs.image }}
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(for digest in *; do printf '%s@sha256:%s ' "$IMAGE_NAME" "$digest"; done)
+          n=3
+          for i in $(seq 1 $n); do
+            docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+              $(for digest in *; do printf '%s@sha256:%s ' "$IMAGE_NAME" "$digest"; done) && break
+
+            [ "$i" = "$n" ] && exit 1
+            sleep 10
+          done
 
       - name: Inspect image
         env:
@@ -153,7 +159,7 @@ jobs:
       contents: write
     needs: docker-merge
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v6

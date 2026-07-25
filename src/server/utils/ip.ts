@@ -1,8 +1,10 @@
 import { Resolver } from 'node:dns/promises';
 import { networkInterfaces } from 'node:os';
+
 import { stringifyIp } from 'ip-bigint';
 import type { parseCidr } from 'cidr-tools';
 
+import { cacheFunction } from '#server/utils/cache';
 import type { ClientNextIpType } from '#db/repositories/client/types';
 
 type ParsedCidr = ReturnType<typeof parseCidr>;
@@ -12,14 +14,23 @@ export function nextIP(
   cidr: ParsedCidr,
   clients: ClientNextIpType[]
 ) {
+  const usedAddresses = new Set(
+    clients.map((client) => client[`ipv${version}Address`])
+  );
+
+  return nextIPFromUsedAddresses(version, cidr, usedAddresses);
+}
+
+export function nextIPFromUsedAddresses(
+  version: 4 | 6,
+  cidr: ParsedCidr,
+  usedAddresses: Set<string>
+) {
   let address;
   for (let i = cidr.start + 2n; i <= cidr.end - 1n; i++) {
     const currentIp = stringifyIp({ number: i, version: version });
-    const client = clients.find((client) => {
-      return client[`ipv${version}Address`] === currentIp;
-    });
 
-    if (!client) {
+    if (!usedAddresses.has(currentIp)) {
       address = currentIp;
       break;
     }

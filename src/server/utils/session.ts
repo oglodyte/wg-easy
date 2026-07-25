@@ -1,13 +1,20 @@
+import { createError, getHeader, getSession, useSession } from 'h3';
 import type { H3Event } from 'h3';
+
+import Database from '#server/utils/Database';
+import { WG_ENV } from '#server/utils/config';
+import { isPasswordValid } from '#server/utils/password';
+import type { ID } from '#server/utils/types';
 import type { UserType } from '#db/repositories/user/types';
 
 export type WGSession = Partial<{
   userId: ID;
-  // TODO: add pending login expiration
   pendingLogin: {
     type: 'password' | 'oauth';
     userId: ID;
     remember: boolean;
+    /** in milliseconds */
+    expires_at: number;
   };
   oauth_verifier: string;
   oauth_nonce: string;

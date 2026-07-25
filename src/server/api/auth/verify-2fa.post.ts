@@ -1,8 +1,9 @@
-import { z } from 'zod';
+import { createError, defineEventHandler, readValidatedBody } from 'h3';
 
-const Verify2faSchema = z.object({
-  totpCode: z.string().min(6).max(6),
-});
+import Database from '#server/utils/Database';
+import { useWGSession } from '#server/utils/session';
+import { assertUnreachable, validateZod } from '#server/utils/types';
+import { Verify2faSchema } from '#db/repositories/user/types';
 
 export default defineEventHandler(async (event) => {
   const { totpCode } = await readValidatedBody(
@@ -17,6 +18,13 @@ export default defineEventHandler(async (event) => {
       statusCode: 401,
       statusMessage: 'No pending authentication',
     });
+  }
+  if (new Date() > new Date(pendingLogin.expires_at)) {
+    await session.update({
+      pendingLogin: undefined,
+    });
+
+    return { status: 'PENDING_LOGIN_EXPIRED' as const };
   }
 
   const totpStatus = await Database.users.validateTotpCode(

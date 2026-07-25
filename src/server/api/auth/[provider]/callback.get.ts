@@ -1,3 +1,11 @@
+import { createError, defineEventHandler, sendRedirect } from 'h3';
+
+import Database from '#server/utils/Database';
+import { SERVER_DEBUG } from '#server/utils/config';
+import { buildOauthConfig, getUserInfo } from '#server/utils/oauth';
+import { useWGSession } from '#server/utils/session';
+import { assertUnreachable } from '#server/utils/types';
+
 export default defineEventHandler(async (event) => {
   const { config, provider, providerConfig } = await buildOauthConfig(event);
 
@@ -40,6 +48,8 @@ export default defineEventHandler(async (event) => {
             type: 'oauth',
             userId: result.userId,
             remember: false,
+            // 5min
+            expires_at: Date.now() + 5 * 60 * 1000,
           },
           oauth_nonce: undefined,
           oauth_state: undefined,
