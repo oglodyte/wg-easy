@@ -30,9 +30,10 @@ fi
 for _ in $(seq 1 60); do
   status=$("${docker_cmd[@]}" inspect wg-easy-phase0 --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')
   if [ "$status" = healthy ]; then
-    curl --fail --silent --show-error "${PHASE0_API_URL}/api/information" >/dev/null
-    echo "Phase 0 server is healthy at immutable image ${WG_EASY_IMAGE}."
-    exit 0
+    if curl --fail --silent --show-error "${PHASE0_API_URL}/api/information" >/dev/null 2>&1; then
+      echo "Phase 0 server is healthy at immutable image ${WG_EASY_IMAGE}."
+      exit 0
+    fi
   fi
   if [ "$status" = exited ] || [ "$status" = dead ]; then
     "${docker_cmd[@]}" logs --tail 100 wg-easy-phase0

@@ -52,6 +52,7 @@ grep -q -- \
 grep -q 'ensure_network wg-easy-phase0-management 172.30.113.0/24 false' \
   "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q '127.0.0.1:51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"
+grep -q 'if curl --fail --silent --show-error' "${PHASE0_DIR}/scripts/deploy.sh"
 
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 
