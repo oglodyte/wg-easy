@@ -57,6 +57,7 @@ grep -q 'privileged: true' "${PHASE0_DIR}/compose.lab.yml"
 grep -q 'if curl --fail --silent --show-error' "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/generate-manifest.sh"
+grep -q 'sub("\^;\[\[:space:\]\]\*"; "")' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'ip route replace "${sink_ip}/32" dev wg0' \
   "${PHASE0_DIR}/scripts/run-client-lab.sh"
 

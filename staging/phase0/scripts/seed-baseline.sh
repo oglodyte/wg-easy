@@ -72,7 +72,15 @@ api_post /api/admin/userconfig "$user_config_payload" >/dev/null
 hooks=$(api_get /api/admin/hooks)
 hooks_payload=$(jq -c '
   {
-    preUp: (if .preUp | contains("phase0-baseline") then .preUp else .preUp + "; : phase0-baseline" end),
+    preUp: (
+      if .preUp | contains("phase0-baseline") then
+        (.preUp | sub("^;[[:space:]]*"; ""))
+      elif .preUp == "" then
+        ": phase0-baseline"
+      else
+        .preUp + "; : phase0-baseline"
+      end
+    ),
     postUp,
     preDown,
     postDown
