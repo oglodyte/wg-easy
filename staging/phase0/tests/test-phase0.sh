@@ -52,7 +52,13 @@ grep -q -- \
 grep -q 'ensure_network wg-easy-phase0-management 172.30.113.0/24 false' \
   "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q '127.0.0.1:51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"
+grep -q 'net.ipv4.conf.all.src_valid_mark: 1' "${PHASE0_DIR}/compose.lab.yml"
+grep -q 'privileged: true' "${PHASE0_DIR}/compose.lab.yml"
 grep -q 'if curl --fail --silent --show-error' "${PHASE0_DIR}/scripts/deploy.sh"
+grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/seed-baseline.sh"
+grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/generate-manifest.sh"
+grep -q 'ip route replace "${sink_ip}/32" dev wg0' \
+  "${PHASE0_DIR}/scripts/run-client-lab.sh"
 
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 

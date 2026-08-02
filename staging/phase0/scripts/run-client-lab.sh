@@ -17,8 +17,13 @@ require_restricted_file "${LAB_ARTIFACT_ROOT}/lab-state.json"
 server_ip=$(jq -er '.serverIp' "${LAB_ARTIFACT_ROOT}/lab-state.json")
 member_ip=$(jq -er '.wgMemberIp' "${LAB_ARTIFACT_ROOT}/lab-state.json")
 sink_ip=$(jq -er '.sinkIp' "${LAB_ARTIFACT_ROOT}/lab-state.json")
+server_sink_route_added=false
 
 cleanup() {
+  if [ "$server_sink_route_added" = true ]; then
+    "${docker_cmd[@]}" exec wg-easy-phase0 \
+      ip route del "${sink_ip}/32" dev wg0 >/dev/null 2>&1 || true
+  fi
   if [ "${KEEP_PHASE0_LAB:-false}" != true ]; then
     "${lab_compose[@]}" down --remove-orphans >/dev/null 2>&1 || true
   fi
@@ -50,6 +55,9 @@ wait_for_handshake wg-easy-phase0-wg-member wg
 wait_for_handshake wg-easy-phase0-awg-member awg
 wait_for_handshake wg-easy-phase0-exit-primary awg
 wait_for_handshake wg-easy-phase0-exit-backup awg
+
+"${docker_cmd[@]}" exec wg-easy-phase0 ip route replace "${sink_ip}/32" dev wg0
+server_sink_route_added=true
 
 for container in \
   wg-easy-phase0-wg-member \

@@ -160,6 +160,10 @@ update_client "$exit_backup_id" true 25 ""
 update_client "$disabled_id" false 21 ""
 update_client "$future_id" true 21 ""
 
+phase0_artifact_root=$(dirname "$LAB_ARTIFACT_ROOT")
+artifact_parent=$(dirname "$phase0_artifact_root")
+sudo -n install -d -m 0710 -o root -g "$(id -gn)" \
+  "$artifact_parent" "$phase0_artifact_root"
 sudo -n install -d -m 0700 -o "$(id -un)" -g "$(id -gn)" "$LAB_ARTIFACT_ROOT"
 
 declare -A config_clients=(

@@ -81,6 +81,10 @@ server_image_id=$("${docker_cmd[@]}" inspect wg-easy-phase0 --format '{{.Image}}
 wg_version=$("${docker_cmd[@]}" run --rm --entrypoint wg "$WG_CLIENT_IMAGE" --version | head -n 1)
 awg_version=$("${docker_cmd[@]}" run --rm --entrypoint awg "$AWG_CLIENT_IMAGE" --version | head -n 1)
 
+phase0_artifact_root=$(dirname "$PHASE0_MANIFEST_ROOT")
+artifact_parent=$(dirname "$phase0_artifact_root")
+sudo -n install -d -m 0710 -o root -g "$(id -gn)" \
+  "$artifact_parent" "$phase0_artifact_root"
 sudo -n install -d -m 0750 -o "$(id -un)" -g "$(id -gn)" "$PHASE0_MANIFEST_ROOT"
 manifest_path=${PHASE0_MANIFEST_ROOT}/${manifest_name}
 [ ! -e "$manifest_path" ] || fail "refusing to overwrite existing manifest: $manifest_path"

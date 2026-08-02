@@ -67,6 +67,9 @@ management. The management bridge is the server's only non-internal Docker
 network and publishes the UI/API exclusively on host loopback.
 The traffic sink is not attached to the underlay. The client-lab test also
 brings the generic member tunnel down and proves the sink becomes unreachable.
+The four disposable VPN clients run privileged because `wg-quick` must write
+namespaced sysctls; their root filesystems and individual configuration mounts
+remain read-only. The traffic sink is not privileged.
 
 ## Staging sequence
 
