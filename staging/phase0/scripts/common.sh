@@ -18,8 +18,14 @@ SERVER_COMPOSE=${PHASE0_DIR}/compose.server.yml
 LAB_COMPOSE=${PHASE0_DIR}/compose.lab.yml
 
 docker_cmd=(sudo -n docker)
-server_compose=(sudo -n docker compose -f "$SERVER_COMPOSE")
-lab_compose=(sudo -n docker compose -f "$LAB_COMPOSE")
+server_compose=(
+  sudo -n --preserve-env=WG_EASY_IMAGE,WG_EASY_ENV_FILE,WG_EASY_VOLUME
+  docker compose -f "$SERVER_COMPOSE"
+)
+lab_compose=(
+  sudo -n --preserve-env=WG_CLIENT_IMAGE,AWG_CLIENT_IMAGE,TRAFFIC_SINK_IMAGE,LAB_ARTIFACT_ROOT
+  docker compose -f "$LAB_COMPOSE"
+)
 
 fail() {
   echo "Phase 0: $*" >&2

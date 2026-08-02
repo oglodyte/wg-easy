@@ -43,6 +43,13 @@ if printf '%s\n' \
   exit 1
 fi
 
+grep -q -- \
+  '--preserve-env=WG_EASY_IMAGE,WG_EASY_ENV_FILE,WG_EASY_VOLUME' \
+  "${PHASE0_DIR}/scripts/common.sh"
+grep -q -- \
+  '--preserve-env=WG_CLIENT_IMAGE,AWG_CLIENT_IMAGE,TRAFFIC_SINK_IMAGE,LAB_ARTIFACT_ROOT' \
+  "${PHASE0_DIR}/scripts/common.sh"
+
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 
 jq -n '
