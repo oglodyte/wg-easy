@@ -17,7 +17,8 @@ def main() -> None:
     conflicts: list[str] = []
     for network in networks:
         name = network.get("Name", "unknown")
-        for config in network.get("IPAM", {}).get("Config", []):
+        ipam = network.get("IPAM") or {}
+        for config in ipam.get("Config") or []:
             raw_subnet = config.get("Subnet")
             if not raw_subnet:
                 continue

@@ -33,6 +33,16 @@ if (
   exit 1
 fi
 
+printf '%s\n' '[{"Name":"bridge","IPAM":{"Config":null}}]' |
+  python3 "${PHASE0_DIR}/scripts/check-network-reservations.py"
+
+if printf '%s\n' \
+  '[{"Name":"unrelated","IPAM":{"Config":[{"Subnet":"172.30.110.128/25"}]}}]' |
+  python3 "${PHASE0_DIR}/scripts/check-network-reservations.py" >/dev/null 2>&1; then
+  echo "Overlapping Docker network validation unexpectedly passed." >&2
+  exit 1
+fi
+
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 
 jq -n '
