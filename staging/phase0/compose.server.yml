@@ -1,0 +1,47 @@
+name: wg-easy-phase0
+
+services:
+  wg-easy:
+    image: ${WG_EASY_IMAGE:?Set WG_EASY_IMAGE to an immutable digest}
+    container_name: wg-easy-phase0
+    env_file:
+      - ${WG_EASY_ENV_FILE:?Set WG_EASY_ENV_FILE to the restricted server environment file}
+    networks:
+      application:
+        ipv4_address: 172.30.112.2
+      underlay:
+        ipv4_address: 172.30.110.2
+    volumes:
+      - wireguard-data:/etc/wireguard
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - 127.0.0.1:51821:51821/tcp
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    security_opt:
+      - no-new-privileges:true
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv4.conf.all.src_valid_mark: 1
+      net.ipv6.conf.all.disable_ipv6: 0
+      net.ipv6.conf.all.forwarding: 1
+      net.ipv6.conf.default.forwarding: 1
+
+volumes:
+  wireguard-data:
+    external: true
+    name: ${WG_EASY_VOLUME:?Set WG_EASY_VOLUME to the staging data volume}
+
+networks:
+  application:
+    name: wg-easy-phase0-application
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.112.0/24
+  underlay:
+    external: true
+    name: wg-easy-phase0-underlay

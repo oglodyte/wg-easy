@@ -1,0 +1,195 @@
+name: Immutable Phase Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Phase identifier used in immutable image tags
+        required: true
+        default: p0
+        type: choice
+        options:
+          - p0
+          - p1
+          - p2
+          - p3
+          - p4
+          - p5
+          - p6
+          - p7
+          - p8
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: phase-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "lts/krypton"
+          check-latest: true
+          cache: pnpm
+          cache-dependency-path: src/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        working-directory: src
+        run: pnpm install --frozen-lockfile
+
+      - name: Run global verification gate
+        working-directory: src
+        run: |
+          pnpm test:unit
+          pnpm lint
+          pnpm typecheck
+          pnpm format:check
+          pnpm build
+
+  build:
+    name: Build immutable images
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      phase_tag: ${{ steps.names.outputs.phase_tag }}
+      server_image: ${{ steps.server.outputs.imageid }}
+      server_digest: ${{ steps.server.outputs.digest }}
+      wg_digest: ${{ steps.wg.outputs.digest }}
+      awg_digest: ${{ steps.awg.outputs.digest }}
+      sink_digest: ${{ steps.sink.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Derive immutable image names
+        id: names
+        shell: bash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          short_sha="${GITHUB_SHA:0:12}"
+          phase_tag="mir-${{ inputs.phase }}-${short_sha}"
+          echo "phase_tag=${phase_tag}" >> "$GITHUB_OUTPUT"
+          echo "server=ghcr.io/${owner}/wg-easy" >> "$GITHUB_OUTPUT"
+          echo "wg=ghcr.io/${owner}/wg-easy-lab-wg" >> "$GITHUB_OUTPUT"
+          echo "awg=ghcr.io/${owner}/wg-easy-lab-awg" >> "$GITHUB_OUTPUT"
+          echo "sink=ghcr.io/${owner}/wg-easy-lab-sink" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build and push server image
+        id: server
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: ${{ steps.names.outputs.server }}:${{ steps.names.outputs.phase_tag }}
+          cache-from: type=gha,scope=phase-server-amd64
+          cache-to: type=gha,mode=max,scope=phase-server-amd64
+
+      - name: Build and push generic WireGuard lab image
+        id: wg
+        uses: docker/build-push-action@v7
+        with:
+          context: staging/phase0/client-lab
+          file: staging/phase0/client-lab/Dockerfile
+          target: wg-client
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: ${{ steps.names.outputs.wg }}:${{ steps.names.outputs.phase_tag }}
+          cache-from: type=gha,scope=phase-lab-wg-amd64
+          cache-to: type=gha,mode=max,scope=phase-lab-wg-amd64
+
+      - name: Build and push AmneziaWG lab image
+        id: awg
+        uses: docker/build-push-action@v7
+        with:
+          context: staging/phase0/client-lab
+          file: staging/phase0/client-lab/Dockerfile
+          target: awg-client
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: ${{ steps.names.outputs.awg }}:${{ steps.names.outputs.phase_tag }}
+          cache-from: type=gha,scope=phase-lab-awg-amd64
+          cache-to: type=gha,mode=max,scope=phase-lab-awg-amd64
+
+      - name: Build and push traffic-sink lab image
+        id: sink
+        uses: docker/build-push-action@v7
+        with:
+          context: staging/phase0/client-lab
+          file: staging/phase0/client-lab/Dockerfile
+          target: traffic-sink
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: ${{ steps.names.outputs.sink }}:${{ steps.names.outputs.phase_tag }}
+          cache-from: type=gha,scope=phase-lab-sink-amd64
+          cache-to: type=gha,mode=max,scope=phase-lab-sink-amd64
+
+      - name: Publish digest evidence
+        shell: bash
+        env:
+          SERVER_IMAGE: ${{ steps.names.outputs.server }}
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+          WG_IMAGE: ${{ steps.names.outputs.wg }}
+          WG_DIGEST: ${{ steps.wg.outputs.digest }}
+          AWG_IMAGE: ${{ steps.names.outputs.awg }}
+          AWG_DIGEST: ${{ steps.awg.outputs.digest }}
+          SINK_IMAGE: ${{ steps.names.outputs.sink }}
+          SINK_DIGEST: ${{ steps.sink.outputs.digest }}
+          PHASE_TAG: ${{ steps.names.outputs.phase_tag }}
+        run: |
+          evidence="${RUNNER_TEMP}/phase-images.env"
+          {
+            echo "PHASE_TAG=${PHASE_TAG}"
+            echo "WG_EASY_IMAGE=${SERVER_IMAGE}@${SERVER_DIGEST}"
+            echo "WG_CLIENT_IMAGE=${WG_IMAGE}@${WG_DIGEST}"
+            echo "AWG_CLIENT_IMAGE=${AWG_IMAGE}@${AWG_DIGEST}"
+            echo "TRAFFIC_SINK_IMAGE=${SINK_IMAGE}@${SINK_DIGEST}"
+          } > "$evidence"
+          {
+            echo "### Immutable phase images"
+            echo
+            echo "Tag: \`${PHASE_TAG}\`"
+            echo
+            echo "- Server: \`${SERVER_IMAGE}@${SERVER_DIGEST}\`"
+            echo "- Generic WireGuard lab: \`${WG_IMAGE}@${WG_DIGEST}\`"
+            echo "- AmneziaWG lab: \`${AWG_IMAGE}@${AWG_DIGEST}\`"
+            echo "- Traffic sink: \`${SINK_IMAGE}@${SINK_DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: phase-images-${{ steps.names.outputs.phase_tag }}
+          path: ${{ runner.temp }}/phase-images.env
+          if-no-files-found: error
+          retention-days: 30

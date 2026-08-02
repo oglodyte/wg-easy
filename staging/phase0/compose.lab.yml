@@ -1,0 +1,88 @@
+name: wg-easy-phase0-lab
+
+x-vpn-common: &vpn-common
+  restart: "no"
+  cap_add:
+    - NET_ADMIN
+  devices:
+    - /dev/net/tun:/dev/net/tun
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /run
+
+services:
+  wg-member:
+    <<: *vpn-common
+    image: ${WG_CLIENT_IMAGE:?Set WG_CLIENT_IMAGE to an immutable digest}
+    container_name: wg-easy-phase0-wg-member
+    volumes:
+      - ${LAB_ARTIFACT_ROOT:?Set LAB_ARTIFACT_ROOT}/wg-member.conf:/run/wg-easy-lab/client.conf:ro
+    networks:
+      underlay:
+        ipv4_address: 172.30.110.10
+
+  awg-member:
+    <<: *vpn-common
+    image: ${AWG_CLIENT_IMAGE:?Set AWG_CLIENT_IMAGE to an immutable digest}
+    container_name: wg-easy-phase0-awg-member
+    volumes:
+      - ${LAB_ARTIFACT_ROOT:?Set LAB_ARTIFACT_ROOT}/awg-member.conf:/run/wg-easy-lab/client.conf:ro
+    networks:
+      underlay:
+        ipv4_address: 172.30.110.11
+
+  exit-primary:
+    <<: *vpn-common
+    image: ${AWG_CLIENT_IMAGE:?Set AWG_CLIENT_IMAGE to an immutable digest}
+    container_name: wg-easy-phase0-exit-primary
+    sysctls:
+      net.ipv4.ip_forward: 1
+    volumes:
+      - ${LAB_ARTIFACT_ROOT:?Set LAB_ARTIFACT_ROOT}/exit-primary.conf:/run/wg-easy-lab/client.conf:ro
+    networks:
+      underlay:
+        ipv4_address: 172.30.110.20
+      exit-egress:
+        ipv4_address: 172.30.111.10
+
+  exit-backup:
+    <<: *vpn-common
+    image: ${AWG_CLIENT_IMAGE:?Set AWG_CLIENT_IMAGE to an immutable digest}
+    container_name: wg-easy-phase0-exit-backup
+    sysctls:
+      net.ipv4.ip_forward: 1
+    volumes:
+      - ${LAB_ARTIFACT_ROOT:?Set LAB_ARTIFACT_ROOT}/exit-backup.conf:/run/wg-easy-lab/client.conf:ro
+    networks:
+      underlay:
+        ipv4_address: 172.30.110.21
+      exit-egress:
+        ipv4_address: 172.30.111.11
+
+  traffic-sink:
+    image: ${TRAFFIC_SINK_IMAGE:?Set TRAFFIC_SINK_IMAGE to an immutable digest}
+    container_name: wg-easy-phase0-traffic-sink
+    restart: "no"
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /run
+    environment:
+      RETURN_ROUTE: 10.251.0.0/16
+      RETURN_VIA: 172.30.111.10
+    networks:
+      exit-egress:
+        ipv4_address: 172.30.111.100
+
+networks:
+  underlay:
+    external: true
+    name: wg-easy-phase0-underlay
+  exit-egress:
+    external: true
+    name: wg-easy-phase0-exit-egress

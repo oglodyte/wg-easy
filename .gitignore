@@ -4,3 +4,8 @@ node_modules
 
 docs/site
 docs/.cache
+
+# Phase 0 staging secrets and generated evidence stay off Git.
+staging/phase0/secrets/
+staging/phase0/artifacts/
+staging/phase0/*.env
