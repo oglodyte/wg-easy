@@ -58,10 +58,13 @@ files to mode `0600`.
 | Tunnel underlay  | `172.30.110.0/24` | wg-easy plus four VPN clients        |
 | Exit egress      | `172.30.111.0/24` | primary/backup exits and sink only   |
 | Application/data | `172.30.112.0/24` | wg-easy only; internal bridge        |
+| Management       | `172.30.113.0/24` | wg-easy only; loopback publication   |
 | Tunnel IPv4      | `10.251.0.0/24`   | compatibility-mode `wg0` and clients |
 | Tunnel IPv6      | `fd42:251:0::/64` | compatibility-mode `wg0` and clients |
 
-The member containers are not attached to exit egress or application/data.
+The member containers are not attached to exit egress, application/data, or
+management. The management bridge is the server's only non-internal Docker
+network and publishes the UI/API exclusively on host loopback.
 The traffic sink is not attached to the underlay. The client-lab test also
 brings the generic member tunnel down and proves the sink becomes unreachable.
 

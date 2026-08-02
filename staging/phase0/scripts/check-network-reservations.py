@@ -9,6 +9,7 @@ EXPECTED = {
     "wg-easy-phase0-underlay": ipaddress.ip_network("172.30.110.0/24"),
     "wg-easy-phase0-exit-egress": ipaddress.ip_network("172.30.111.0/24"),
     "wg-easy-phase0-application": ipaddress.ip_network("172.30.112.0/24"),
+    "wg-easy-phase0-management": ipaddress.ip_network("172.30.113.0/24"),
 }
 
 

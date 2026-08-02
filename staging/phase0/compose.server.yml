@@ -7,6 +7,8 @@ services:
     env_file:
       - ${WG_EASY_ENV_FILE:?Set WG_EASY_ENV_FILE to the restricted server environment file}
     networks:
+      management:
+        ipv4_address: 172.30.113.2
       application:
         ipv4_address: 172.30.112.2
       underlay:
@@ -35,6 +37,9 @@ volumes:
     name: ${WG_EASY_VOLUME:?Set WG_EASY_VOLUME to the staging data volume}
 
 networks:
+  management:
+    external: true
+    name: wg-easy-phase0-management
   application:
     name: wg-easy-phase0-application
     driver: bridge

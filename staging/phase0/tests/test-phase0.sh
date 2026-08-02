@@ -49,6 +49,9 @@ grep -q -- \
 grep -q -- \
   '--preserve-env=WG_CLIENT_IMAGE,AWG_CLIENT_IMAGE,TRAFFIC_SINK_IMAGE,LAB_ARTIFACT_ROOT' \
   "${PHASE0_DIR}/scripts/common.sh"
+grep -q 'ensure_network wg-easy-phase0-management 172.30.113.0/24 false' \
+  "${PHASE0_DIR}/scripts/deploy.sh"
+grep -q '127.0.0.1:51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"
 
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 

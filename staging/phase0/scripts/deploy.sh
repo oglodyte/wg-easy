@@ -10,6 +10,7 @@ load_image_environment
 
 ensure_network wg-easy-phase0-underlay 172.30.110.0/24 true
 ensure_network wg-easy-phase0-exit-egress 172.30.111.0/24 true
+ensure_network wg-easy-phase0-management 172.30.113.0/24 false
 
 if ! "${docker_cmd[@]}" volume inspect "$WG_EASY_VOLUME" >/dev/null 2>&1; then
   "${docker_cmd[@]}" volume create \
