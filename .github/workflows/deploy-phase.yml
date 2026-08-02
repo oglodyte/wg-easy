@@ -1,6 +1,9 @@
 name: Immutable Phase Images
 
 on:
+  push:
+    branches:
+      - "codex/phase-*"
   workflow_dispatch:
     inputs:
       phase:
@@ -78,7 +81,16 @@ jobs:
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           short_sha="${GITHUB_SHA:0:12}"
-          phase_tag="mir-${{ inputs.phase }}-${short_sha}"
+          phase="${{ inputs.phase }}"
+          if [[ -z "${phase}" ]]; then
+            phase_number="${GITHUB_REF_NAME#codex/phase-}"
+            phase_number="${phase_number%%-*}"
+            case "${phase_number}" in
+              0|1|2|3|4|5|6|7|8) phase="p${phase_number}" ;;
+              *) echo "Cannot derive phase from ${GITHUB_REF_NAME}" >&2; exit 1 ;;
+            esac
+          fi
+          phase_tag="mir-${phase}-${short_sha}"
           echo "phase_tag=${phase_tag}" >> "$GITHUB_OUTPUT"
           echo "server=ghcr.io/${owner}/wg-easy" >> "$GITHUB_OUTPUT"
           echo "wg=ghcr.io/${owner}/wg-easy-lab-wg" >> "$GITHUB_OUTPUT"
