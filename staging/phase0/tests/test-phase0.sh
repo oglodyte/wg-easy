@@ -60,6 +60,10 @@ grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/generate-manifest.sh
 grep -q 'sub("\^;\[\[:space:\]\]\*"; "")' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'ip route replace "${sink_ip}/32" dev wg0' \
   "${PHASE0_DIR}/scripts/run-client-lab.sh"
+if grep -q 'tar -tzf.*grep -Eq' "${PHASE0_DIR}/scripts/snapshot-volume.sh"; then
+  echo "Snapshot validation must not combine pipefail with grep -q." >&2
+  exit 1
+fi
 
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 

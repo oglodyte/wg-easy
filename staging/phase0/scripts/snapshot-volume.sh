@@ -39,8 +39,8 @@ trap restart_server EXIT
   docker.io/library/alpine@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6 \
   tar -czf "/backup/${snapshot_name}.tar.gz" -C /source .
 
-sudo -n tar -tzf "$archive" | grep -Eq '(^|/)wg-easy\.db$' || fail "snapshot does not contain wg-easy.db"
-sudo -n tar -tzf "$archive" | grep -Eq '(^|/)wg0\.conf$' || fail "snapshot does not contain wg0.conf"
+sudo -n tar -tzf "$archive" | grep -E '(^|/)wg-easy\.db$' >/dev/null || fail "snapshot does not contain wg-easy.db"
+sudo -n tar -tzf "$archive" | grep -E '(^|/)wg0\.conf$' >/dev/null || fail "snapshot does not contain wg0.conf"
 sudo -n sha256sum "$archive" | sudo -n tee "$checksum" >/dev/null
 sudo -n chmod 0440 "$archive" "$checksum"
 
