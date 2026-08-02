@@ -107,6 +107,9 @@ To test the clone, stop the server, set `WG_EASY_VOLUME` to the clone name, and
 run `deploy.sh`. Generate `phase0-clone.json` and compare it with the golden
 manifest using `compare-manifests.sh`. Restore the normal cumulative volume by
 setting `WG_EASY_VOLUME=wg-easy-phase0-data` and rerunning `deploy.sh`.
+Manifest comparison normalizes only one-time-link rows that have already
+expired at comparison time, matching the runtime's documented startup cleanup;
+unexpired link IDs and expiry timestamps must still match exactly.
 
 For a previous-image rollback smoke, create a second restricted images file
 whose server entry is the previous immutable digest and whose three lab entries

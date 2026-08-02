@@ -22,7 +22,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-jq -S 'del(.generatedAt)' "$expected" >"$expected_normalized"
-jq -S 'del(.generatedAt)' "$actual" >"$actual_normalized"
+comparison_epoch=$(date -u +%s)
+normalize_filter='
+  def expires_at_epoch:
+    . | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601;
+  del(.generatedAt) |
+  .clients |= map(
+    if .oneTimeLink != null and
+      ((.oneTimeLink.expiresAt | expires_at_epoch) <= $comparison_epoch)
+    then .oneTimeLink = null
+    else .
+    end
+  )
+'
+jq -S --argjson comparison_epoch "$comparison_epoch" \
+  "$normalize_filter" "$expected" >"$expected_normalized"
+jq -S --argjson comparison_epoch "$comparison_epoch" \
+  "$normalize_filter" "$actual" >"$actual_normalized"
 diff --unified "$expected_normalized" "$actual_normalized"
 echo "Non-secret Phase 0 preservation manifests match."

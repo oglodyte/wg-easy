@@ -66,6 +66,7 @@ if grep -q 'tar -tzf.*grep -Eq' "${PHASE0_DIR}/scripts/snapshot-volume.sh"; then
 fi
 grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/snapshot-volume.sh"
 grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/restore-volume.sh"
+grep -q 'expires_at_epoch' "${PHASE0_DIR}/scripts/compare-manifests.sh"
 
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 
