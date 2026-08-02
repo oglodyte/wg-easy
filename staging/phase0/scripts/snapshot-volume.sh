@@ -11,6 +11,8 @@ if [[ ! $snapshot_name =~ ^phase0-[a-z0-9][a-z0-9._-]{0,63}$ ]]; then
 fi
 
 load_image_environment
+backup_parent=$(dirname "$PHASE0_BACKUP_ROOT")
+sudo -n install -d -m 0710 -o root -g "$(id -gn)" "$backup_parent"
 sudo -n install -d -m 0750 -o root -g "$(id -gn)" "$PHASE0_BACKUP_ROOT"
 
 archive=${PHASE0_BACKUP_ROOT}/${snapshot_name}.tar.gz

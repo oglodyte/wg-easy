@@ -17,6 +17,9 @@ target_volume=$2
 
 archive=${PHASE0_BACKUP_ROOT}/${snapshot_name}.tar.gz
 checksum=${archive}.sha256
+backup_parent=$(dirname "$PHASE0_BACKUP_ROOT")
+sudo -n install -d -m 0710 -o root -g "$(id -gn)" "$backup_parent"
+sudo -n install -d -m 0750 -o root -g "$(id -gn)" "$PHASE0_BACKUP_ROOT"
 [ -f "$archive" ] || fail "snapshot is missing: $archive"
 [ -f "$checksum" ] || fail "snapshot checksum is missing: $checksum"
 (cd "$PHASE0_BACKUP_ROOT" && sudo -n sha256sum --check "${snapshot_name}.tar.gz.sha256")

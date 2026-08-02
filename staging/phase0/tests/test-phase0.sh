@@ -64,6 +64,8 @@ if grep -q 'tar -tzf.*grep -Eq' "${PHASE0_DIR}/scripts/snapshot-volume.sh"; then
   echo "Snapshot validation must not combine pipefail with grep -q." >&2
   exit 1
 fi
+grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/snapshot-volume.sh"
+grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/restore-volume.sh"
 
 grep -q 'target: wg-client' "$REPOSITORY_ROOT/.github/workflows/deploy-phase.yml"
 
