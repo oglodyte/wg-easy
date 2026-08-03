@@ -3,7 +3,7 @@ import { stringifyIp } from 'ip-bigint';
 
 import { removeNewlines, iptablesTemplate } from '#server/utils/template';
 import { generateAwgParameterLines } from '#server/utils/awgConfig';
-import { execFile } from '#server/utils/cmd';
+import { execFile, withSecureInputFile } from '#server/utils/cmd';
 import { WG_ENV } from '#server/utils/config';
 import type { ClientType } from '#db/repositories/client/types';
 import type { InterfaceType } from '#db/repositories/interface/types';
@@ -207,9 +207,9 @@ Endpoint = ${userConfig.host}:${userConfig.port}`;
       'strip',
       interfaceId,
     ]);
-    return execFile(wgExecutable, ['syncconf', interfaceId, '/dev/stdin'], {
-      input: `${strippedConfig}\n`,
-    });
+    return withSecureInputFile(`${strippedConfig}\n`, (inputPath) =>
+      execFile(wgExecutable, ['syncconf', interfaceId, inputPath])
+    );
   },
 
   dump: async (infName: string) => {

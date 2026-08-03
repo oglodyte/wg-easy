@@ -1,4 +1,7 @@
 import childProcess from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import { createDebug } from 'obug';
 
@@ -67,6 +70,32 @@ export function execFile(
       child.stdin.end();
     }
   });
+}
+
+/**
+ * Provide command input through a private, single-use file for tools that
+ * require a filename and cannot safely reopen a pipe such as /dev/stdin.
+ */
+export async function withSecureInputFile<T>(
+  input: string,
+  callback: (inputPath: string) => Promise<T>
+) {
+  const directory = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'wg-easy-command-input-')
+  );
+  const inputPath = path.join(directory, 'input');
+
+  try {
+    await fs.chmod(directory, 0o700);
+    await fs.writeFile(inputPath, input, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    return await callback(inputPath);
+  } finally {
+    await fs.rm(directory, { force: true, recursive: true });
+  }
 }
 
 export const commandTestExports = { formatCommand };

@@ -1,7 +1,10 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { generateAwgParameterLines } from '#server/utils/awgConfig';
-import { commandTestExports } from '#server/utils/cmd';
+import { commandTestExports, withSecureInputFile } from '#server/utils/cmd';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -17,6 +20,27 @@ describe('typed command and AWG config contracts', () => {
         'wg0; touch /tmp/not-executed',
       ])
     ).toBe('ip link show "wg0; touch /tmp/not-executed"');
+  });
+
+  test('provides filename-only command input privately and removes it', async () => {
+    let capturedPath = '';
+
+    await withSecureInputFile('sensitive input\n', async (inputPath) => {
+      capturedPath = inputPath;
+      const [contents, fileStat, directoryStat] = await Promise.all([
+        fs.readFile(inputPath, 'utf8'),
+        fs.stat(inputPath),
+        fs.stat(path.dirname(inputPath)),
+      ]);
+
+      expect(contents).toBe('sensitive input\n');
+      expect(fileStat.mode & 0o777).toBe(0o600);
+      expect(directoryStat.mode & 0o777).toBe(0o700);
+    });
+
+    await expect(fs.access(capturedPath)).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
   test('omits every AWG-only line in compatibility mode', () => {
