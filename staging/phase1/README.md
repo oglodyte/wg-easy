@@ -16,6 +16,9 @@ PHASE0_WG_CLIENT_IMAGE=ghcr.io/example/wg-easy-lab-wg@sha256:<digest> \
 
 The smoke uses an isolated, disposable Docker bridge and two temporary
 containers. The server tunnel is created explicitly with the pinned
-`amneziawg-go` binary and configured with the pinned `awg` tool. The peer image
-contains generic `wg`/`wg-quick` tooling only. Temporary keys/configs are mode
-`0600`, are never printed, and are removed by the cleanup trap.
+`amneziawg-go` binary and configured with the pinned `awg` tool. The harness
+forces the userspace backend even when the staging host has the AWG kernel
+module, then verifies both the userspace control socket and TUN device before
+testing traffic. The peer image contains generic `wg`/`wg-quick` tooling only.
+Temporary keys/configs are mode `0600`, are never printed, and are removed by
+the cleanup trap.

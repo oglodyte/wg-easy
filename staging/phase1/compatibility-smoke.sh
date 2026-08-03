@@ -3,6 +3,7 @@ set -euo pipefail
 
 readonly EXPECTED_AWG_GO_COMMIT=9f5d948bc72cc554791cfe0fb91527e4acfb6b79
 readonly EXPECTED_AWG_TOOLS_COMMIT=d09ecc38425082e472368dd2bf8c4c42d10cae03
+readonly FORCE_USERSPACE_ENV=WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1
 readonly COMPAT_SUBNET=172.30.114.0/24
 readonly SERVER_UNDERLAY_IP=172.30.114.2
 readonly SERVER_TUNNEL_IP=10.251.250.1
@@ -119,7 +120,14 @@ fi
 "${docker_cmd[@]}" cp "${artifact_dir}/server.conf" "${server_name}:/tmp/server.conf"
 "${docker_cmd[@]}" cp "${artifact_dir}/client.conf" "${client_name}:/tmp/client.conf"
 
-"${docker_cmd[@]}" exec "$server_name" amneziawg-go awgcompat
+"${docker_cmd[@]}" exec --env "$FORCE_USERSPACE_ENV" \
+  "$server_name" amneziawg-go awgcompat
+"${docker_cmd[@]}" exec "$server_name" \
+  test -S /var/run/amneziawg/awgcompat.sock || \
+  fail "amneziawg-go did not create its userspace control socket"
+"${docker_cmd[@]}" exec "$server_name" \
+  ip -details link show awgcompat | grep -q 'tun type tun' || \
+  fail "compatibility interface is not backed by the userspace TUN device"
 "${docker_cmd[@]}" exec "$server_name" awg setconf awgcompat /tmp/server.conf
 "${docker_cmd[@]}" exec "$server_name" ip address add "${SERVER_TUNNEL_IP}/24" dev awgcompat
 "${docker_cmd[@]}" exec "$server_name" ip link set awgcompat up

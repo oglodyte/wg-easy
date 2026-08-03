@@ -17,6 +17,11 @@ grep -q 'git -C amneziawg-go checkout --detach' "$REPOSITORY_ROOT/Dockerfile"
 grep -q 'git -C amneziawg-tools checkout --detach' "$REPOSITORY_ROOT/Dockerfile"
 grep -q 'iproute2' "$REPOSITORY_ROOT/Dockerfile"
 grep -q 'amneziawg-go awgcompat' "$PHASE1_DIR/compatibility-smoke.sh"
+grep -q 'WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1' \
+  "$PHASE1_DIR/compatibility-smoke.sh"
+grep -q '/var/run/amneziawg/awgcompat.sock' \
+  "$PHASE1_DIR/compatibility-smoke.sh"
+grep -q 'tun type tun' "$PHASE1_DIR/compatibility-smoke.sh"
 grep -q 'awg setconf awgcompat' "$PHASE1_DIR/compatibility-smoke.sh"
 grep -q 'wg show client latest-handshakes' "$PHASE1_DIR/compatibility-smoke.sh"
 grep -q 'compatibility configs contain AWG-only directives' \
