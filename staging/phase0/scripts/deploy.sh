@@ -25,7 +25,7 @@ fi
 
 "${server_compose[@]}" config --quiet
 "${lab_compose[@]}" config --quiet
-"${server_compose[@]}" up -d --remove-orphans
+"${server_compose[@]}" up -d --remove-orphans --force-recreate
 
 for _ in $(seq 1 60); do
   status=$("${docker_cmd[@]}" inspect wg-easy-phase0 --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')

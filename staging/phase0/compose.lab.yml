@@ -16,6 +16,8 @@ x-vpn-common: &vpn-common
   read_only: true
   tmpfs:
     - /run
+  extra_hosts:
+    - wg-easy-stage.lan:172.30.110.2
 
 services:
   wg-member:

@@ -8,8 +8,13 @@ routing behavior.
 ## Trust and secret boundary
 
 - The authoritative staging host is `yfedotov@wg-easy-stage.lan`.
-- Server management is bound to host loopback TCP 51821 and is reached through
-  SSH. No public host-port proof is required in Phase 0.
+- The staging UI/API is directly published on TCP 51821 without a firewall or
+  source-CIDR restriction. Access it at `http://wg-easy-stage.lan:51821`.
+  This deliberate staging-only exception is reachable from every network that
+  can route to the host; do not reuse it for production.
+- The default tunnel endpoint is directly published as UDP `51820`; generated
+  profiles use `wg-easy-stage.lan:51820`, never the Docker-only
+  `172.30.110.2:51820` underlay address.
 - Real environment files live under `/opt/wg-easy-staging/secrets` with mode
   `0600`. Generated client configs and one-time-link material live under
   `/var/lib/wg-easy-test-artifacts/phase0` with mode `0600`.
@@ -58,13 +63,17 @@ files to mode `0600`.
 | Tunnel underlay  | `172.30.110.0/24` | wg-easy plus four VPN clients        |
 | Exit egress      | `172.30.111.0/24` | primary/backup exits and sink only   |
 | Application/data | `172.30.112.0/24` | wg-easy only; internal bridge        |
-| Management       | `172.30.113.0/24` | wg-easy only; loopback publication   |
+| Management       | `172.30.113.0/24` | wg-easy only; direct TCP publication |
 | Tunnel IPv4      | `10.251.0.0/24`   | compatibility-mode `wg0` and clients |
 | Tunnel IPv6      | `fd42:251:0::/64` | compatibility-mode `wg0` and clients |
 
 The member containers are not attached to exit egress, application/data, or
 management. The management bridge is the server's only non-internal Docker
-network and publishes the UI/API exclusively on host loopback.
+network and publishes the UI/API directly on host TCP 51821 and the default
+tunnel on host UDP 51820 without a source restriction.
+The isolated client lab resolves `wg-easy-stage.lan` to its own underlay server
+address solely for deterministic container testing; physical devices resolve
+the staging hostname normally and use the host-published UDP endpoint.
 The traffic sink is not attached to the underlay. The client-lab test also
 brings the generic member tunnel down and proves the sink becomes unreachable.
 The four disposable VPN clients run privileged because `wg-quick` must write

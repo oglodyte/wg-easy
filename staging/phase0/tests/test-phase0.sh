@@ -22,6 +22,7 @@ done < <(find "$PHASE0_DIR" -type f -name '*.py' -print | sort)
   # shellcheck source=../scripts/common.sh
   source "${PHASE0_DIR}/scripts/common.sh"
   require_digest_ref TEST_IMAGE 'ghcr.io/example/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  require_endpoint_host wg-easy-stage.lan
 )
 
 if (
@@ -51,10 +52,21 @@ grep -q -- \
   "${PHASE0_DIR}/scripts/common.sh"
 grep -q 'ensure_network wg-easy-phase0-management 172.30.113.0/24 false' \
   "${PHASE0_DIR}/scripts/deploy.sh"
-grep -q '127.0.0.1:51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"
+grep -q '51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"
+grep -q '51820:51820/udp' "${PHASE0_DIR}/compose.server.yml"
+if grep -q '127.0.0.1:51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"; then
+  echo "Phase 0 staging UI must not remain loopback-only." >&2
+  exit 1
+fi
 grep -q 'net.ipv4.conf.all.src_valid_mark: 1' "${PHASE0_DIR}/compose.lab.yml"
+grep -q 'wg-easy-stage.lan:172.30.110.2' "${PHASE0_DIR}/compose.lab.yml"
 grep -q 'privileged: true' "${PHASE0_DIR}/compose.lab.yml"
 grep -q 'if curl --fail --silent --show-error' "${PHASE0_DIR}/scripts/deploy.sh"
+grep -q 'up -d --remove-orphans --force-recreate' "${PHASE0_DIR}/scripts/deploy.sh"
+grep -q 'PHASE0_ENDPOINT_HOST' "${PHASE0_DIR}/scripts/seed-baseline.sh"
+grep -q 'UDP port 51820 is already in use' "${PHASE0_DIR}/scripts/preflight.sh"
+grep -q 'ip -4 route show default' "${PHASE0_DIR}/scripts/seed-baseline.sh"
+grep -q 'refusing to replace non-baseline Phase 0 NAT hooks' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/generate-manifest.sh"
 grep -q 'sub("\^;\[\[:space:\]\]\*"; "")' "${PHASE0_DIR}/scripts/seed-baseline.sh"

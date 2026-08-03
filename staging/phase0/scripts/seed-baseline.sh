@@ -49,28 +49,46 @@ curl --fail --silent --show-error \
 api_get /api/session >/dev/null
 
 user_config=$(api_get /api/admin/userconfig)
-user_config_payload=$(jq -c '
+user_config_payload=$(jq -cn --arg endpoint_host "$PHASE0_ENDPOINT_HOST" \
+  --argjson config "$user_config" '
   {
-    port,
+    port: $config.port,
     defaultMtu: 1380,
     defaultPersistentKeepalive: 21,
     defaultDns: ["1.1.1.1", "9.9.9.9"],
     defaultAllowedIps: ["0.0.0.0/0", "::/0"],
-    defaultJC,
-    defaultJMin,
-    defaultJMax,
-    defaultI1,
-    defaultI2,
-    defaultI3,
-    defaultI4,
-    defaultI5,
-    host
+    defaultJC: $config.defaultJC,
+    defaultJMin: $config.defaultJMin,
+    defaultJMax: $config.defaultJMax,
+    defaultI1: $config.defaultI1,
+    defaultI2: $config.defaultI2,
+    defaultI3: $config.defaultI3,
+    defaultI4: $config.defaultI4,
+    defaultI5: $config.defaultI5,
+    host: $endpoint_host
   }
-' <<<"$user_config")
+')
 api_post /api/admin/userconfig "$user_config_payload" >/dev/null
 
 hooks=$(api_get /api/admin/hooks)
-hooks_payload=$(jq -c '
+phase0_static_post_up='iptables -t nat -A POSTROUTING -s {{ipv4Cidr}} -o {{device}} -j MASQUERADE; iptables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; ip6tables -t nat -A POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -A FORWARD -i wg0 -j ACCEPT; ip6tables -A FORWARD -o wg0 -j ACCEPT;'
+phase0_static_post_down='iptables -t nat -D POSTROUTING -s {{ipv4Cidr}} -o {{device}} -j MASQUERADE; iptables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; ip6tables -t nat -D POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -D FORWARD -i wg0 -j ACCEPT; ip6tables -D FORWARD -o wg0 -j ACCEPT;'
+phase0_dynamic_post_up='OUT_IF=$(ip -4 route show default | awk "NR == 1 {print \$5}"); test -n "$OUT_IF" || exit 1; iptables -t nat -A POSTROUTING -s {{ipv4Cidr}} -o "$OUT_IF" -j MASQUERADE; iptables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; ip6tables -t nat -A POSTROUTING -s {{ipv6Cidr}} -o "$OUT_IF" -j MASQUERADE; ip6tables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -A FORWARD -i wg0 -j ACCEPT; ip6tables -A FORWARD -o wg0 -j ACCEPT;'
+phase0_dynamic_post_down='OUT_IF=$(ip -4 route show default | awk "NR == 1 {print \$5}"); test -n "$OUT_IF" || exit 1; iptables -t nat -D POSTROUTING -s {{ipv4Cidr}} -o "$OUT_IF" -j MASQUERADE; iptables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; ip6tables -t nat -D POSTROUTING -s {{ipv6Cidr}} -o "$OUT_IF" -j MASQUERADE; ip6tables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -D FORWARD -i wg0 -j ACCEPT; ip6tables -D FORWARD -o wg0 -j ACCEPT;'
+
+if ! jq -e \
+  --arg static_up "$phase0_static_post_up" \
+  --arg static_down "$phase0_static_post_down" \
+  --arg dynamic_up "$phase0_dynamic_post_up" \
+  --arg dynamic_down "$phase0_dynamic_post_down" \
+  '(.postUp == $static_up and .postDown == $static_down) or (.postUp == $dynamic_up and .postDown == $dynamic_down)' \
+  <<<"$hooks" >/dev/null; then
+  fail "refusing to replace non-baseline Phase 0 NAT hooks"
+fi
+
+hooks_payload=$(jq -c \
+  --arg post_up "$phase0_dynamic_post_up" \
+  --arg post_down "$phase0_dynamic_post_down" '
   {
     preUp: (
       if .preUp | contains("phase0-baseline") then
@@ -81,9 +99,9 @@ hooks_payload=$(jq -c '
         .preUp + "; : phase0-baseline"
       end
     ),
-    postUp,
+    postUp: $post_up,
     preDown,
-    postDown
+    postDown: $post_down
   }
 ' <<<"$hooks")
 api_post /api/admin/hooks "$hooks_payload" >/dev/null

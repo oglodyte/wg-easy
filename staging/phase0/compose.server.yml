@@ -17,7 +17,8 @@ services:
       - wireguard-data:/etc/wireguard
       - /lib/modules:/lib/modules:ro
     ports:
-      - 127.0.0.1:51821:51821/tcp
+      - 51821:51821/tcp
+      - 51820:51820/udp
     restart: unless-stopped
     cap_add:
       - NET_ADMIN

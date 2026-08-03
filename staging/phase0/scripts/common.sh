@@ -13,6 +13,7 @@ LAB_ARTIFACT_ROOT=${LAB_ARTIFACT_ROOT:-/var/lib/wg-easy-test-artifacts/phase0/co
 PHASE0_BACKUP_ROOT=${PHASE0_BACKUP_ROOT:-/var/backups/wg-easy-staging/phase0}
 PHASE0_MANIFEST_ROOT=${PHASE0_MANIFEST_ROOT:-/var/lib/wg-easy-test-artifacts/phase0/manifests}
 PHASE0_API_URL=${PHASE0_API_URL:-http://127.0.0.1:51821}
+PHASE0_ENDPOINT_HOST=${PHASE0_ENDPOINT_HOST:-wg-easy-stage.lan}
 
 SERVER_COMPOSE=${PHASE0_DIR}/compose.server.yml
 LAB_COMPOSE=${PHASE0_DIR}/compose.lab.yml
@@ -57,6 +58,15 @@ require_digest_ref() {
   fi
 }
 
+require_endpoint_host() {
+  local value=$1
+
+  if [[ ! $value =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] ||
+    [[ $value == .* ]] || [[ $value == *. ]] || [[ $value == *..* ]]; then
+    fail "PHASE0_ENDPOINT_HOST must be a hostname or address without a URL scheme"
+  fi
+}
+
 load_image_environment() {
   require_restricted_file "$PHASE0_IMAGE_ENV"
   set -a
@@ -73,9 +83,10 @@ load_image_environment() {
   require_digest_ref WG_CLIENT_IMAGE "$WG_CLIENT_IMAGE"
   require_digest_ref AWG_CLIENT_IMAGE "$AWG_CLIENT_IMAGE"
   require_digest_ref TRAFFIC_SINK_IMAGE "$TRAFFIC_SINK_IMAGE"
+  require_endpoint_host "$PHASE0_ENDPOINT_HOST"
 
   export WG_EASY_IMAGE WG_CLIENT_IMAGE AWG_CLIENT_IMAGE TRAFFIC_SINK_IMAGE
-  export WG_EASY_ENV_FILE WG_EASY_VOLUME LAB_ARTIFACT_ROOT
+  export WG_EASY_ENV_FILE WG_EASY_VOLUME LAB_ARTIFACT_ROOT PHASE0_ENDPOINT_HOST
 }
 
 read_env_value() {
