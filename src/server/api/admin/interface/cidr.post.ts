@@ -15,7 +15,8 @@ export default definePermissionEventHandler(
       validateZod(InterfaceCidrUpdateSchema, event)
     );
 
-    await Database.interfaces.updateCidr(data);
+    const defaultInterface = await Database.interfaces.getDefault();
+    await Database.interfaces.updateCidr(defaultInterface.name, data);
     await WireGuard.saveConfig();
     return { success: true };
   }

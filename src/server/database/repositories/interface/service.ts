@@ -1,11 +1,21 @@
-import { eq, sql } from 'drizzle-orm';
-import { parseCidr } from 'cidr-tools';
+import { eq, ne, sql } from 'drizzle-orm';
+import { containsCidr, parseCidr } from 'cidr-tools';
 
 import { wgInterface } from './schema';
-import type { InterfaceCidrUpdateType, InterfaceUpdateType } from './types';
+import type {
+  InterfaceCidrUpdateType,
+  InterfaceCreateInput,
+  InterfaceUpdateType,
+} from './types';
 
 import { nextIPFromUsedAddresses } from '#server/utils/ip';
-import { client as clientSchema } from '#db/schema';
+import { wg } from '#server/utils/wgHelper';
+import {
+  client as clientSchema,
+  hooks,
+  interfaceRuntimeState,
+  userConfig,
+} from '#db/schema';
 import type { DBType } from '#db/sqlite';
 
 function createPreparedStatement(db: DBType) {
@@ -40,9 +50,9 @@ export class InterfaceService {
     this.#statements = createPreparedStatement(db);
   }
 
-  async get() {
+  async getByName(interfaceId: string) {
     const wgInterface = await this.#statements.get.execute({
-      interface: 'wg0',
+      interface: interfaceId,
     });
     if (!wgInterface) {
       throw new Error('Interface not found');
@@ -50,34 +60,156 @@ export class InterfaceService {
     return wgInterface;
   }
 
-  updateKeyPair(privateKey: string, publicKey: string) {
+  async getAll() {
+    return this.#db.query.wgInterface
+      .findMany({ orderBy: (table, { asc }) => asc(table.name) })
+      .execute();
+  }
+
+  async getDefault() {
+    const config = await this.#db.query.general
+      .findFirst({
+        columns: { defaultInterfaceId: true },
+      })
+      .execute();
+    if (!config) throw new Error('General Config not found');
+    return this.getByName(config.defaultInterfaceId);
+  }
+
+  // Compatibility boundary for existing single-interface callers.
+  get() {
+    return this.getDefault();
+  }
+
+  updateKeyPair(interfaceId: string, privateKey: string, publicKey: string) {
     return this.#statements.updateKeyPair.execute({
-      interface: 'wg0',
+      interface: interfaceId,
       privateKey,
       publicKey,
     });
   }
 
-  update(data: InterfaceUpdateType) {
+  async update(interfaceId: string, data: InterfaceUpdateType) {
+    await this.assertCidrAndPortAvailable(data, interfaceId);
     return this.#db
       .update(wgInterface)
       .set(data)
-      .where(eq(wgInterface.name, 'wg0'))
+      .where(eq(wgInterface.name, interfaceId))
       .execute();
   }
 
-  setFirewallEnabled(firewallEnabled: boolean) {
+  setFirewallEnabled(interfaceId: string, firewallEnabled: boolean) {
     return this.#statements.setFirewallEnabled.execute({
-      interface: 'wg0',
+      interface: interfaceId,
       firewallEnabled,
     });
   }
 
-  updateCidr(data: InterfaceCidrUpdateType) {
+  async assertCidrAndPortAvailable(
+    data: Pick<InterfaceCidrUpdateType, 'ipv4Cidr' | 'ipv6Cidr'> & {
+      port?: number;
+    },
+    exceptInterfaceId?: string
+  ) {
+    const interfaces = await this.#db.query.wgInterface
+      .findMany({
+        where: exceptInterfaceId
+          ? ne(wgInterface.name, exceptInterfaceId)
+          : undefined,
+      })
+      .execute();
+    for (const existing of interfaces) {
+      if (
+        containsCidr(existing.ipv4Cidr, data.ipv4Cidr) ||
+        containsCidr(data.ipv4Cidr, existing.ipv4Cidr)
+      ) {
+        throw new Error(`IPv4 CIDR overlaps with interface ${existing.name}`);
+      }
+      if (
+        containsCidr(existing.ipv6Cidr, data.ipv6Cidr) ||
+        containsCidr(data.ipv6Cidr, existing.ipv6Cidr)
+      ) {
+        throw new Error(`IPv6 CIDR overlaps with interface ${existing.name}`);
+      }
+      if (data.port !== undefined && existing.port === data.port) {
+        throw new Error(
+          `Listen port is already used by interface ${existing.name}`
+        );
+      }
+    }
+  }
+
+  async create(data: InterfaceCreateInput) {
+    await this.assertCidrAndPortAvailable(data);
+    const source = await this.getByName(
+      data.cloneFromInterfaceId ?? (await this.getDefault()).name
+    );
+    const sourceHooks = await this.#db.query.hooks
+      .findFirst({
+        where: eq(hooks.id, source.name),
+      })
+      .execute();
+    const sourceUserConfig = await this.#db.query.userConfig
+      .findFirst({
+        where: eq(userConfig.id, source.name),
+      })
+      .execute();
+    if (!sourceHooks || !sourceUserConfig) {
+      throw new Error('Source interface defaults are incomplete');
+    }
+    const privateKey = await wg.generatePrivateKey();
+    const publicKey = await wg.getPublicKey(privateKey);
+
+    await this.#db.transaction(async (tx) => {
+      await tx
+        .insert(wgInterface)
+        .values({
+          ...source,
+          name: data.name,
+          device: data.device,
+          port: data.port,
+          ipv4Cidr: data.ipv4Cidr,
+          ipv6Cidr: data.ipv6Cidr,
+          privateKey,
+          publicKey,
+          enabled: false,
+          pendingDelete: false,
+        })
+        .execute();
+      await tx
+        .insert(hooks)
+        .values({
+          ...sourceHooks,
+          id: data.name,
+        })
+        .execute();
+      await tx
+        .insert(userConfig)
+        .values({
+          ...sourceUserConfig,
+          id: data.name,
+        })
+        .execute();
+      await tx
+        .insert(interfaceRuntimeState)
+        .values({
+          interfaceId: data.name,
+          status: 'disabled',
+          observedUp: false,
+          restartRequired: false,
+        })
+        .execute();
+    });
+
+    return this.getByName(data.name);
+  }
+
+  async updateCidr(interfaceId: string, data: InterfaceCidrUpdateType) {
+    await this.assertCidrAndPortAvailable(data, interfaceId);
     return this.#db.transaction(async (tx) => {
       const oldCidr = await tx.query.wgInterface
         .findFirst({
-          where: eq(wgInterface.name, 'wg0'),
+          where: eq(wgInterface.name, interfaceId),
           columns: { ipv4Cidr: true, ipv6Cidr: true },
         })
         .execute();
@@ -89,10 +221,14 @@ export class InterfaceService {
       await tx
         .update(wgInterface)
         .set(data)
-        .where(eq(wgInterface.name, 'wg0'))
+        .where(eq(wgInterface.name, interfaceId))
         .execute();
 
-      const clients = await tx.query.client.findMany().execute();
+      const clients = await tx.query.client
+        .findMany({
+          where: eq(clientSchema.interfaceId, interfaceId),
+        })
+        .execute();
       const ipv4Addresses = new Set(
         clients.map((client) => client.ipv4Address)
       );

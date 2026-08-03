@@ -9,15 +9,24 @@ export default defineEventHandler(async () => {
   const latestRelease = await cachedFetchLatestRelease();
   const updateAvailable = gt(latestRelease.version, RELEASE);
   const insecure = WG_ENV.INSECURE;
-  const isAwg = WG_ENV.WG_EXECUTABLE === 'awg';
-  const wgInterface = await Database.interfaces.get();
+  const interfaces = await Database.interfaces.getAll();
+  const defaultInterface = await Database.interfaces.getDefault();
 
   return {
     currentRelease: RELEASE,
     latestRelease: latestRelease,
     updateAvailable,
     insecure,
-    isAwg,
-    firewallEnabled: wgInterface.firewallEnabled,
+    isAwg: true,
+    runtimeBackend: 'awg',
+    defaultInterfaceId: defaultInterface.name,
+    firewallEnabled: interfaces.some(
+      (wgInterface) => wgInterface.enabled && wgInterface.firewallEnabled
+    ),
+    interfaces: interfaces.map((wgInterface) => ({
+      name: wgInterface.name,
+      enabled: wgInterface.enabled,
+      firewallEnabled: wgInterface.firewallEnabled,
+    })),
   };
 });

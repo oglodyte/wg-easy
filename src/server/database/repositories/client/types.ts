@@ -22,6 +22,7 @@ import {
   schemaForType,
   t,
 } from '#server/utils/types';
+import { InterfaceNameSchema } from '#shared/utils/schemas';
 
 export type ClientType = InferSelectModel<typeof client>;
 
@@ -76,6 +77,7 @@ const serverAllowedIps = z.array(AddressSchema, {
 export const ClientCreateSchema = z.object({
   name: name,
   expiresAt: expiresAt,
+  interfaceId: InterfaceNameSchema.optional(),
 });
 
 export type ClientCreateType = z.infer<typeof ClientCreateSchema>;
@@ -87,6 +89,7 @@ const sort = z.enum(['asc', 'desc']);
 export const ClientQuerySchema = z.object({
   filter: filter.optional(),
   sort: sort.optional(),
+  interfaceId: InterfaceNameSchema.optional(),
 });
 
 export type ClientQueryType = z.infer<typeof ClientQuerySchema>;
@@ -135,4 +138,4 @@ export type ClientCreateFromExistingType = Pick<
   | 'preSharedKey'
   | 'publicKey'
   | 'enabled'
->;
+> & { interfaceId: string };

@@ -11,7 +11,8 @@ export default defineSetupEventHandler(4, async ({ event }) => {
     validateZod(UserConfigSetupSchema, event)
   );
 
-  await Database.userConfigs.updateHostPort(host, port);
+  const defaultInterface = await Database.interfaces.getDefault();
+  await Database.userConfigs.updateHostPort(defaultInterface.name, host, port);
 
   await Database.general.setSetupStep(0);
   return { success: true };

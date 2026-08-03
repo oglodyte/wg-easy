@@ -33,8 +33,8 @@ class WireGuard {
    * Apply firewall rules based on current config
    */
   async #applyFirewallRules(wgInterface: InterfaceType) {
-    const clients = await Database.clients.getAll();
-    const userConfig = await Database.userConfigs.get();
+    const clients = await Database.clients.getAllForInterface(wgInterface.name);
+    const userConfig = await Database.userConfigs.get(wgInterface.name);
     await firewall.rebuildRules(
       wgInterface,
       clients,
@@ -49,8 +49,8 @@ class WireGuard {
    * Make sure to pass an updated InterfaceType object
    */
   async #saveWireguardConfig(wgInterface: InterfaceType) {
-    const clients = await Database.clients.getAll();
-    const hooks = await Database.hooks.get();
+    const clients = await Database.clients.getAllForInterface(wgInterface.name);
+    const hooks = await Database.hooks.get(wgInterface.name);
 
     const result = [];
     result.push(
@@ -137,14 +137,13 @@ class WireGuard {
   }
 
   async getClientConfiguration({ clientId }: { clientId: ID }) {
-    const wgInterface = await Database.interfaces.get();
-    const userConfig = await Database.userConfigs.get();
-
     const client = await Database.clients.get(clientId);
 
     if (!client) {
       throw new Error('Client not found');
     }
+    const wgInterface = await Database.interfaces.getByName(client.interfaceId);
+    const userConfig = await Database.userConfigs.get(client.interfaceId);
 
     return wg.generateClientConfig(wgInterface, userConfig, client, {
       enableIpv6: !WG_ENV.DISABLE_IPV6,
@@ -186,7 +185,11 @@ class WireGuard {
       const privateKey = await wg.generatePrivateKey();
       const publicKey = await wg.getPublicKey(privateKey);
 
-      await Database.interfaces.updateKeyPair(privateKey, publicKey);
+      await Database.interfaces.updateKeyPair(
+        wgInterface.name,
+        privateKey,
+        publicKey
+      );
       wgInterface = await Database.interfaces.get();
       WG_DEBUG('New Wireguard Keys generated successfully.');
     }
@@ -205,7 +208,7 @@ class WireGuard {
       wgInterface.h3 = String(h3)!;
       wgInterface.h4 = String(h4)!;
 
-      Database.interfaces.update(wgInterface);
+      await Database.interfaces.update(wgInterface.name, wgInterface);
     }
 
     WG_DEBUG(`Starting Wireguard Interface ${wgInterface.name}...`);
@@ -237,7 +240,7 @@ class WireGuard {
         console.warn(
           `WARNING: Per-Client Firewall is enabled but ${requiredTools} is not available. Disabling firewall feature. Please install ${requiredTools} to use this feature.`
         );
-        await Database.interfaces.setFirewallEnabled(false);
+        await Database.interfaces.setFirewallEnabled(wgInterface.name, false);
         wgInterface.firewallEnabled = false; // Update local copy
       }
     }

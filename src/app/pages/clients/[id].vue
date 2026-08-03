@@ -210,19 +210,29 @@
 </template>
 
 <script lang="ts" setup>
+import type { ClientType } from '#db/repositories/client/types';
+
+type ClientDetail = ClientType & { endpoint: string | null | undefined };
+
 const globalStore = useGlobalStore();
 
 const route = useRoute();
 const id = route.params.id as string;
 
-const { data: _data, refresh } = await useFetch(`/api/client/${id}`, {
-  method: 'get',
-});
+// `creation-metadata` is a static sibling of the client-id route. Keep this
+// page bound to the dynamic client response while Nuxt's generated route type
+// necessarily includes both matching API paths.
+const { data: _data, refresh } = await useFetch<ClientDetail>(
+  `/api/client/${id}` as never,
+  {
+    method: 'get',
+  }
+);
 const data = toRef(_data.value);
 
 const _submit = useSubmit(
   (data) =>
-    $fetch(`/api/client/${id}`, {
+    $fetch<unknown>(`/api/client/${id}` as never, {
       method: 'post',
       body: data,
     }),
@@ -248,7 +258,7 @@ async function revert() {
 
 const _deleteClient = useSubmit(
   (data) =>
-    $fetch(`/api/client/${id}`, {
+    $fetch<unknown>(`/api/client/${id}` as never, {
       method: 'delete',
       body: data,
     }),

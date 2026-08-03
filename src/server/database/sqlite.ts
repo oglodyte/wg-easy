@@ -96,7 +96,8 @@ async function initialSetup(db: DBServiceType) {
 
   if (WG_INITIAL_ENV.IPV4_CIDR && WG_INITIAL_ENV.IPV6_CIDR) {
     DB_DEBUG('Setting initial CIDR...');
-    await db.interfaces.updateCidr({
+    const defaultInterface = await db.interfaces.getDefault();
+    await db.interfaces.updateCidr(defaultInterface.name, {
       ipv4Cidr: WG_INITIAL_ENV.IPV4_CIDR,
       ipv6Cidr: WG_INITIAL_ENV.IPV6_CIDR,
     });
@@ -104,14 +105,16 @@ async function initialSetup(db: DBServiceType) {
 
   if (WG_INITIAL_ENV.DNS) {
     DB_DEBUG('Setting initial DNS...');
-    await db.userConfigs.update({
+    const defaultInterface = await db.interfaces.getDefault();
+    await db.userConfigs.update(defaultInterface.name, {
       defaultDns: WG_INITIAL_ENV.DNS,
     });
   }
 
   if (WG_INITIAL_ENV.ALLOWED_IPS) {
     DB_DEBUG('Setting initial Allowed IPs...');
-    await db.userConfigs.update({
+    const defaultInterface = await db.interfaces.getDefault();
+    await db.userConfigs.update(defaultInterface.name, {
       defaultAllowedIps: WG_INITIAL_ENV.ALLOWED_IPS,
     });
   }
@@ -126,7 +129,9 @@ async function initialSetup(db: DBServiceType) {
     await db.users.create(WG_INITIAL_ENV.USERNAME, WG_INITIAL_ENV.PASSWORD);
 
     DB_DEBUG('Setting initial host and port...');
+    const defaultInterface = await db.interfaces.getDefault();
     await db.userConfigs.updateHostPort(
+      defaultInterface.name,
       WG_INITIAL_ENV.HOST,
       WG_INITIAL_ENV.PORT
     );
@@ -136,15 +141,20 @@ async function initialSetup(db: DBServiceType) {
 }
 
 async function disableIpv6(db: DBType) {
+  const config = await db.query.general
+    .findFirst({ columns: { defaultInterfaceId: true } })
+    .execute();
+  if (!config) throw new Error('General Config not found');
+  const interfaceId = config.defaultInterfaceId;
   // This should match the initial value migration
   const postUpMatch =
-    ' ip6tables -t nat -A POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -A FORWARD -i wg0 -j ACCEPT; ip6tables -A FORWARD -o wg0 -j ACCEPT;';
+    ' ip6tables -t nat -A POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -A FORWARD -i {{name}} -j ACCEPT; ip6tables -A FORWARD -o {{name}} -j ACCEPT;';
   const postDownMatch =
-    ' ip6tables -t nat -D POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -D FORWARD -i wg0 -j ACCEPT; ip6tables -D FORWARD -o wg0 -j ACCEPT;';
+    ' ip6tables -t nat -D POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -D FORWARD -i {{name}} -j ACCEPT; ip6tables -D FORWARD -o {{name}} -j ACCEPT;';
 
   await db.transaction(async (tx) => {
     const hooks = await tx.query.hooks.findFirst({
-      where: eq(schema.hooks.id, 'wg0'),
+      where: eq(schema.hooks.id, interfaceId),
     });
 
     if (!hooks) {
@@ -159,7 +169,7 @@ async function disableIpv6(db: DBType) {
           postUp: hooks.postUp.replace(postUpMatch, ''),
           postDown: hooks.postDown.replace(postDownMatch, ''),
         })
-        .where(eq(schema.hooks.id, 'wg0'))
+        .where(eq(schema.hooks.id, interfaceId))
         .execute();
     } else {
       DB_DEBUG('IPv6 Post Up hooks already disabled, skipping...');
@@ -172,7 +182,7 @@ async function disableIpv6(db: DBType) {
           postUp: hooks.postUp.replace(postUpMatch, ''),
           postDown: hooks.postDown.replace(postDownMatch, ''),
         })
-        .where(eq(schema.hooks.id, 'wg0'))
+        .where(eq(schema.hooks.id, interfaceId))
         .execute();
     } else {
       DB_DEBUG('IPv6 Post Down hooks already disabled, skipping...');

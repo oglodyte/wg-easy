@@ -9,7 +9,6 @@ import type {
   UpdateClientType,
 } from './types';
 
-import Database from '#server/utils/Database';
 import { nextIP } from '#server/utils/ip';
 import type { ID } from '#server/utils/types';
 import { wg } from '#server/utils/wgHelper';
@@ -61,10 +60,24 @@ export class ClientService {
     }));
   }
 
+  async getAllForInterface(interfaceId: string) {
+    const result = await this.#db.query.client
+      .findMany({
+        where: eq(client.interfaceId, interfaceId),
+        with: { oneTimeLink: true },
+      })
+      .execute();
+    return result.map((row) => ({
+      ...row,
+      createdAt: new Date(row.createdAt),
+      updatedAt: new Date(row.updatedAt),
+    }));
+  }
+
   /**
    * Returns all clients without sensitive data
    */
-  async getAllPublic({ filter, sort }: ClientQueryType) {
+  async getAllPublic({ filter, sort, interfaceId }: ClientQueryType = {}) {
     const filters = [];
 
     if (filter?.trim()) {
@@ -77,6 +90,7 @@ export class ClientService {
         )
       );
     }
+    if (interfaceId) filters.push(eq(client.interfaceId, interfaceId));
 
     const result = await this.#db.query.client
       .findMany({
@@ -109,7 +123,10 @@ export class ClientService {
   /**
    * Returns all clients without sensitive data belonging to user
    */
-  async getAllForUser(userId: ID, { filter, sort }: ClientQueryType) {
+  async getAllForUser(
+    userId: ID,
+    { filter, sort, interfaceId }: ClientQueryType = {}
+  ) {
     const filters = [];
 
     if (filter?.trim()) {
@@ -122,6 +139,7 @@ export class ClientService {
         )
       );
     }
+    if (interfaceId) filters.push(eq(client.interfaceId, interfaceId));
 
     const result = await this.#db.query.client
       .findMany({
@@ -153,16 +171,24 @@ export class ClientService {
     return this.#statements.findById.execute({ id });
   }
 
-  async create({ name, expiresAt }: ClientCreateType) {
+  async create({ name, expiresAt, interfaceId }: ClientCreateType) {
     const privateKey = await wg.generatePrivateKey();
     const publicKey = await wg.getPublicKey(privateKey);
     const preSharedKey = await wg.generatePreSharedKey();
 
     return this.#db.transaction(async (tx) => {
-      const clients = await tx.query.client.findMany().execute();
+      const generalConfig = await tx.query.general
+        .findFirst({ columns: { defaultInterfaceId: true } })
+        .execute();
+      if (!generalConfig) throw new Error('General Config not found');
+      const selectedInterfaceId =
+        interfaceId ?? generalConfig.defaultInterfaceId;
+      const clients = await tx.query.client
+        .findMany({ where: eq(client.interfaceId, selectedInterfaceId) })
+        .execute();
       const clientInterface = await tx.query.wgInterface
         .findFirst({
-          where: eq(wgInterface.name, 'wg0'),
+          where: eq(wgInterface.name, selectedInterfaceId),
         })
         .execute();
 
@@ -191,7 +217,7 @@ export class ClientService {
           name,
           // TODO: properly assign user id
           userId: 1,
-          interfaceId: 'wg0',
+          interfaceId: selectedInterfaceId,
           expiresAt,
           privateKey,
           publicKey,
@@ -226,9 +252,13 @@ export class ClientService {
 
   update(id: ID, data: UpdateClientType) {
     return this.#db.transaction(async (tx) => {
+      const existingClient = await tx.query.client
+        .findFirst({ where: eq(client.id, id) })
+        .execute();
+      if (!existingClient) throw new Error('Client not found');
       const clientInterface = await tx.query.wgInterface
         .findFirst({
-          where: eq(wgInterface.name, 'wg0'),
+          where: eq(wgInterface.name, existingClient.interfaceId),
         })
         .execute();
 
@@ -256,15 +286,21 @@ export class ClientService {
     preSharedKey,
     privateKey,
     publicKey,
+    interfaceId,
   }: ClientCreateFromExistingType) {
-    const clientConfig = await Database.userConfigs.get();
+    const clientConfig = await this.#db.query.userConfig
+      .findFirst({ where: eq(userConfig.id, interfaceId) })
+      .execute();
+    if (!clientConfig) {
+      throw new Error('WireGuard interface configuration not found');
+    }
 
     return this.#db
       .insert(client)
       .values({
         name,
         userId: 1,
-        interfaceId: 'wg0',
+        interfaceId,
         privateKey,
         publicKey,
         preSharedKey,

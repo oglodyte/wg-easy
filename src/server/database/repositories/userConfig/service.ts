@@ -3,7 +3,6 @@ import { eq, sql } from 'drizzle-orm';
 import { userConfig } from './schema';
 import type { UserConfigUpdateType } from './types';
 
-import { wgInterface } from '#db/schema';
 import type { DBType } from '#db/sqlite';
 
 function createPreparedStatement(db: DBType) {
@@ -23,8 +22,10 @@ export class UserConfigService {
     this.#statements = createPreparedStatement(db);
   }
 
-  async get() {
-    const userConfig = await this.#statements.get.execute({ interface: 'wg0' });
+  async get(interfaceId: string) {
+    const userConfig = await this.#statements.get.execute({
+      interface: interfaceId,
+    });
 
     if (!userConfig) {
       throw new Error('User config not found');
@@ -38,29 +39,21 @@ export class UserConfigService {
   /**
    * sets host of user config
    *
-   * sets port of user config and interface
+   * The endpoint port is intentionally independent from the interface listen port.
    */
-  updateHostPort(host: string, port: number) {
-    return this.#db.transaction(async (tx) => {
-      await tx
-        .update(userConfig)
-        .set({ host, port })
-        .where(eq(userConfig.id, 'wg0'))
-        .execute();
-
-      await tx
-        .update(wgInterface)
-        .set({ port })
-        .where(eq(wgInterface.name, 'wg0'))
-        .execute();
-    });
+  updateHostPort(interfaceId: string, host: string, port: number) {
+    return this.#db
+      .update(userConfig)
+      .set({ host, port })
+      .where(eq(userConfig.id, interfaceId))
+      .execute();
   }
 
-  update(data: Partial<UserConfigUpdateType>) {
+  update(interfaceId: string, data: Partial<UserConfigUpdateType>) {
     return this.#db
       .update(userConfig)
       .set(data)
-      .where(eq(userConfig.id, 'wg0'))
+      .where(eq(userConfig.id, interfaceId))
       .execute();
   }
 }

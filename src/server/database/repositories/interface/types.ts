@@ -18,6 +18,7 @@ import {
 import {
   Ipv4CidrSchema,
   Ipv6CidrSchema,
+  InterfaceNameSchema,
   NetworkDeviceSchema,
 } from '#shared/utils/schemas';
 
@@ -27,6 +28,21 @@ export type InterfaceCreateType = Omit<
   InterfaceType,
   'createdAt' | 'updatedAt'
 >;
+
+export const InterfaceCreateSchema = z.object({
+  name: InterfaceNameSchema,
+  device: NetworkDeviceSchema,
+  port: PortSchema,
+  ipv4Cidr: Ipv4CidrSchema,
+  ipv6Cidr: Ipv6CidrSchema,
+  cloneFromInterfaceId: InterfaceNameSchema.optional(),
+});
+
+export type InterfaceCreateInput = z.infer<typeof InterfaceCreateSchema>;
+
+export const InterfaceGetSchema = z.object({
+  interfaceId: InterfaceNameSchema,
+});
 
 export type InterfaceUpdateType = Omit<
   InterfaceCreateType,

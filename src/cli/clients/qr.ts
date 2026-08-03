@@ -33,27 +33,27 @@ export default defineCommand({
 
     consola.info('Generating QR code for client...');
 
-    const wgInterface = await db.query.wgInterface.findFirst({
-      where: eq(schema.wgInterface.name, 'wg0'),
-    });
-    if (!wgInterface) {
-      consola.error('WireGuard interface not found');
-      return;
-    }
-
-    const userConfig = await db.query.userConfig.findFirst({
-      where: eq(schema.userConfig.id, 'wg0'),
-    });
-    if (!userConfig) {
-      consola.error('User config not found');
-      return;
-    }
-
     const client = await db.query.client.findFirst({
       where: eq(schema.client.id, clientId),
     });
     if (!client) {
       consola.error(`Client with ID ${clientId} not found`);
+      return;
+    }
+
+    const wgInterface = await db.query.wgInterface.findFirst({
+      where: eq(schema.wgInterface.name, client.interfaceId),
+    });
+    if (!wgInterface) {
+      consola.error(`Interface ${client.interfaceId} not found`);
+      return;
+    }
+
+    const userConfig = await db.query.userConfig.findFirst({
+      where: eq(schema.userConfig.id, client.interfaceId),
+    });
+    if (!userConfig) {
+      consola.error(`User config for ${client.interfaceId} not found`);
       return;
     }
 

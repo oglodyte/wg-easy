@@ -38,7 +38,7 @@ RUN npm install --no-save --omit=dev libsql
 FROM docker.io/library/node:krypton-alpine
 WORKDIR /app
 
-HEALTHCHECK --interval=1m --timeout=5s --retries=3 CMD /usr/bin/timeout 5s /bin/sh -c "/usr/bin/wg show | /bin/grep -q interface || exit 1"
+HEALTHCHECK --interval=1m --timeout=5s --retries=3 CMD /usr/bin/timeout 5s /usr/bin/wget -q -O /dev/null http://127.0.0.1:51821/api/health
 
 # Copy build
 COPY --from=build /app/.output /app

@@ -44,7 +44,9 @@ export default defineSetupEventHandler('migrate', async ({ event }) => {
 
   const oldConfig = res.data;
 
+  const defaultInterface = await Database.interfaces.getDefault();
   await Database.interfaces.updateKeyPair(
+    defaultInterface.name,
     oldConfig.server.privateKey,
     oldConfig.server.publicKey
   );
@@ -52,7 +54,7 @@ export default defineSetupEventHandler('migrate', async ({ event }) => {
   const ipv4Cidr = parseCidr(oldConfig.server.address + '/24');
   const ipv6Cidr = parseCidr('fdcc:ad94:bacf:61a4::cafe:0/112');
 
-  await Database.interfaces.updateCidr({
+  await Database.interfaces.updateCidr(defaultInterface.name, {
     ipv4Cidr:
       stringifyIp({ number: ipv4Cidr.start, version: 4 }) +
       `/${ipv4Cidr.prefix}`,
@@ -73,6 +75,7 @@ export default defineSetupEventHandler('migrate', async ({ event }) => {
 
     await Database.clients.createFromExisting({
       ...clientConfig,
+      interfaceId: defaultInterface.name,
       ipv4Address: clientConfig.address,
       ipv6Address,
     });

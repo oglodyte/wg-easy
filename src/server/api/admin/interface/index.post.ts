@@ -36,7 +36,8 @@ export default definePermissionEventHandler(
       }
     }
 
-    await Database.interfaces.update(data);
+    const defaultInterface = await Database.interfaces.getDefault();
+    await Database.interfaces.update(defaultInterface.name, data);
     await WireGuard.saveConfig();
     return { success: true };
   }

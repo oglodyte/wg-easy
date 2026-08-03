@@ -1,7 +1,8 @@
 import { definePermissionEventHandler } from '#server/utils/handler';
-import { cachedGetIpInformation } from '#server/utils/ip';
+import Database from '#server/utils/Database';
+import { getIpInformation } from '#server/utils/ip';
 
 export default definePermissionEventHandler('admin', 'any', async () => {
-  const result = await cachedGetIpInformation();
-  return result;
+  const interfaces = await Database.interfaces.getAll();
+  return getIpInformation(interfaces.map((wgInterface) => wgInterface.name));
 });
