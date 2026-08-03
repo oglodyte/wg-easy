@@ -169,6 +169,14 @@ class WireGuard {
     // let as it has to refetch if keys change
     let wgInterface = await Database.interfaces.get();
 
+    if (wgInterface.defaultConfigFormat === 'migration_pending') {
+      WG_DEBUG(
+        `Skipping ${wgInterface.name}: compatibility migration requires an explicit legacy backend setting`
+      );
+      await this.startCronJob();
+      return;
+    }
+
     // default interface has no keys
     if (
       wgInterface.privateKey === '---default---' &&
@@ -183,7 +191,7 @@ class WireGuard {
       WG_DEBUG('New Wireguard Keys generated successfully.');
     }
 
-    if (wgInterface.h1 === '0') {
+    if (wgInterface.awgParametersEnabled && wgInterface.h1 === '0') {
       WG_DEBUG('Generating random AmneziaWG obfuscation parameters...');
       const headers = new Set<number>();
 

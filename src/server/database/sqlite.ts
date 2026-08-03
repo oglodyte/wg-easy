@@ -11,6 +11,7 @@ import { InterfaceService } from '#db/repositories/interface/service';
 import { HooksService } from '#db/repositories/hooks/service';
 import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
 import { ClientService } from '#db/repositories/client/service';
+import { finalizePhase1DataMigration } from '#db/phase1Migration';
 import * as schema from '#db/schema';
 import { WG_ENV, WG_INITIAL_ENV } from '#server/utils/config';
 
@@ -64,6 +65,18 @@ async function migrate() {
     await drizzleMigrate(db, {
       migrationsFolder: './server/database/migrations',
     });
+    const phase1Migration = await finalizePhase1DataMigration(client, {
+      configDirectory: '/etc/wireguard',
+      legacyEnvironment: {
+        EXPERIMENTAL_AWG: process.env.EXPERIMENTAL_AWG,
+        OVERRIDE_AUTO_AWG: process.env.OVERRIDE_AUTO_AWG,
+      },
+    });
+    if (phase1Migration.unresolved.length > 0) {
+      DB_DEBUG(
+        `Phase 1 compatibility migration is unresolved for: ${phase1Migration.unresolved.join(', ')}`
+      );
+    }
     DB_DEBUG('Migration complete');
   } catch (e) {
     if (e instanceof Error) {

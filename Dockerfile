@@ -1,6 +1,9 @@
 FROM docker.io/library/node:krypton-alpine AS build
 WORKDIR /app
 
+ARG AMNEZIAWG_GO_COMMIT=9f5d948bc72cc554791cfe0fb91527e4acfb6b79
+ARG AMNEZIAWG_TOOLS_COMMIT=d09ecc38425082e472368dd2bf8c4c42d10cae03
+
 # update corepack
 RUN npm install --global corepack@latest
 # Install pnpm
@@ -18,6 +21,8 @@ RUN pnpm build
 RUN apk add linux-headers build-base go git && \
     git clone https://github.com/amnezia-vpn/amneziawg-tools.git && \
     git clone https://github.com/amnezia-vpn/amneziawg-go && \
+    git -C amneziawg-tools checkout --detach "${AMNEZIAWG_TOOLS_COMMIT}" && \
+    git -C amneziawg-go checkout --detach "${AMNEZIAWG_GO_COMMIT}" && \
     cd amneziawg-go && \
     make && \
     cd ../amneziawg-tools/src && \
@@ -59,6 +64,7 @@ RUN apk add --no-cache \
     dumb-init \
     iptables \
     ip6tables \
+    iproute2 \
     nftables \
     kmod \
     iptables-legacy \
@@ -82,6 +88,8 @@ ENV INIT_ENABLED=false
 ENV DISABLE_IPV6=false
 
 LABEL org.opencontainers.image.source=https://github.com/wg-easy/wg-easy
+LABEL org.opencontainers.image.amneziawg-go.revision="9f5d948bc72cc554791cfe0fb91527e4acfb6b79"
+LABEL org.opencontainers.image.amneziawg-tools.revision="d09ecc38425082e472368dd2bf8c4c42d10cae03"
 
 # Run Web UI
 CMD ["/usr/bin/dumb-init", "node", "server/index.mjs"]

@@ -2,12 +2,14 @@ import { parseCidr } from 'cidr-tools';
 import { stringifyIp } from 'ip-bigint';
 
 import { removeNewlines, iptablesTemplate } from '#server/utils/template';
-import { exec } from '#server/utils/cmd';
+import { generateAwgParameterLines } from '#server/utils/awgConfig';
+import { execFile } from '#server/utils/cmd';
 import { WG_ENV } from '#server/utils/config';
 import type { ClientType } from '#db/repositories/client/types';
 import type { InterfaceType } from '#db/repositories/interface/types';
 import type { UserConfigType } from '#db/repositories/userConfig/types';
 import type { HooksType } from '#db/repositories/hooks/types';
+import { InterfaceNameSchema } from '#shared/utils/schemas';
 
 type Options = {
   enableIpv6?: boolean;
@@ -58,10 +60,9 @@ AllowedIPs = ${allowedIps.join(', ')}${extraLines.length ? `\n${extraLines.join(
       `${ipv4Addr}/${cidr4.prefix}` +
       (enableIpv6 ? `, ${ipv6Addr}/${cidr6.prefix}` : '');
 
-    let awgLines: string[] = [];
-
-    if (wgExecutable === 'awg') {
-      const parameters = {
+    const awgLines = generateAwgParameterLines(
+      wgInterface.awgParametersEnabled,
+      {
         Jc: wgInterface.jC,
         Jmin: wgInterface.jMin,
         Jmax: wgInterface.jMax,
@@ -78,12 +79,9 @@ AllowedIPs = ${allowedIps.join(', ')}${extraLines.length ? `\n${extraLines.join(
         I3: wgInterface.i3,
         I4: wgInterface.i4,
         I5: wgInterface.i5,
-      } as const;
-
-      awgLines = Object.entries(parameters)
-        .filter(([_, value]) => !!value)
-        .map(([key, value]) => `${key} = ${value}`);
-    }
+      },
+      wgExecutable
+    );
 
     const extraLines = [...awgLines].filter((v) => v !== null);
 
@@ -126,10 +124,9 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
     const dnsLine =
       dnsServers.length > 0 ? `DNS = ${dnsServers.join(', ')}` : null;
 
-    let awgLines: string[] = [];
-
-    if (wgExecutable === 'awg') {
-      const parameters = {
+    const awgLines = generateAwgParameterLines(
+      wgInterface.awgParametersEnabled,
+      {
         Jc: client.jC,
         Jmin: client.jMin,
         Jmax: client.jMax,
@@ -146,12 +143,9 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
         I3: client.i3,
         I4: client.i4,
         I5: client.i5,
-      } as const;
-
-      awgLines = Object.entries(parameters)
-        .filter(([_, value]) => !!value)
-        .map(([key, value]) => `${key} = ${value}`);
-    }
+      },
+      wgExecutable
+    );
 
     const extraLines = [dnsLine, ...hookLines, ...awgLines].filter(
       (v) => v !== null
@@ -171,43 +165,61 @@ Endpoint = ${userConfig.host}:${userConfig.port}`;
   },
 
   generatePrivateKey: () => {
-    return exec(`${wgExecutable} genkey`);
+    return execFile(wgExecutable, ['genkey']);
   },
 
   getPublicKey: (privateKey: string) => {
-    return exec(`echo ${privateKey} | ${wgExecutable} pubkey`, {
-      log: `echo ***hidden*** | ${wgExecutable} pubkey`,
+    return execFile(wgExecutable, ['pubkey'], {
+      input: `${privateKey}\n`,
+      log: `${wgExecutable} pubkey < ***hidden***`,
     });
   },
 
   generatePreSharedKey: () => {
-    return exec(`${wgExecutable} genpsk`);
+    return execFile(wgExecutable, ['genpsk']);
   },
 
   up: (infName: string) => {
-    return exec(`${wgExecutable}-quick up ${infName}`);
+    return execFile(`${wgExecutable}-quick`, [
+      'up',
+      InterfaceNameSchema.parse(infName),
+    ]);
   },
 
   down: (infName: string) => {
-    return exec(`${wgExecutable}-quick down ${infName}`);
+    return execFile(`${wgExecutable}-quick`, [
+      'down',
+      InterfaceNameSchema.parse(infName),
+    ]);
   },
 
-  restart: (infName: string) => {
-    return exec(
-      `${wgExecutable}-quick down ${infName}; ${wgExecutable}-quick up ${infName}`
+  restart: async (infName: string) => {
+    const interfaceId = InterfaceNameSchema.parse(infName);
+    await execFile(`${wgExecutable}-quick`, ['down', interfaceId]).catch(
+      () => {}
     );
+    return execFile(`${wgExecutable}-quick`, ['up', interfaceId]);
   },
 
-  sync: (infName: string) => {
-    return exec(
-      `${wgExecutable} syncconf ${infName} <(${wgExecutable}-quick strip ${infName})`
-    );
+  sync: async (infName: string) => {
+    const interfaceId = InterfaceNameSchema.parse(infName);
+    const strippedConfig = await execFile(`${wgExecutable}-quick`, [
+      'strip',
+      interfaceId,
+    ]);
+    return execFile(wgExecutable, ['syncconf', interfaceId, '/dev/stdin'], {
+      input: `${strippedConfig}\n`,
+    });
   },
 
   dump: async (infName: string) => {
-    const rawDump = await exec(`${wgExecutable} show ${infName} dump`, {
-      log: false,
-    });
+    const rawDump = await execFile(
+      wgExecutable,
+      ['show', InterfaceNameSchema.parse(infName), 'dump'],
+      {
+        log: false,
+      }
+    );
 
     type wgDumpLine = [
       string,

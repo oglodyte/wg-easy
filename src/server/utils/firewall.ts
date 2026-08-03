@@ -1,10 +1,11 @@
 import { createDebug } from 'obug';
 import { isIPv6 } from 'is-ip';
 
-import { exec } from '#server/utils/cmd';
+import { execFile } from '#server/utils/cmd';
 import type { ClientType } from '#db/repositories/client/types';
 import type { InterfaceType } from '#db/repositories/interface/types';
 import type { UserConfigType } from '#db/repositories/userConfig/types';
+import { InterfaceNameSchema } from '#shared/utils/schemas';
 
 const FW_DEBUG = createDebug('Firewall');
 const CHAIN_NAME = 'WG_CLIENTS';
@@ -135,26 +136,40 @@ function generateRuleArgs(
   entry: ParsedEntry,
   comment?: string,
   action: 'A' | 'D' = 'A'
-): string[] {
-  const rules: string[] = [];
-  const commentArg = comment ? ` -m comment --comment "${comment}"` : '';
-  const baseArgs = `-${action} ${CHAIN_NAME} -s ${clientIp} -d ${entry.ip}`;
+): string[][] {
+  const rules: string[][] = [];
+  const commentArgs = comment ? ['-m', 'comment', '--comment', comment] : [];
+  const baseArgs = [`-${action}`, CHAIN_NAME, '-s', clientIp, '-d', entry.ip];
 
   if (entry.port) {
     // Port-specific rules
     if (entry.proto === 'tcp' || entry.proto === 'both') {
-      rules.push(
-        `${baseArgs} -p tcp --dport ${entry.port}${commentArg} -j ACCEPT`
-      );
+      rules.push([
+        ...baseArgs,
+        '-p',
+        'tcp',
+        '--dport',
+        String(entry.port),
+        ...commentArgs,
+        '-j',
+        'ACCEPT',
+      ]);
     }
     if (entry.proto === 'udp' || entry.proto === 'both') {
-      rules.push(
-        `${baseArgs} -p udp --dport ${entry.port}${commentArg} -j ACCEPT`
-      );
+      rules.push([
+        ...baseArgs,
+        '-p',
+        'udp',
+        '--dport',
+        String(entry.port),
+        ...commentArgs,
+        '-j',
+        'ACCEPT',
+      ]);
     }
   } else {
     // No port - allow all traffic to destination
-    rules.push(`${baseArgs}${commentArg} -j ACCEPT`);
+    rules.push([...baseArgs, ...commentArgs, '-j', 'ACCEPT']);
   }
 
   return rules;
@@ -165,24 +180,55 @@ export const firewall = {
    * Initialize the custom chain if it doesn't exist
    */
   async initChain(interfaceName: string, enableIpv6: boolean): Promise<void> {
+    const validatedInterfaceName = InterfaceNameSchema.parse(interfaceName);
     FW_DEBUG(
       `Initializing firewall chain ${CHAIN_NAME} for interface ${interfaceName}`
     );
 
     // Create chain if not exists (iptables returns error if exists, so we ignore)
-    await exec(`iptables -N ${CHAIN_NAME} 2>/dev/null || true`);
+    await execFile('iptables', ['-N', CHAIN_NAME]).catch(() => {});
     if (enableIpv6) {
-      await exec(`ip6tables -N ${CHAIN_NAME} 2>/dev/null || true`);
+      await execFile('ip6tables', ['-N', CHAIN_NAME]).catch(() => {});
     }
 
     // Ensure chain is referenced from FORWARD (if not already)
     // Insert at position 1 to process before generic ACCEPT rules
-    await exec(
-      `iptables -C FORWARD -i ${interfaceName} -j ${CHAIN_NAME} 2>/dev/null || iptables -I FORWARD 1 -i ${interfaceName} -j ${CHAIN_NAME}`
+    await execFile('iptables', [
+      '-C',
+      'FORWARD',
+      '-i',
+      validatedInterfaceName,
+      '-j',
+      CHAIN_NAME,
+    ]).catch(() =>
+      execFile('iptables', [
+        '-I',
+        'FORWARD',
+        '1',
+        '-i',
+        validatedInterfaceName,
+        '-j',
+        CHAIN_NAME,
+      ])
     );
     if (enableIpv6) {
-      await exec(
-        `ip6tables -C FORWARD -i ${interfaceName} -j ${CHAIN_NAME} 2>/dev/null || ip6tables -I FORWARD 1 -i ${interfaceName} -j ${CHAIN_NAME}`
+      await execFile('ip6tables', [
+        '-C',
+        'FORWARD',
+        '-i',
+        validatedInterfaceName,
+        '-j',
+        CHAIN_NAME,
+      ]).catch(() =>
+        execFile('ip6tables', [
+          '-I',
+          'FORWARD',
+          '1',
+          '-i',
+          validatedInterfaceName,
+          '-j',
+          CHAIN_NAME,
+        ])
       );
     }
   },
@@ -192,9 +238,9 @@ export const firewall = {
    */
   async flushChain(enableIpv6: boolean): Promise<void> {
     FW_DEBUG(`Flushing firewall chain ${CHAIN_NAME}`);
-    await exec(`iptables -F ${CHAIN_NAME} 2>/dev/null || true`);
+    await execFile('iptables', ['-F', CHAIN_NAME]).catch(() => {});
     if (enableIpv6) {
-      await exec(`ip6tables -F ${CHAIN_NAME} 2>/dev/null || true`);
+      await execFile('ip6tables', ['-F', CHAIN_NAME]).catch(() => {});
     }
   },
 
@@ -228,13 +274,13 @@ export const firewall = {
         if (enableIpv6) {
           const rules = generateRuleArgs(client.ipv6Address, parsed, comment);
           for (const rule of rules) {
-            await exec(`ip6tables ${rule}`);
+            await execFile('ip6tables', rule);
           }
         }
       } else {
         const rules = generateRuleArgs(client.ipv4Address, parsed, comment);
         for (const rule of rules) {
-          await exec(`iptables ${rule}`);
+          await execFile('iptables', rule);
         }
       }
     }
@@ -284,9 +330,9 @@ export const firewall = {
       }
 
       // Add final DROP for any traffic not explicitly allowed
-      await exec(`iptables -A ${CHAIN_NAME} -j DROP`);
+      await execFile('iptables', ['-A', CHAIN_NAME, '-j', 'DROP']);
       if (enableIpv6) {
-        await exec(`ip6tables -A ${CHAIN_NAME} -j DROP`);
+        await execFile('ip6tables', ['-A', CHAIN_NAME, '-j', 'DROP']);
       }
 
       FW_DEBUG('Firewall rules rebuilt successfully');
@@ -309,24 +355,35 @@ export const firewall = {
     interfaceName: string,
     enableIpv6: boolean
   ): Promise<void> {
+    const validatedInterfaceName = InterfaceNameSchema.parse(interfaceName);
     FW_DEBUG(`Removing firewall filtering for interface ${interfaceName}`);
 
     // Remove jump rules from FORWARD chain
-    await exec(
-      `iptables -D FORWARD -i ${interfaceName} -j ${CHAIN_NAME} 2>/dev/null || true`
-    );
+    await execFile('iptables', [
+      '-D',
+      'FORWARD',
+      '-i',
+      validatedInterfaceName,
+      '-j',
+      CHAIN_NAME,
+    ]).catch(() => {});
     if (enableIpv6) {
-      await exec(
-        `ip6tables -D FORWARD -i ${interfaceName} -j ${CHAIN_NAME} 2>/dev/null || true`
-      );
+      await execFile('ip6tables', [
+        '-D',
+        'FORWARD',
+        '-i',
+        validatedInterfaceName,
+        '-j',
+        CHAIN_NAME,
+      ]).catch(() => {});
     }
 
     // Flush and delete the chain
-    await exec(`iptables -F ${CHAIN_NAME} 2>/dev/null || true`);
-    await exec(`iptables -X ${CHAIN_NAME} 2>/dev/null || true`);
+    await execFile('iptables', ['-F', CHAIN_NAME]).catch(() => {});
+    await execFile('iptables', ['-X', CHAIN_NAME]).catch(() => {});
     if (enableIpv6) {
-      await exec(`ip6tables -F ${CHAIN_NAME} 2>/dev/null || true`);
-      await exec(`ip6tables -X ${CHAIN_NAME} 2>/dev/null || true`);
+      await execFile('ip6tables', ['-F', CHAIN_NAME]).catch(() => {});
+      await execFile('ip6tables', ['-X', CHAIN_NAME]).catch(() => {});
     }
   },
 
@@ -342,12 +399,12 @@ export const firewall = {
 
     try {
       // Check for iptables (always required)
-      await exec('iptables --version');
+      await execFile('iptables', ['--version']);
       FW_DEBUG('iptables is available');
 
       // Check for ip6tables (only if IPv6 is enabled)
       if (enableIpv6) {
-        await exec('ip6tables --version');
+        await execFile('ip6tables', ['--version']);
         FW_DEBUG('ip6tables is available');
       } else {
         FW_DEBUG('IPv6 disabled, skipping ip6tables check');

@@ -1,7 +1,7 @@
 import { createDebug } from 'obug';
 import packageJson from '@@/package.json';
 
-import { exec } from '#server/utils/cmd';
+import { execFile } from '#server/utils/cmd';
 import {
   OAUTH_PROVIDERS,
   isConfiguredOauthProvider,
@@ -30,7 +30,7 @@ const detectAwg = async (): Promise<'awg' | 'wg'> => {
     ) {
       return OVERRIDE_AUTO_AWG;
     } else {
-      return await exec('modinfo amneziawg')
+      return await execFile('modinfo', ['amneziawg'])
         .then(() => 'awg' as const)
         .catch(() => 'wg' as const);
     }

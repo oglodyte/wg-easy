@@ -18,11 +18,14 @@ function createPreparedStatement(db: DBType) {
         id: sql.placeholder('id'),
         oneTimeLink: sql.placeholder('oneTimeLink'),
         expiresAt: sql.placeholder('expiresAt'),
+        configFormat: sql.placeholder('configFormat'),
       })
       .onConflictDoUpdate({
         target: oneTimeLink.id,
         set: {
           expiresAt: sql.placeholder('expiresAt') as never as string,
+          configFormat: sql.placeholder('configFormat') as never as
+            'wireguard' | 'amneziawg',
         },
       })
       .prepare(),
@@ -40,9 +43,11 @@ function createPreparedStatement(db: DBType) {
 }
 
 export class OneTimeLinkService {
+  #db: DBType;
   #statements: ReturnType<typeof createPreparedStatement>;
 
   constructor(db: DBType) {
+    this.#db = db;
     this.#statements = createPreparedStatement(db);
   }
 
@@ -54,7 +59,7 @@ export class OneTimeLinkService {
     return this.#statements.findByOneTimeLink.execute({ oneTimeLink });
   }
 
-  generate(id: ID) {
+  async generate(id: ID) {
     // SECURITY
     // This is known to be vulnerable to brute force attacks
     // Mitigations: Small Window, One Time Use
@@ -63,7 +68,28 @@ export class OneTimeLinkService {
     const oneTimeLink = Math.abs(CRC32.str(key)).toString(16);
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    return this.#statements.create.execute({ id, oneTimeLink, expiresAt });
+    const client = await this.#db.query.client.findFirst({
+      where: (table, { eq }) => eq(table.id, id),
+      with: { interface: true },
+    });
+    if (!client) {
+      throw new Error('Client not found');
+    }
+
+    const configFormat =
+      client.preferredConfigFormat === 'auto'
+        ? client.interface.defaultConfigFormat
+        : client.preferredConfigFormat;
+    if (configFormat === 'migration_pending') {
+      throw new Error('Interface compatibility migration is unresolved');
+    }
+
+    return this.#statements.create.execute({
+      id,
+      oneTimeLink,
+      expiresAt,
+      configFormat,
+    });
   }
 
   erase(id: ID) {

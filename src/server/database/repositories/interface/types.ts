@@ -1,6 +1,5 @@
 import type { InferSelectModel } from 'drizzle-orm';
 import z from 'zod';
-import isCidr from 'is-cidr';
 
 import type { wgInterface } from './schema';
 
@@ -14,10 +13,13 @@ import {
   MtuSchema,
   PortSchema,
   SSchema,
-  safeStringRefine,
   schemaForType,
-  t,
 } from '#server/utils/types';
+import {
+  Ipv4CidrSchema,
+  Ipv6CidrSchema,
+  NetworkDeviceSchema,
+} from '#shared/utils/schemas';
 
 export type InterfaceType = InferSelectModel<typeof wgInterface>;
 
@@ -28,24 +30,22 @@ export type InterfaceCreateType = Omit<
 
 export type InterfaceUpdateType = Omit<
   InterfaceCreateType,
-  'name' | 'createdAt' | 'updatedAt' | 'privateKey' | 'publicKey'
+  | 'name'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'privateKey'
+  | 'publicKey'
+  | 'awgParametersEnabled'
+  | 'defaultConfigFormat'
+  | 'pendingDelete'
 >;
 
-const device = z
-  .string({ message: t('zod.interface.device') })
-  .min(1, t('zod.interface.device'))
-  .pipe(safeStringRefine);
-
-const cidr = z
-  .string({ message: t('zod.interface.cidr') })
-  .min(1, { message: t('zod.interface.cidr') })
-  .refine((value) => isCidr(value), { message: t('zod.interface.cidrValid') })
-  .pipe(safeStringRefine);
+const device = NetworkDeviceSchema;
 
 export const InterfaceUpdateSchema = schemaForType<InterfaceUpdateType>()(
   z.object({
-    ipv4Cidr: cidr,
-    ipv6Cidr: cidr,
+    ipv4Cidr: Ipv4CidrSchema,
+    ipv6Cidr: Ipv6CidrSchema,
     mtu: MtuSchema,
     jC: JcSchema,
     jMin: JminSchema,
@@ -78,7 +78,7 @@ export type InterfaceCidrUpdateType = {
 export const InterfaceCidrUpdateSchema =
   schemaForType<InterfaceCidrUpdateType>()(
     z.object({
-      ipv4Cidr: cidr,
-      ipv6Cidr: cidr,
+      ipv4Cidr: Ipv4CidrSchema,
+      ipv6Cidr: Ipv6CidrSchema,
     })
   );

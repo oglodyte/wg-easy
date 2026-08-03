@@ -20,7 +20,7 @@ export const client = sqliteTable(
     interfaceId: text('interface_id')
       .notNull()
       .references(() => wgInterface.name, {
-        onDelete: 'cascade',
+        onDelete: 'restrict',
         onUpdate: 'cascade',
       }),
     name: text().notNull(),
@@ -54,6 +54,10 @@ export const client = sqliteTable(
     i5: text(),
     dns: text({ mode: 'json' }).$type<string[]>(),
     serverEndpoint: text('server_endpoint'),
+    preferredConfigFormat: text('preferred_config_format')
+      .$type<'auto' | 'wireguard' | 'amneziawg'>()
+      .notNull()
+      .default('auto'),
     enabled: int({ mode: 'boolean' }).notNull(),
     createdAt: text('created_at')
       .notNull()

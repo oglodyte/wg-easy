@@ -36,6 +36,16 @@ export const wgInterface = sqliteTable('interfaces_table', {
   firewallEnabled: int('firewall_enabled', { mode: 'boolean' })
     .notNull()
     .default(false),
+  awgParametersEnabled: int('awg_parameters_enabled', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  defaultConfigFormat: text('default_config_format')
+    .$type<'wireguard' | 'amneziawg' | 'migration_pending'>()
+    .notNull()
+    .default('wireguard'),
+  pendingDelete: int('pending_delete', { mode: 'boolean' })
+    .notNull()
+    .default(false),
   createdAt: text('created_at')
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),
