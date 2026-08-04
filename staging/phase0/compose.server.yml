@@ -19,6 +19,8 @@ services:
     ports:
       - 51821:51821/tcp
       - 51820:51820/udp
+      # Publish the configured awg-p2 endpoint; TCP 51821 remains the UI/API.
+      - 51821:51821/udp
     restart: unless-stopped
     cap_add:
       - NET_ADMIN

@@ -54,6 +54,7 @@ grep -q 'ensure_network wg-easy-phase0-management 172.30.113.0/24 false' \
   "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q '51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"
 grep -q '51820:51820/udp' "${PHASE0_DIR}/compose.server.yml"
+grep -q '51821:51821/udp' "${PHASE0_DIR}/compose.server.yml"
 if grep -q '127.0.0.1:51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"; then
   echo "Phase 0 staging UI must not remain loopback-only." >&2
   exit 1
@@ -65,6 +66,7 @@ grep -q 'if curl --fail --silent --show-error' "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q 'up -d --remove-orphans --force-recreate' "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q 'PHASE0_ENDPOINT_HOST' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'UDP port 51820 is already in use' "${PHASE0_DIR}/scripts/preflight.sh"
+grep -q 'UDP port 51821 is already in use' "${PHASE0_DIR}/scripts/preflight.sh"
 grep -q 'ip -4 route show default' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'refusing to replace non-baseline Phase 0 NAT hooks' "${PHASE0_DIR}/scripts/seed-baseline.sh"
 grep -q 'install -d -m 0710 -o root' "${PHASE0_DIR}/scripts/seed-baseline.sh"

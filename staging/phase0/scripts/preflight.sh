@@ -50,4 +50,10 @@ if ss -H -lun '( sport = :51820 )' | grep -q .; then
   fi
 fi
 
+if ss -H -lun '( sport = :51821 )' | grep -q .; then
+  if ! "${docker_cmd[@]}" ps --format '{{.Names}}' | grep -qx 'wg-easy-phase0'; then
+    fail "UDP port 51821 is already in use by a non-Phase-0 process"
+  fi
+fi
+
 echo "Phase 0 reservation and secret-file preflight passed."
