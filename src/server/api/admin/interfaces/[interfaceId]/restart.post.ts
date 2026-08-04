@@ -1,10 +1,18 @@
-import { createError } from 'h3';
+import { getValidatedRouterParams } from 'h3';
 
+import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
+import { validateZod } from '#server/utils/types';
+import { InterfaceGetSchema } from '#db/repositories/interface/types';
 
-export default definePermissionEventHandler('admin', 'any', async () => {
-  throw createError({
-    statusCode: 409,
-    statusMessage: 'Interface-scoped restart is unavailable until Phase 3.',
-  });
-});
+export default definePermissionEventHandler(
+  'admin',
+  'any',
+  async ({ event }) => {
+    const { interfaceId } = await getValidatedRouterParams(
+      event,
+      validateZod(InterfaceGetSchema, event)
+    );
+    return WireGuard.restart(interfaceId);
+  }
+);

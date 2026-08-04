@@ -1,10 +1,30 @@
-import { createError } from 'h3';
+import { createError, getValidatedRouterParams } from 'h3';
 
+import Database from '#server/utils/Database';
+import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
+import { validateZod } from '#server/utils/types';
+import { InterfaceDeletionBlockedError } from '#db/repositories/interface/service';
+import { InterfaceGetSchema } from '#db/repositories/interface/types';
 
-export default definePermissionEventHandler('admin', 'any', async () => {
-  throw createError({
-    statusCode: 409,
-    statusMessage: 'Staged interface deletion is unavailable until Phase 3.',
-  });
-});
+export default definePermissionEventHandler(
+  'admin',
+  'any',
+  async ({ event }) => {
+    const { interfaceId } = await getValidatedRouterParams(
+      event,
+      validateZod(InterfaceGetSchema, event)
+    );
+    try {
+      await Database.interfaces.stageDelete(interfaceId);
+    } catch (error) {
+      if (error instanceof InterfaceDeletionBlockedError) {
+        throw createError({ statusCode: 409, statusMessage: error.message });
+      }
+      throw error;
+    }
+    return WireGuard.requestReconcile('delete-interface', [
+      { interfaceId, action: 'down' },
+    ]);
+  }
+);

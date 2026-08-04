@@ -4,6 +4,8 @@ import CRC32 from 'crc-32';
 import { oneTimeLink } from './schema';
 
 import type { ID } from '#server/utils/types';
+import { resolveClientConfigFormat } from '#server/utils/wgHelper';
+import type { ConfigFormat } from '#shared/types/runtime';
 import type { DBType } from '#db/sqlite';
 
 function createPreparedStatement(db: DBType) {
@@ -59,7 +61,7 @@ export class OneTimeLinkService {
     return this.#statements.findByOneTimeLink.execute({ oneTimeLink });
   }
 
-  async generate(id: ID) {
+  async generate(id: ID, requestedFormat: ConfigFormat = 'auto') {
     // SECURITY
     // This is known to be vulnerable to brute force attacks
     // Mitigations: Small Window, One Time Use
@@ -76,13 +78,11 @@ export class OneTimeLinkService {
       throw new Error('Client not found');
     }
 
-    const configFormat =
-      client.preferredConfigFormat === 'auto'
-        ? client.interface.defaultConfigFormat
-        : client.preferredConfigFormat;
-    if (configFormat === 'migration_pending') {
-      throw new Error('Interface compatibility migration is unresolved');
-    }
+    const configFormat = resolveClientConfigFormat(
+      client.interface,
+      client,
+      requestedFormat
+    );
 
     return this.#statements.create.execute({
       id,

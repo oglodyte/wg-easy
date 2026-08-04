@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { userConfig } from './schema';
 import type { UserConfigUpdateType } from './types';
 
+import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 import type { DBType } from '#db/sqlite';
 
 function createPreparedStatement(db: DBType) {
@@ -42,18 +43,26 @@ export class UserConfigService {
    * The endpoint port is intentionally independent from the interface listen port.
    */
   updateHostPort(interfaceId: string, host: string, port: number) {
-    return this.#db
-      .update(userConfig)
-      .set({ host, port })
-      .where(eq(userConfig.id, interfaceId))
-      .execute();
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(userConfig)
+        .set({ host, port })
+        .where(eq(userConfig.id, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
+    });
   }
 
   update(interfaceId: string, data: Partial<UserConfigUpdateType>) {
-    return this.#db
-      .update(userConfig)
-      .set(data)
-      .where(eq(userConfig.id, interfaceId))
-      .execute();
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(userConfig)
+        .set(data)
+        .where(eq(userConfig.id, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
+    });
   }
 }

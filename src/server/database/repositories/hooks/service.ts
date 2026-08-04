@@ -3,6 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { hooks } from './schema';
 import type { HooksUpdateType } from './types';
 
+import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 import type { DBType } from '#db/sqlite';
 
 function createPreparedStatement(db: DBType) {
@@ -33,10 +34,14 @@ export class HooksService {
   }
 
   update(interfaceId: string, data: HooksUpdateType) {
-    return this.#db
-      .update(hooks)
-      .set(data)
-      .where(eq(hooks.id, interfaceId))
-      .execute();
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(hooks)
+        .set(data)
+        .where(eq(hooks.id, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
+    });
   }
 }

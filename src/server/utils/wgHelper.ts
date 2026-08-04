@@ -9,15 +9,44 @@ import type { ClientType } from '#db/repositories/client/types';
 import type { InterfaceType } from '#db/repositories/interface/types';
 import type { UserConfigType } from '#db/repositories/userConfig/types';
 import type { HooksType } from '#db/repositories/hooks/types';
+import type { ConcreteConfigFormat, ConfigFormat } from '#shared/types/runtime';
 import { InterfaceNameSchema } from '#shared/utils/schemas';
 
 type Options = {
   enableIpv6?: boolean;
+  format?: ConfigFormat;
 };
 
 // needed to support cli
 const wgExecutable =
   typeof WG_ENV !== 'undefined' ? WG_ENV.WG_EXECUTABLE : 'dev';
+
+export class ConfigFormatUnavailableError extends Error {}
+
+export function resolveClientConfigFormat(
+  wgInterface: InterfaceType,
+  client: ClientType,
+  requested: ConfigFormat = 'auto'
+): ConcreteConfigFormat {
+  const selected =
+    requested === 'auto'
+      ? client.preferredConfigFormat === 'auto'
+        ? wgInterface.defaultConfigFormat
+        : client.preferredConfigFormat
+      : requested;
+
+  if (selected === 'migration_pending') {
+    throw new ConfigFormatUnavailableError(
+      'Interface compatibility migration is unresolved'
+    );
+  }
+  if (selected === 'wireguard' && wgInterface.awgParametersEnabled) {
+    throw new ConfigFormatUnavailableError(
+      `WireGuard export is unavailable for interface ${wgInterface.name} while AWG parameters are enabled`
+    );
+  }
+  return selected;
+}
 
 export const wg = {
   generateServerPeer: (
@@ -107,7 +136,12 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
     client: ClientType,
     options: Options = {}
   ) => {
-    const { enableIpv6 = true } = options;
+    const { enableIpv6 = true, format = 'auto' } = options;
+    const resolvedFormat = resolveClientConfigFormat(
+      wgInterface,
+      client,
+      format
+    );
 
     const address =
       `${client.ipv4Address}/32` +
@@ -125,7 +159,7 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
       dnsServers.length > 0 ? `DNS = ${dnsServers.join(', ')}` : null;
 
     const awgLines = generateAwgParameterLines(
-      wgInterface.awgParametersEnabled,
+      resolvedFormat === 'amneziawg' && wgInterface.awgParametersEnabled,
       {
         Jc: client.jC,
         Jmin: client.jMin,
@@ -193,6 +227,24 @@ Endpoint = ${userConfig.host}:${userConfig.port}`;
     ]);
   },
 
+  downLegacy: (infName: string) => {
+    return execFile('wg-quick', ['down', InterfaceNameSchema.parse(infName)]);
+  },
+
+  interfaceExists: async (infName: string) => {
+    try {
+      await execFile('ip', [
+        'link',
+        'show',
+        'dev',
+        InterfaceNameSchema.parse(infName),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   restart: async (infName: string) => {
     const interfaceId = InterfaceNameSchema.parse(infName);
     await execFile(`${wgExecutable}-quick`, ['down', interfaceId]).catch(
@@ -210,6 +262,12 @@ Endpoint = ${userConfig.host}:${userConfig.port}`;
     return withSecureInputFile(`${strippedConfig}\n`, (inputPath) =>
       execFile(wgExecutable, ['syncconf', interfaceId, inputPath])
     );
+  },
+
+  validateConfig: async (configPath: string) => {
+    await execFile(`${wgExecutable}-quick`, ['strip', configPath], {
+      log: `${wgExecutable}-quick strip <generated-config>`,
+    });
   },
 
   dump: async (infName: string) => {

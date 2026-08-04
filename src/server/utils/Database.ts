@@ -20,7 +20,9 @@ let provider = nullObject as never as DBServiceType;
 connect()
   .then((db) => {
     provider = db;
-    WireGuard.Startup();
+    WireGuard.Startup().catch((error) => {
+      console.error('Managed interface startup failed:', error);
+    });
   })
   .catch((err) => {
     console.log('Failed to connect to Database:', err);

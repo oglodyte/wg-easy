@@ -21,13 +21,24 @@ export default defineCommand({
       type: 'boolean',
       default: true,
     },
+    format: {
+      required: false,
+      type: 'string',
+      default: 'auto',
+      description: 'auto, wireguard, or amneziawg',
+    },
   },
   async run(ctx) {
     const clientId = Number(ctx.args.id);
     const enableIpv6 = ctx.args.ipv6;
+    const format = ctx.args.format;
 
     if (Number.isNaN(clientId)) {
       consola.error('Invalid client ID');
+      return;
+    }
+    if (!['auto', 'wireguard', 'amneziawg'].includes(format)) {
+      consola.error('Invalid config format');
       return;
     }
 
@@ -63,6 +74,7 @@ export default defineCommand({
       client,
       {
         enableIpv6,
+        format: format as 'auto' | 'wireguard' | 'amneziawg',
       }
     );
 

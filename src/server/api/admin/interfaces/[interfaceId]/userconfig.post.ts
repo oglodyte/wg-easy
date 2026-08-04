@@ -1,6 +1,7 @@
 import { getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
+import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { InterfaceGetSchema } from '#db/repositories/interface/types';
@@ -19,6 +20,8 @@ export default definePermissionEventHandler(
       validateZod(UserConfigUpdateSchema, event)
     );
     await Database.userConfigs.update(interfaceId, data);
-    return { success: true, runtime: { status: 'unavailable' } };
+    return WireGuard.requestReconcile('update-interface-client-defaults', [
+      { interfaceId, action: 'none' },
+    ]);
   }
 );

@@ -1,7 +1,6 @@
 import { createDebug } from 'obug';
 import packageJson from '@@/package.json';
 
-import { execFile } from '#server/utils/cmd';
 import {
   OAUTH_PROVIDERS,
   isConfiguredOauthProvider,
@@ -19,24 +18,6 @@ export const OLD_ENV = {
   PASSWORD_HASH: process.env.PASSWORD_HASH,
 };
 
-const detectAwg = async (): Promise<'awg' | 'wg'> => {
-  /** TODO: delete on next major version */
-  if (process.env.EXPERIMENTAL_AWG === 'true') {
-    const OVERRIDE_AUTO_AWG = process.env.OVERRIDE_AUTO_AWG?.toLowerCase();
-
-    if (
-      OVERRIDE_AUTO_AWG === ('wg' as const) ||
-      OVERRIDE_AUTO_AWG === ('awg' as const)
-    ) {
-      return OVERRIDE_AUTO_AWG;
-    } else {
-      return await execFile('modinfo', ['amneziawg'])
-        .then(() => 'awg' as const)
-        .catch(() => 'wg' as const);
-    }
-  } else return 'wg';
-};
-
 const oauthProviders = process.env.OAUTH_PROVIDERS?.split(',')
   .map((v) => v.trim())
   .filter((v) => isValidOauthProvider(v))
@@ -49,7 +30,9 @@ export const WG_ENV = {
   PORT: assertEnv('PORT'),
   /** If IPv6 should be disabled */
   DISABLE_IPV6: process.env.DISABLE_IPV6 === 'true',
-  WG_EXECUTABLE: await detectAwg(),
+  // Version 1 has one runtime backend. WireGuard compatibility is achieved by
+  // omitting AWG-only fields, never by switching executables per interface.
+  WG_EXECUTABLE: 'awg' as const,
   DISABLE_VERSION_CHECK: process.env.DISABLE_VERSION_CHECK === 'true',
   /** List of enabled and configured OAuth providers */
   OAUTH_PROVIDERS: oauthProviders,

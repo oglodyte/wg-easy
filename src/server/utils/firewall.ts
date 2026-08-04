@@ -34,6 +34,13 @@ type FirewallClient = Pick<
   | 'enabled'
 >;
 
+type FirewallInterfaceState = {
+  wgInterface: InterfaceType;
+  observedUp: boolean;
+  clients: FirewallClient[];
+  userConfig: UserConfigType;
+};
+
 /**
  * Sanitize a client identifier for use in an iptables comment.
  * Strips all characters except ASCII alphanumeric, space, underscore, hyphen, and dot.
@@ -349,16 +356,69 @@ export const firewall = {
   },
 
   /**
-   * Remove all firewall filtering (when feature is disabled)
+   * Rebuild the current shared client-filter chain from fresh state for every
+   * managed interface. Phase 6 replaces the sequential rule application with
+   * an atomic restore transaction; this Phase 3 form fixes cross-interface
+   * identity and deletion without introducing common-routing behavior.
    */
-  async removeFiltering(
+  async rebuildAllRules(
+    states: readonly FirewallInterfaceState[],
+    enableIpv6: boolean
+  ): Promise<void> {
+    const active = states.filter(
+      ({ wgInterface, observedUp }) =>
+        observedUp && wgInterface.enabled && wgInterface.firewallEnabled
+    );
+
+    for (const { wgInterface } of states) {
+      if (
+        !active.some(({ wgInterface: item }) => item.name === wgInterface.name)
+      ) {
+        await this.removeInterfaceJump(wgInterface.name, enableIpv6);
+      }
+    }
+
+    if (active.length === 0) {
+      await execFile('iptables', ['-F', CHAIN_NAME]).catch(() => {});
+      await execFile('iptables', ['-X', CHAIN_NAME]).catch(() => {});
+      if (enableIpv6) {
+        await execFile('ip6tables', ['-F', CHAIN_NAME]).catch(() => {});
+        await execFile('ip6tables', ['-X', CHAIN_NAME]).catch(() => {});
+      }
+      return;
+    }
+
+    if (!(await this.isAvailable(enableIpv6))) {
+      throw new Error('Per-client firewall tools are unavailable');
+    }
+
+    for (const { wgInterface } of active) {
+      await this.initChain(wgInterface.name, enableIpv6);
+    }
+    await this.flushChain(enableIpv6);
+
+    for (const { clients, userConfig } of active) {
+      for (const client of clients) {
+        if (!client.enabled) continue;
+        await this.applyClientRules(
+          client,
+          userConfig.defaultAllowedIps,
+          enableIpv6
+        );
+      }
+    }
+
+    await execFile('iptables', ['-A', CHAIN_NAME, '-j', 'DROP']);
+    if (enableIpv6) {
+      await execFile('ip6tables', ['-A', CHAIN_NAME, '-j', 'DROP']);
+    }
+  },
+
+  async removeInterfaceJump(
     interfaceName: string,
     enableIpv6: boolean
   ): Promise<void> {
     const validatedInterfaceName = InterfaceNameSchema.parse(interfaceName);
-    FW_DEBUG(`Removing firewall filtering for interface ${interfaceName}`);
-
-    // Remove jump rules from FORWARD chain
     await execFile('iptables', [
       '-D',
       'FORWARD',
@@ -377,6 +437,20 @@ export const firewall = {
         CHAIN_NAME,
       ]).catch(() => {});
     }
+  },
+
+  /**
+   * Remove all firewall filtering (when feature is disabled)
+   */
+  async removeFiltering(
+    interfaceName: string,
+    enableIpv6: boolean
+  ): Promise<void> {
+    const validatedInterfaceName = InterfaceNameSchema.parse(interfaceName);
+    FW_DEBUG(`Removing firewall filtering for interface ${interfaceName}`);
+
+    // Remove jump rules from FORWARD chain
+    await this.removeInterfaceJump(validatedInterfaceName, enableIpv6);
 
     // Flush and delete the chain
     await execFile('iptables', ['-F', CHAIN_NAME]).catch(() => {});

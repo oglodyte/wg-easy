@@ -51,8 +51,6 @@ export type InterfaceUpdateType = Omit<
   | 'updatedAt'
   | 'privateKey'
   | 'publicKey'
-  | 'awgParametersEnabled'
-  | 'defaultConfigFormat'
   | 'pendingDelete'
 >;
 
@@ -83,8 +81,19 @@ export const InterfaceUpdateSchema = schemaForType<InterfaceUpdateType>()(
     device: device,
     enabled: EnabledSchema,
     firewallEnabled: EnabledSchema,
+    awgParametersEnabled: EnabledSchema,
+    defaultConfigFormat: z.enum(['wireguard', 'amneziawg']),
   })
-);
+).superRefine((value, context) => {
+  if (value.awgParametersEnabled && value.defaultConfigFormat === 'wireguard') {
+    context.addIssue({
+      code: 'custom',
+      path: ['defaultConfigFormat'],
+      message:
+        'WireGuard cannot be the default export format while AWG parameters are enabled',
+    });
+  }
+});
 
 export type InterfaceCidrUpdateType = {
   ipv4Cidr: string;

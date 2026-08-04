@@ -12,8 +12,11 @@ import type {
 import { nextIP } from '#server/utils/ip';
 import type { ID } from '#server/utils/types';
 import { wg } from '#server/utils/wgHelper';
+import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 import type { DBType } from '#db/sqlite';
 import { wgInterface, userConfig } from '#db/schema';
+
+export class InterfaceUnavailableForClientCreationError extends Error {}
 
 function createPreparedStatement(db: DBType) {
   return {
@@ -26,15 +29,6 @@ function createPreparedStatement(db: DBType) {
       .prepare(),
     findById: db.query.client
       .findFirst({ where: eq(client.id, sql.placeholder('id')) })
-      .prepare(),
-    toggle: db
-      .update(client)
-      .set({ enabled: sql.placeholder('enabled') as never as boolean })
-      .where(eq(client.id, sql.placeholder('id')))
-      .prepare(),
-    delete: db
-      .delete(client)
-      .where(eq(client.id, sql.placeholder('id')))
       .prepare(),
   };
 }
@@ -72,6 +66,15 @@ export class ClientService {
       createdAt: new Date(row.createdAt),
       updatedAt: new Date(row.updatedAt),
     }));
+  }
+
+  async getAllForInterfaces(interfaceIds: readonly string[]) {
+    const clients = await Promise.all(
+      [...new Set(interfaceIds)].map((interfaceId) =>
+        this.getAllForInterface(interfaceId)
+      )
+    );
+    return clients.flat();
   }
 
   /**
@@ -195,6 +198,11 @@ export class ClientService {
       if (!clientInterface) {
         throw new Error('WireGuard interface not found');
       }
+      if (clientInterface.pendingDelete) {
+        throw new InterfaceUnavailableForClientCreationError(
+          'WireGuard interface is pending deletion'
+        );
+      }
 
       const clientConfig = await tx.query.userConfig
         .findFirst({
@@ -211,7 +219,7 @@ export class ClientService {
       const ipv6Cidr = parseCidr(clientInterface.ipv6Cidr);
       const ipv6Address = nextIP(6, ipv6Cidr, clients);
 
-      return await tx
+      const result = await tx
         .insert(client)
         .values({
           name,
@@ -239,15 +247,35 @@ export class ClientService {
         })
         .returning({ clientId: client.id })
         .execute();
+      await bumpDesiredRevision(tx, [selectedInterfaceId]);
+      return result;
     });
   }
 
   toggle(id: ID, enabled: boolean) {
-    return this.#statements.toggle.execute({ id, enabled });
+    return this.#db.transaction(async (tx) => {
+      const existing = await tx.query.client
+        .findFirst({ where: eq(client.id, id) })
+        .execute();
+      if (!existing) throw new Error('Client not found');
+      await tx
+        .update(client)
+        .set({ enabled })
+        .where(eq(client.id, id))
+        .execute();
+      await bumpDesiredRevision(tx, [existing.interfaceId]);
+    });
   }
 
   delete(id: ID) {
-    return this.#statements.delete.execute({ id });
+    return this.#db.transaction(async (tx) => {
+      const existing = await tx.query.client
+        .findFirst({ where: eq(client.id, id) })
+        .execute();
+      if (!existing) throw new Error('Client not found');
+      await tx.delete(client).where(eq(client.id, id)).execute();
+      await bumpDesiredRevision(tx, [existing.interfaceId]);
+    });
   }
 
   update(id: ID, data: UpdateClientType) {
@@ -275,6 +303,7 @@ export class ClientService {
       }
 
       await tx.update(client).set(data).where(eq(client.id, id)).execute();
+      await bumpDesiredRevision(tx, [existingClient.interfaceId]);
     });
   }
 
@@ -295,31 +324,35 @@ export class ClientService {
       throw new Error('WireGuard interface configuration not found');
     }
 
-    return this.#db
-      .insert(client)
-      .values({
-        name,
-        userId: 1,
-        interfaceId,
-        privateKey,
-        publicKey,
-        preSharedKey,
-        ipv4Address,
-        ipv6Address,
-        mtu: clientConfig.defaultMtu,
-        jC: clientConfig.defaultJC,
-        jMin: clientConfig.defaultJMin,
-        jMax: clientConfig.defaultJMax,
-        i1: clientConfig.defaultI1,
-        i2: clientConfig.defaultI2,
-        i3: clientConfig.defaultI3,
-        i4: clientConfig.defaultI4,
-        allowedIps: clientConfig.defaultAllowedIps,
-        dns: clientConfig.defaultDns,
-        persistentKeepalive: clientConfig.defaultPersistentKeepalive,
-        serverAllowedIps: [],
-        enabled,
-      })
-      .execute();
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .insert(client)
+        .values({
+          name,
+          userId: 1,
+          interfaceId,
+          privateKey,
+          publicKey,
+          preSharedKey,
+          ipv4Address,
+          ipv6Address,
+          mtu: clientConfig.defaultMtu,
+          jC: clientConfig.defaultJC,
+          jMin: clientConfig.defaultJMin,
+          jMax: clientConfig.defaultJMax,
+          i1: clientConfig.defaultI1,
+          i2: clientConfig.defaultI2,
+          i3: clientConfig.defaultI3,
+          i4: clientConfig.defaultI4,
+          allowedIps: clientConfig.defaultAllowedIps,
+          dns: clientConfig.defaultDns,
+          persistentKeepalive: clientConfig.defaultPersistentKeepalive,
+          serverAllowedIps: [],
+          enabled,
+        })
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
+    });
   }
 }

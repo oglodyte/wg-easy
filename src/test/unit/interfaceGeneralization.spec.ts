@@ -89,6 +89,18 @@ describe('Phase 2 interface-scoped repositories', () => {
     });
     expect(endpoint).toMatchObject({ host: 'vpn.example.test', port: 51830 });
     expect(listenPort.rows[0]?.port).toBe(51821);
+    const globalRuntime = await client.execute({
+      sql: `SELECT desired_revision FROM runtime_reconciliation_state_table WHERE id = 1`,
+      args: [],
+    });
+    const interfaceRuntime = await client.execute({
+      sql: `SELECT desired_revision FROM interface_runtime_state_table WHERE interface_id = 'awg1'`,
+      args: [],
+    });
+    // Interface creation and endpoint mutation each advance desired state in
+    // the same repository transactions that persist those changes.
+    expect(globalRuntime.rows[0]?.desired_revision).toBe(3);
+    expect(interfaceRuntime.rows[0]?.desired_revision).toBe(3);
   });
 
   test('rejects CIDR and listen-port collisions', async () => {
@@ -151,5 +163,41 @@ describe('Phase 2 interface-scoped repositories', () => {
         ipv4Address: '10.251.0.2',
       })
     ).rejects.toThrow('IPv4 address is not within the CIDR range');
+  });
+
+  test('stages deletion only after default and client dependencies are clear', async () => {
+    const { clients, interfaces } = await createServices();
+    await expect(interfaces.stageDelete('wg0')).rejects.toThrow(
+      'The default interface cannot be deleted'
+    );
+    await interfaces.create({
+      name: 'awg1',
+      device: 'eth0',
+      port: 51821,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+    });
+    const created = await clients.create({
+      name: 'dependency',
+      expiresAt: null,
+      interfaceId: 'awg1',
+    });
+    await expect(interfaces.stageDelete('awg1')).rejects.toThrow(
+      'Interface deletion is blocked while clients exist'
+    );
+
+    await clients.delete(created[0]!.clientId);
+    await interfaces.stageDelete('awg1');
+    await expect(interfaces.getByName('awg1')).resolves.toMatchObject({
+      enabled: false,
+      pendingDelete: true,
+    });
+    await expect(
+      clients.create({
+        name: 'too-late',
+        expiresAt: null,
+        interfaceId: 'awg1',
+      })
+    ).rejects.toThrow('WireGuard interface is pending deletion');
   });
 });

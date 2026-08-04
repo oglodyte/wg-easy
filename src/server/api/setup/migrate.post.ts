@@ -4,6 +4,7 @@ import { stringifyIp } from 'ip-bigint';
 import { z } from 'zod';
 
 import Database from '#server/utils/Database';
+import WireGuard from '#server/utils/WireGuard';
 import { defineSetupEventHandler } from '#server/utils/handler';
 import { nextIPFromUsedAddresses } from '#server/utils/ip';
 import { FileSchema, validateZod } from '#server/utils/types';
@@ -83,5 +84,7 @@ export default defineSetupEventHandler('migrate', async ({ event }) => {
   }
 
   await Database.general.setSetupStep(0);
-  return { success: true };
+  return WireGuard.requestReconcile('migrate-legacy-clients', [
+    { interfaceId: defaultInterface.name, action: 'restart' },
+  ]);
 });

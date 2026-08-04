@@ -19,7 +19,8 @@ export default definePermissionEventHandler(
     checkPermissions(client);
 
     await Database.clients.delete(clientId);
-    await WireGuard.saveConfig();
-    return { success: true };
+    return WireGuard.requestReconcile('delete-client', [
+      { interfaceId: client!.interfaceId, action: 'sync' },
+    ]);
   }
 );

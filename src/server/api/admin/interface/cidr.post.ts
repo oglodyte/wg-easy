@@ -17,7 +17,8 @@ export default definePermissionEventHandler(
 
     const defaultInterface = await Database.interfaces.getDefault();
     await Database.interfaces.updateCidr(defaultInterface.name, data);
-    await WireGuard.saveConfig();
-    return { success: true };
+    return WireGuard.requestReconcile('update-default-interface-cidr', [
+      { interfaceId: defaultInterface.name, action: 'restart' },
+    ]);
   }
 );

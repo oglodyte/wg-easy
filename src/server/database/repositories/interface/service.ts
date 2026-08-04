@@ -10,6 +10,7 @@ import type {
 
 import { nextIPFromUsedAddresses } from '#server/utils/ip';
 import { wg } from '#server/utils/wgHelper';
+import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 import {
   client as clientSchema,
   hooks,
@@ -17,6 +18,8 @@ import {
   userConfig,
 } from '#db/schema';
 import type { DBType } from '#db/sqlite';
+
+export class InterfaceDeletionBlockedError extends Error {}
 
 function createPreparedStatement(db: DBType) {
   return {
@@ -28,13 +31,6 @@ function createPreparedStatement(db: DBType) {
       .set({
         privateKey: sql.placeholder('privateKey') as never as string,
         publicKey: sql.placeholder('publicKey') as never as string,
-      })
-      .where(eq(wgInterface.name, sql.placeholder('interface')))
-      .prepare(),
-    setFirewallEnabled: db
-      .update(wgInterface)
-      .set({
-        firewallEnabled: sql.placeholder('firewallEnabled') as never as boolean,
       })
       .where(eq(wgInterface.name, sql.placeholder('interface')))
       .prepare(),
@@ -89,19 +85,39 @@ export class InterfaceService {
     });
   }
 
-  async update(interfaceId: string, data: InterfaceUpdateType) {
-    await this.assertCidrAndPortAvailable(data, interfaceId);
+  updateAwgHeaders(
+    interfaceId: string,
+    headers: { h1: string; h2: string; h3: string; h4: string }
+  ) {
     return this.#db
       .update(wgInterface)
-      .set(data)
+      .set(headers)
       .where(eq(wgInterface.name, interfaceId))
       .execute();
   }
 
+  async update(interfaceId: string, data: InterfaceUpdateType) {
+    await this.assertCidrAndPortAvailable(data, interfaceId);
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(wgInterface)
+        .set(data)
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
+    });
+  }
+
   setFirewallEnabled(interfaceId: string, firewallEnabled: boolean) {
-    return this.#statements.setFirewallEnabled.execute({
-      interface: interfaceId,
-      firewallEnabled,
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(wgInterface)
+        .set({ firewallEnabled })
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
     });
   }
 
@@ -199,6 +215,7 @@ export class InterfaceService {
           restartRequired: false,
         })
         .execute();
+      await bumpDesiredRevision(tx, [data.name]);
     });
 
     return this.getByName(data.name);
@@ -270,6 +287,78 @@ export class InterfaceService {
           .where(eq(clientSchema.id, client.id))
           .execute();
       }
+      await bumpDesiredRevision(tx, [interfaceId]);
     });
+  }
+
+  async assertCanDelete(interfaceId: string) {
+    const [generalConfig, existingClient] = await Promise.all([
+      this.#db.query.general
+        .findFirst({ columns: { defaultInterfaceId: true } })
+        .execute(),
+      this.#db.query.client
+        .findFirst({
+          where: eq(clientSchema.interfaceId, interfaceId),
+          columns: { id: true },
+        })
+        .execute(),
+    ]);
+    if (!generalConfig) throw new Error('General Config not found');
+    if (generalConfig.defaultInterfaceId === interfaceId) {
+      throw new InterfaceDeletionBlockedError(
+        'The default interface cannot be deleted'
+      );
+    }
+    if (existingClient) {
+      throw new InterfaceDeletionBlockedError(
+        'Interface deletion is blocked while clients exist'
+      );
+    }
+    return this.getByName(interfaceId);
+  }
+
+  async stageDelete(interfaceId: string) {
+    return this.#db.transaction(async (tx) => {
+      const [generalConfig, existingInterface, existingClient] =
+        await Promise.all([
+          tx.query.general
+            .findFirst({ columns: { defaultInterfaceId: true } })
+            .execute(),
+          tx.query.wgInterface
+            .findFirst({ where: eq(wgInterface.name, interfaceId) })
+            .execute(),
+          tx.query.client
+            .findFirst({
+              where: eq(clientSchema.interfaceId, interfaceId),
+              columns: { id: true },
+            })
+            .execute(),
+        ]);
+      if (!generalConfig) throw new Error('General Config not found');
+      if (!existingInterface) throw new Error('Interface not found');
+      if (generalConfig.defaultInterfaceId === interfaceId) {
+        throw new InterfaceDeletionBlockedError(
+          'The default interface cannot be deleted'
+        );
+      }
+      if (existingClient) {
+        throw new InterfaceDeletionBlockedError(
+          'Interface deletion is blocked while clients exist'
+        );
+      }
+      await tx
+        .update(wgInterface)
+        .set({ enabled: false, pendingDelete: true })
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+    });
+  }
+
+  finalizeDelete(interfaceId: string) {
+    return this.#db
+      .delete(wgInterface)
+      .where(eq(wgInterface.name, interfaceId))
+      .execute();
   }
 }

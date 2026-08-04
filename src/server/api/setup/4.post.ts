@@ -1,6 +1,7 @@
 import { readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
+import WireGuard from '#server/utils/WireGuard';
 import { defineSetupEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { UserConfigSetupSchema } from '#db/repositories/userConfig/types';
@@ -15,5 +16,7 @@ export default defineSetupEventHandler(4, async ({ event }) => {
   await Database.userConfigs.updateHostPort(defaultInterface.name, host, port);
 
   await Database.general.setSetupStep(0);
-  return { success: true };
+  return WireGuard.requestReconcile('complete-setup', [
+    { interfaceId: defaultInterface.name, action: 'none' },
+  ]);
 });

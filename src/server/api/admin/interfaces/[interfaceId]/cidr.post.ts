@@ -1,6 +1,7 @@
 import { getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
+import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import {
@@ -22,6 +23,8 @@ export default definePermissionEventHandler(
     );
     await Database.interfaces.assertCidrAndPortAvailable(data, interfaceId);
     await Database.interfaces.updateCidr(interfaceId, data);
-    return { success: true, runtime: { status: 'unavailable' } };
+    return WireGuard.requestReconcile('update-interface-cidr', [
+      { interfaceId, action: 'restart' },
+    ]);
   }
 );

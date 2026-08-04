@@ -11,71 +11,152 @@ export default defineMetricsHandler('prometheus', async ({ event }) => {
   return getPrometheusResponse();
 });
 
-async function getPrometheusResponse() {
-  const wgInterface = await Database.interfaces.get();
-  const clients = await WireGuard.getAllClients();
-  let wireguardEnabledPeersCount = 0;
-  let wireguardConnectedPeersCount = 0;
-  const wireguardSentBytes = [];
-  const wireguardReceivedBytes = [];
-  const wireguardLatestHandshakeSeconds = [];
+export async function getPrometheusResponse() {
+  const [interfaces, runtimeStates, reconciliation, clients] =
+    await Promise.all([
+      Database.interfaces.getAll(),
+      Database.runtime.getAllInterfaces(),
+      Database.runtime.getGlobal(),
+      WireGuard.getAllClients(),
+    ]);
+  const runtimeByInterface = new Map(
+    runtimeStates.map((runtime) => [runtime.interfaceId, runtime])
+  );
+  const output: string[] = [];
+
+  output.push(
+    '# HELP wg_easy_interface_enabled Whether the managed interface is enabled',
+    '# TYPE wg_easy_interface_enabled gauge'
+  );
+  for (const wgInterface of interfaces) {
+    const labels = formatPrometheusLabels({ interface: wgInterface.name });
+    output.push(
+      `wg_easy_interface_enabled{${labels}} ${wgInterface.enabled ? 1 : 0}`
+    );
+  }
+
+  output.push(
+    '',
+    '# HELP wg_easy_interface_up Whether the managed interface is observed up',
+    '# TYPE wg_easy_interface_up gauge'
+  );
+  for (const wgInterface of interfaces) {
+    const labels = formatPrometheusLabels({ interface: wgInterface.name });
+    output.push(
+      `wg_easy_interface_up{${labels}} ${runtimeByInterface.get(wgInterface.name)?.observedUp ? 1 : 0}`
+    );
+  }
+
+  output.push(
+    '',
+    '# HELP wg_easy_interface_desired_revision Desired interface configuration revision',
+    '# TYPE wg_easy_interface_desired_revision gauge',
+    '# HELP wg_easy_interface_applied_revision Last successfully applied interface configuration revision',
+    '# TYPE wg_easy_interface_applied_revision gauge',
+    '# HELP wg_easy_interface_reconciliation_degraded Whether interface reconciliation is degraded',
+    '# TYPE wg_easy_interface_reconciliation_degraded gauge'
+  );
+  for (const wgInterface of interfaces) {
+    const labels = formatPrometheusLabels({ interface: wgInterface.name });
+    const runtime = runtimeByInterface.get(wgInterface.name);
+    output.push(
+      `wg_easy_interface_desired_revision{${labels}} ${runtime?.desiredRevision ?? 0}`,
+      `wg_easy_interface_applied_revision{${labels}} ${runtime?.appliedRevision ?? 0}`,
+      `wg_easy_interface_reconciliation_degraded{${labels}} ${runtime?.status === 'degraded' ? 1 : 0}`
+    );
+  }
+
+  const sent: string[] = [];
+  const received: string[] = [];
+  const handshakeAge: string[] = [];
+  const handshakeTimestamp: string[] = [];
+  const connected: string[] = [];
+  let totalEnabled = 0;
+  let totalConnected = 0;
+
   for (const client of clients) {
-    if (client.enabled === true) {
-      wireguardEnabledPeersCount++;
-    }
-
-    if (isPeerConnected(client)) {
-      wireguardConnectedPeersCount++;
-    }
-
-    const id = formatPrometheusLabels({
-      interface: wgInterface.name,
+    if (client.enabled) totalEnabled++;
+    if (isPeerConnected(client)) totalConnected++;
+    const labels = formatPrometheusLabels({
+      interface: client.interfaceId,
+      client_id: client.id,
+      client_name: client.name,
       enabled: client.enabled,
       ipv4Address: client.ipv4Address,
       ipv6Address: client.ipv6Address,
       name: client.name,
     });
-
-    wireguardSentBytes.push(
-      `wireguard_sent_bytes{${id}} ${client.transferTx ?? 0}`
+    sent.push(`wireguard_sent_bytes{${labels}} ${client.transferTx ?? 0}`);
+    received.push(
+      `wireguard_received_bytes{${labels}} ${client.transferRx ?? 0}`
     );
-    wireguardReceivedBytes.push(
-      `wireguard_received_bytes{${id}} ${client.transferRx ?? 0}`
+    connected.push(
+      `wg_easy_client_connected{${labels}} ${isPeerConnected(client) ? 1 : 0}`
     );
-    // TODO: if latestHandshakeAt is null this would result in client showing as online?
-    wireguardLatestHandshakeSeconds.push(
-      `wireguard_latest_handshake_seconds{${id}} ${client.latestHandshakeAt ? (Date.now() - client.latestHandshakeAt.getTime()) / 1000 : 0}`
-    );
+    if (client.latestHandshakeAt) {
+      handshakeAge.push(
+        `wireguard_latest_handshake_seconds{${labels}} ${(Date.now() - client.latestHandshakeAt.getTime()) / 1000}`
+      );
+      handshakeTimestamp.push(
+        `wireguard_latest_handshake_timestamp_seconds{${labels}} ${client.latestHandshakeAt.getTime() / 1000}`
+      );
+    }
   }
 
-  const id = formatPrometheusLabels({ interface: wgInterface.name });
+  const interfaceCounts = interfaces.flatMap((wgInterface) => {
+    const interfaceClients = clients.filter(
+      ({ interfaceId }) => interfaceId === wgInterface.name
+    );
+    const labels = formatPrometheusLabels({ interface: wgInterface.name });
+    return [
+      `wireguard_configured_peers{${labels}} ${interfaceClients.length}`,
+      `wireguard_enabled_peers{${labels}} ${interfaceClients.filter(({ enabled }) => enabled).length}`,
+      `wireguard_connected_peers{${labels}} ${interfaceClients.filter(isPeerConnected).length}`,
+    ];
+  });
 
-  const returnText = [
-    '# HELP wireguard_configured_peers',
+  output.push(
+    '',
+    '# HELP wireguard_configured_peers Configured peers by interface',
     '# TYPE wireguard_configured_peers gauge',
-    `wireguard_configured_peers{${id}} ${clients.length}`,
-    '',
-    '# HELP wireguard_enabled_peers',
+    '# HELP wireguard_enabled_peers Enabled peers by interface',
     '# TYPE wireguard_enabled_peers gauge',
-    `wireguard_enabled_peers{${id}} ${wireguardEnabledPeersCount}`,
-    '',
-    '# HELP wireguard_connected_peers',
+    '# HELP wireguard_connected_peers Recently connected peers by interface',
     '# TYPE wireguard_connected_peers gauge',
-    `wireguard_connected_peers{${id}} ${wireguardConnectedPeersCount}`,
+    ...interfaceCounts,
+    '',
+    `wg_easy_configured_peers_total ${clients.length}`,
+    `wg_easy_enabled_peers_total ${totalEnabled}`,
+    `wg_easy_connected_peers_total ${totalConnected}`,
     '',
     '# HELP wireguard_sent_bytes Bytes sent to the peer',
     '# TYPE wireguard_sent_bytes counter',
-    `${wireguardSentBytes.join('\n')}`,
+    ...sent,
     '',
     '# HELP wireguard_received_bytes Bytes received from the peer',
     '# TYPE wireguard_received_bytes counter',
-    `${wireguardReceivedBytes.join('\n')}`,
+    ...received,
     '',
-    '# HELP wireguard_latest_handshake_seconds UNIX timestamp seconds of the last handshake',
+    '# HELP wireguard_latest_handshake_seconds Seconds since the last handshake',
     '# TYPE wireguard_latest_handshake_seconds gauge',
-    `${wireguardLatestHandshakeSeconds.join('\n')}`,
+    ...handshakeAge,
     '',
-  ];
+    '# HELP wireguard_latest_handshake_timestamp_seconds UNIX timestamp of the last handshake',
+    '# TYPE wireguard_latest_handshake_timestamp_seconds gauge',
+    ...handshakeTimestamp,
+    '',
+    '# HELP wg_easy_client_connected Whether the client has a recent handshake',
+    '# TYPE wg_easy_client_connected gauge',
+    ...connected,
+    '',
+    `wg_easy_runtime_desired_revision ${reconciliation.desiredRevision}`,
+    `wg_easy_runtime_applied_revision ${reconciliation.appliedRevision}`,
+    `wg_easy_runtime_reconciliation_degraded ${reconciliation.status === 'degraded' ? 1 : 0}`,
+    reconciliation.lastSucceededAt
+      ? `wg_easy_runtime_last_success_timestamp_seconds ${new Date(reconciliation.lastSucceededAt).getTime() / 1000}`
+      : 'wg_easy_runtime_last_success_timestamp_seconds 0',
+    ''
+  );
 
-  return returnText.join('\n');
+  return output.join('\n');
 }

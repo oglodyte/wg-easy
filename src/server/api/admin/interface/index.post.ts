@@ -7,6 +7,7 @@ import { firewall } from '#server/utils/firewall';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { InterfaceUpdateSchema } from '#db/repositories/interface/types';
+import { getInterfaceRuntimeAction } from '#shared/utils/interfaceLifecycle';
 
 export default definePermissionEventHandler(
   'admin',
@@ -37,8 +38,27 @@ export default definePermissionEventHandler(
     }
 
     const defaultInterface = await Database.interfaces.getDefault();
+    const action =
+      defaultInterface.enabled !== data.enabled
+        ? getInterfaceRuntimeAction({
+            kind: 'enabled',
+            before: defaultInterface.enabled,
+            after: data.enabled,
+          })
+        : Object.entries(data).some(
+              ([key, value]) =>
+                key !== 'enabled' &&
+                key !== 'firewallEnabled' &&
+                key !== 'defaultConfigFormat' &&
+                defaultInterface[key as keyof typeof defaultInterface] !== value
+            )
+          ? 'restart'
+          : data.firewallEnabled !== defaultInterface.firewallEnabled
+            ? 'sync'
+            : 'none';
     await Database.interfaces.update(defaultInterface.name, data);
-    await WireGuard.saveConfig();
-    return { success: true };
+    return WireGuard.requestReconcile('update-default-interface', [
+      { interfaceId: defaultInterface.name, action },
+    ]);
   }
 );

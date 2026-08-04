@@ -16,7 +16,9 @@ export default definePermissionEventHandler(
     );
     const defaultInterface = await Database.interfaces.getDefault();
     await Database.userConfigs.update(defaultInterface.name, data);
-    await WireGuard.saveConfig();
-    return { success: true };
+    return WireGuard.requestReconcile(
+      'update-default-interface-client-defaults',
+      [{ interfaceId: defaultInterface.name, action: 'none' }]
+    );
   }
 );

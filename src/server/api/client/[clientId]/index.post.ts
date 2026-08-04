@@ -27,8 +27,8 @@ export default definePermissionEventHandler(
     checkPermissions(client);
 
     await Database.clients.update(clientId, data);
-    await WireGuard.saveConfig();
-
-    return { success: true };
+    return WireGuard.requestReconcile('update-client', [
+      { interfaceId: client!.interfaceId, action: 'sync' },
+    ]);
   }
 );
