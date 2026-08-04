@@ -13,16 +13,7 @@ export default definePermissionEventHandler(
       event,
       validateZod(InterfaceGetSchema, event)
     );
-    const [wgInterface, runtime, defaultInterface] = await Promise.all([
-      Database.interfaces.getByName(interfaceId),
-      Database.runtime.getInterface(interfaceId),
-      Database.interfaces.getDefault(),
-    ]);
-    const { privateKey: _privateKey, ...safeInterface } = wgInterface;
-    return {
-      ...safeInterface,
-      isDefault: wgInterface.name === defaultInterface.name,
-      runtime,
-    };
+    const wgInterface = await Database.interfaces.setDefault(interfaceId);
+    return { success: true, interfaceId: wgInterface.name };
   }
 );

@@ -9,6 +9,29 @@
     <template #description>
       <div class="flex flex-col">
         <FormTextField id="name" v-model="name" :label="$t('client.name')" />
+        <label class="text-sm font-medium" for="interfaceId">{{
+          $t('client.interface')
+        }}</label>
+        <select
+          id="interfaceId"
+          v-model="interfaceId"
+          class="rounded border border-gray-300 bg-white p-2 dark:border-neutral-500 dark:bg-neutral-800"
+        >
+          <option
+            v-for="item in interfaces"
+            :key="item.interfaceId"
+            :value="item.interfaceId"
+          >
+            {{ item.interfaceId
+            }}{{ item.default ? ` — ${$t('admin.interfaces.default')}` : '' }}
+          </option>
+        </select>
+        <p
+          v-if="selectedInterface?.warning"
+          class="rounded border border-yellow-400 bg-yellow-50 p-2 text-sm text-yellow-900 dark:bg-yellow-950 dark:text-yellow-100"
+        >
+          {{ selectedInterface.warning }}
+        </p>
         <FormDateField
           id="expiresAt"
           v-model="expiresAt"
@@ -33,13 +56,35 @@
 const name = ref<string>('');
 const expiresAt = ref<string | null>(null);
 const clientsStore = useClientsStore();
+const { data: metadata } = await useFetch('/api/client/creation-metadata');
+const interfaces = computed(() => metadata.value ?? []);
+const interfaceId = ref<string>('');
+const selectedInterface = computed(() =>
+  interfaces.value.find((item) => item.interfaceId === interfaceId.value)
+);
+watch(
+  interfaces,
+  (items) => {
+    if (!interfaceId.value) {
+      interfaceId.value =
+        items.find((item) => item.default)?.interfaceId ??
+        items[0]?.interfaceId ??
+        '';
+    }
+  },
+  { immediate: true }
+);
 
 const { t } = useI18n();
 
 defineProps<{ triggerClass?: string }>();
 
 function createClient() {
-  return _createClient({ name: name.value, expiresAt: expiresAt.value });
+  return _createClient({
+    name: name.value,
+    expiresAt: expiresAt.value,
+    interfaceId: interfaceId.value || undefined,
+  });
 }
 
 const _createClient = useSubmit(

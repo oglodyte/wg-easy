@@ -30,6 +30,24 @@
             />
           </FormGroup>
           <FormGroup>
+            <FormHeading>{{ $t('client.interface') }}</FormHeading>
+            <FormInfoField
+              id="interface"
+              :label="$t('client.interface')"
+              :data="data.interface.name"
+            />
+            <FormInfoField
+              id="interfaceEndpoint"
+              :label="$t('admin.interfaces.endpoint')"
+              :data="`${data.interface.endpointHost}:${data.interface.endpointPort}`"
+            />
+            <FormInfoField
+              id="interfaceFormat"
+              :label="$t('admin.interfaces.defaultFormat')"
+              :data="data.interface.defaultConfigFormat"
+            />
+          </FormGroup>
+          <FormGroup>
             <FormHeading>{{ $t('client.address') }}</FormHeading>
             <FormTextField
               id="ipv4Address"
@@ -176,6 +194,23 @@
           </FormGroup>
           <FormGroup>
             <FormHeading>{{ $t('form.actions') }}</FormHeading>
+            <label class="col-span-full text-sm font-medium" for="configFormat">
+              {{ $t('client.configFormat') }}
+            </label>
+            <select
+              id="configFormat"
+              v-model="configFormat"
+              class="col-span-full rounded border border-gray-300 bg-white p-2 dark:border-neutral-500 dark:bg-neutral-800"
+            >
+              <option value="auto">{{ $t('client.autoFormat') }}</option>
+              <option
+                value="wireguard"
+                :disabled="data.interface.awgParametersEnabled"
+              >
+                WireGuard
+              </option>
+              <option value="amneziawg">AmneziaWG</option>
+            </select>
             <FormPrimaryActionField type="submit" :label="$t('form.save')" />
             <FormSecondaryActionField
               :label="$t('form.revert')"
@@ -195,6 +230,7 @@
             <ClientsConfigDialog
               trigger-class="col-span-2"
               :client-id="data.id"
+              :format="configFormat"
             >
               <FormSecondaryActionField
                 :label="$t('client.viewConfig')"
@@ -212,7 +248,16 @@
 <script lang="ts" setup>
 import type { ClientType } from '#db/repositories/client/types';
 
-type ClientDetail = ClientType & { endpoint: string | null | undefined };
+type ClientDetail = ClientType & {
+  endpoint: string | null | undefined;
+  interface: {
+    name: string;
+    endpointHost: string;
+    endpointPort: number;
+    defaultConfigFormat: string;
+    awgParametersEnabled: boolean;
+  };
+};
 
 const globalStore = useGlobalStore();
 
@@ -229,6 +274,7 @@ const { data: _data, refresh } = await useFetch<ClientDetail>(
   }
 );
 const data = toRef(_data.value);
+const configFormat = ref<'auto' | 'wireguard' | 'amneziawg'>('auto');
 
 const _submit = useSubmit(
   (data) =>

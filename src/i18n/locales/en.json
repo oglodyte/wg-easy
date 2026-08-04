@@ -7,6 +7,7 @@
       "general": "General",
       "config": "Config",
       "interface": "Interface",
+      "interfaces": "Interfaces",
       "hooks": "Hooks"
     }
   },
@@ -133,7 +134,12 @@
     "firewallIps": "Firewall Allowed IPs",
     "firewallIpsDesc": "Destination IPs/CIDRs this client can access (server-side enforcement). Leave empty to use Allowed IPs. Supports optional port and protocol filtering. See docs for syntax.",
     "downloadPng": "Download PNG",
-    "copyPng": "Copy PNG"
+    "copyPng": "Copy PNG",
+    "interface": "Interface",
+    "interfaceFilter": "Filter by interface",
+    "allInterfaces": "All interfaces",
+    "configFormat": "Configuration format",
+    "autoFormat": "Automatic (interface default)"
   },
   "dialog": {
     "change": "Change",
@@ -193,6 +199,37 @@
       "firewall": "Traffic Filtering",
       "firewallEnabled": "Enable Per-Client Firewall",
       "firewallEnabledDesc": "Restrict client traffic to specific destination IPs using iptables. When enabled, each client can be configured with allowed destinations."
+    },
+    "interfaces": {
+      "description": "Manage independent tunnel interfaces and their client defaults.",
+      "add": "Add interface",
+      "created": "Interface created",
+      "name": "Interface name",
+      "cloneFrom": "Clone settings from",
+      "cloneHelp": "Cloned interfaces start disabled. Review copied custom hooks before enabling.",
+      "default": "Default",
+      "makeDefault": "Make default",
+      "manage": "Manage",
+      "unknown": "Unknown",
+      "runtime": "Runtime state",
+      "revisions": "Applied / desired revision",
+      "overview": "Overview",
+      "clientDefaults": "Client defaults",
+      "danger": "Danger",
+      "delete": "Delete interface",
+      "deleteHelp": "Deletion is blocked for the default interface and for interfaces with clients.",
+      "deleteConfirm": "Delete this interface? It will first be safely stopped and cleaned up.",
+      "enabledDesc": "Saving enables or disables only this interface; its clients are preserved.",
+      "listenPort": "Listen port",
+      "listenPortDesc": "UDP port the interface listens on inside the server.",
+      "endpoint": "Client endpoint",
+      "endpointPort": "Client endpoint port",
+      "endpointPortDesc": "UDP port written into generated client profiles. It can differ from the listen port.",
+      "publicationGuidance": "Publishing this UDP port through Docker or the host is operator-managed. A saved interface is not proof that it is externally reachable.",
+      "defaultFormat": "Default configuration format",
+      "awgEnabled": "Enable AmneziaWG parameters",
+      "hookReviewRequired": "Review copied hooks and acknowledge them before enabling this cloned interface.",
+      "hookReviewAcknowledgement": "I reviewed the copied hooks, including any source-interface literals."
     },
     "introText": "Welcome to the admin panel.\n\nHere you can manage the general settings, the configuration, the interface settings and the hooks.\n\nStart by choosing one of the sections in the sidebar."
   },

@@ -32,9 +32,11 @@ export const useClientsStore = defineStore('Clients', () => {
   const clientsPersist = ref<Record<string, ClientPersist>>({});
 
   const filter = ref<string | undefined>(undefined);
+  const interfaceId = ref<string | undefined>(undefined);
 
   const searchParams = computed(() => ({
     filter: filter.value,
+    interfaceId: interfaceId.value,
     sort: globalStore.sortClient,
   }));
 
@@ -137,5 +139,18 @@ export const useClientsStore = defineStore('Clients', () => {
     filter.value = query || undefined;
   }
 
-  return { clients, clientsPersist, refresh, _clients, setSearchQuery };
+  function setInterfaceFilter(value?: string) {
+    clients.value = null;
+    interfaceId.value = value;
+  }
+
+  return {
+    clients,
+    clientsPersist,
+    refresh,
+    _clients,
+    interfaceId,
+    setSearchQuery,
+    setInterfaceFilter,
+  };
 });

@@ -13,6 +13,7 @@ import { wg } from '#server/utils/wgHelper';
 import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 import {
   client as clientSchema,
+  general,
   hooks,
   interfaceRuntimeState,
   userConfig,
@@ -70,6 +71,18 @@ export class InterfaceService {
       .execute();
     if (!config) throw new Error('General Config not found');
     return this.getByName(config.defaultInterfaceId);
+  }
+
+  async setDefault(interfaceId: string) {
+    const wgInterface = await this.getByName(interfaceId);
+    if (wgInterface.pendingDelete) {
+      throw new Error('A pending-delete interface cannot be the default');
+    }
+    await this.#db
+      .update(general)
+      .set({ defaultInterfaceId: interfaceId })
+      .execute();
+    return wgInterface;
   }
 
   // Compatibility boundary for existing single-interface callers.

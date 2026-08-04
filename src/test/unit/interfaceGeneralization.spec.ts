@@ -103,6 +103,22 @@ describe('Phase 2 interface-scoped repositories', () => {
     expect(interfaceRuntime.rows[0]?.desired_revision).toBe(3);
   });
 
+  test('allows a non-pending managed interface to become the default', async () => {
+    const { interfaces } = await createServices();
+    await interfaces.create({
+      name: 'awg1',
+      device: 'eth0',
+      port: 51821,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+    });
+
+    await interfaces.setDefault('awg1');
+    await expect(interfaces.getDefault()).resolves.toMatchObject({
+      name: 'awg1',
+    });
+  });
+
   test('rejects CIDR and listen-port collisions', async () => {
     const { interfaces } = await createServices();
     await interfaces.create({

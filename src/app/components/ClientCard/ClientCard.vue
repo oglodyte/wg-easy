@@ -8,6 +8,10 @@
       <div class="flex w-full flex-col gap-2 xxs:flex-row">
         <div class="flex flex-grow flex-col gap-1">
           <ClientCardName :client="client" />
+          <span
+            class="w-fit rounded bg-gray-200 px-1.5 py-0.5 text-xs dark:bg-neutral-600"
+            >{{ client.interfaceId }}</span
+          >
           <div
             class="flex flex-col text-xs text-gray-500 dark:text-neutral-400"
           >
