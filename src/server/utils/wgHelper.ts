@@ -123,6 +123,7 @@ PrivateKey = ${wgInterface.privateKey}
 Address = ${address}
 ListenPort = ${wgInterface.port}
 MTU = ${wgInterface.mtu}
+Table = off
 ${extraLines.length ? `${extraLines.join('\n')}\n` : ''}
 PreUp = ${iptablesTemplate(hooks.preUp, wgInterface)}
 PostUp = ${iptablesTemplate(hooks.postUp, wgInterface)}

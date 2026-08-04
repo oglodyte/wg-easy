@@ -2,11 +2,12 @@ import { describe, expect, test, vi } from 'vitest';
 
 import { wg } from '#server/utils/wgHelper';
 import type { ClientType } from '#db/repositories/client/types';
+import type { HooksType } from '#db/repositories/hooks/types';
 import type { InterfaceType } from '#db/repositories/interface/types';
 import type { UserConfigType } from '#db/repositories/userConfig/types';
 
 vi.mock('#server/utils/config', () => ({
-  WG_ENV: { WG_EXECUTABLE: 'awg' },
+  WG_ENV: { WG_EXECUTABLE: 'awg', PORT: 51821 },
 }));
 
 const client = {
@@ -59,6 +60,35 @@ const compatibilityInterface = {
 } as unknown as InterfaceType;
 
 describe('Phase 3 assigned-interface config generation', () => {
+  test('keeps managed server routing tables disabled', () => {
+    const serverInterface = {
+      ...compatibilityInterface,
+      privateKey: 'server-private',
+      port: 51831,
+      mtu: 1280,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+      device: 'eth0',
+      jC: 7,
+      jMin: 10,
+      jMax: 1000,
+      i1: null,
+      i2: null,
+      i3: null,
+      i4: null,
+      i5: null,
+    } as InterfaceType;
+    const config = wg.generateServerInterface(serverInterface, {
+      preUp: '',
+      postUp: '',
+      preDown: '',
+      postDown: '',
+    } as HooksType);
+
+    expect(config).toContain('\nTable = off\n');
+    expect(config).not.toContain('\nJc =');
+  });
+
   test('uses the assigned interface key and endpoint in compatibility mode', () => {
     const config = wg.generateClientConfig(
       compatibilityInterface,
