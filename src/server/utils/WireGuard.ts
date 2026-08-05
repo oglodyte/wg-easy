@@ -432,6 +432,20 @@ class WireGuard {
       };
     }
 
+    if (await Database.routingGroups.hasDeferredRoutingState()) {
+      const state = await Database.runtime.markGlobalPending({
+        ensureUnapplied: true,
+      });
+      return {
+        success: true,
+        revision: state.desiredRevision,
+        runtime: {
+          status: 'pending',
+          appliedRevision: state.appliedRevision,
+        },
+      };
+    }
+
     const state = await Database.runtime.markGlobalApplied(applyingRevision);
     return {
       success: true,

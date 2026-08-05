@@ -8,7 +8,9 @@ import {
   NetworkDeviceSchema,
   RoutingGroupPrefixSchema,
   RoutingGroupSchema,
+  RoutingHealthSettingsSchema,
   RoutingSlotSchema,
+  ServerAllowedIpsSchema,
 } from '#shared/utils/schemas';
 import { getInterfaceRuntimeAction } from '#shared/utils/interfaceLifecycle';
 
@@ -51,6 +53,30 @@ describe('shared Phase 1 schemas', () => {
     expect(RoutingSlotSchema.parse(999)).toBe(999);
     expect(() => RoutingSlotSchema.parse(0)).toThrow();
     expect(() => RoutingSlotSchema.parse(1000)).toThrow();
+  });
+
+  test('locks routing health ranges and site-prefix safety', () => {
+    expect(
+      RoutingHealthSettingsSchema.parse({
+        healthCheckIntervalSeconds: 60,
+        healthTimeoutSeconds: 180,
+        minHoldSeconds: 60,
+        failbackDelaySeconds: 180,
+      })
+    ).toMatchObject({ healthTimeoutSeconds: 180 });
+    expect(() =>
+      RoutingHealthSettingsSchema.parse({
+        healthCheckIntervalSeconds: 9,
+        healthTimeoutSeconds: 180,
+        minHoldSeconds: 60,
+        failbackDelaySeconds: 180,
+      })
+    ).toThrow();
+    expect(ServerAllowedIpsSchema.parse(['192.0.2.7/24'])).toEqual([
+      '192.0.2.0/24',
+    ]);
+    expect(() => ServerAllowedIpsSchema.parse(['0.0.0.0/0'])).toThrow();
+    expect(() => ServerAllowedIpsSchema.parse(['::/0'])).toThrow();
   });
 
   test('locks the interface lifecycle action matrix', () => {

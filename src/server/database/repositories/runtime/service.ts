@@ -194,6 +194,28 @@ export class RuntimeStateService {
     return this.getGlobal();
   }
 
+  async markGlobalPending({ ensureUnapplied = false } = {}) {
+    await this.#db.transaction(async (tx) => {
+      const state = await tx.query.runtimeReconciliationState
+        .findFirst({ where: eq(runtimeReconciliationState.id, 1) })
+        .execute();
+      if (!state) throw new Error('Runtime reconciliation state not found');
+      await tx
+        .update(runtimeReconciliationState)
+        .set({
+          desiredRevision:
+            ensureUnapplied && state.desiredRevision <= state.appliedRevision
+              ? state.appliedRevision + 1
+              : state.desiredRevision,
+          status: 'pending',
+          lastError: null,
+        })
+        .where(eq(runtimeReconciliationState.id, 1))
+        .execute();
+    });
+    return this.getGlobal();
+  }
+
   async markGlobalFailed(error: unknown) {
     const message = getSafeRuntimeErrorMessage(error);
     await this.#db

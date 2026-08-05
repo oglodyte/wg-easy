@@ -101,6 +101,10 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
       status: 'degraded',
       lastError: error.message,
     })),
+    markGlobalPending: vi.fn(async () => ({
+      ...globalState,
+      status: 'pending',
+    })),
   };
   const Database = {
     interfaces: {
@@ -139,6 +143,9 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
     oneTimeLinks: { delete: vi.fn(async () => {}) },
     hooks: { get: vi.fn(async () => ({})) },
     userConfigs: { get: vi.fn(async () => ({})) },
+    routingGroups: {
+      hasDeferredRoutingState: vi.fn(async () => false),
+    },
     runtime,
   };
   const atomicWriteFile = vi.fn(

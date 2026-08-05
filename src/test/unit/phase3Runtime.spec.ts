@@ -205,6 +205,33 @@ describe('Phase 3 runtime reconciliation', () => {
     });
   });
 
+  test('can represent newly deferred runtime work as an unapplied revision', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-easy-runtime-'));
+    temporaryRoots.push(root);
+    const client = createClient({ url: `file:${path.join(root, 'test.db')}` });
+    const db = drizzle({ client, schema });
+    await migrate(db, { migrationsFolder: migrationsDirectory });
+    const runtime = new RuntimeStateService(db as unknown as DBType);
+
+    await runtime.markGlobalApplied(1);
+    expect(await runtime.getGlobal()).toMatchObject({
+      desiredRevision: 1,
+      appliedRevision: 1,
+      status: 'idle',
+    });
+    await runtime.markGlobalPending({ ensureUnapplied: true });
+    expect(await runtime.getGlobal()).toMatchObject({
+      desiredRevision: 2,
+      appliedRevision: 1,
+      status: 'pending',
+    });
+    await runtime.markGlobalPending({ ensureUnapplied: true });
+    expect(await runtime.getGlobal()).toMatchObject({
+      desiredRevision: 2,
+      appliedRevision: 1,
+    });
+  });
+
   test('keeps raw runtime errors out of public readiness summaries', () => {
     expect(
       toSafeRuntimeState({

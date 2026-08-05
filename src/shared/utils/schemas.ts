@@ -10,6 +10,7 @@ const ROUTING_GROUP_EXIT_LIMIT = 16;
 const ROUTING_GROUP_PREFIX_LIMIT = 64;
 const ROUTING_GROUP_MEMBER_LIMIT = 1024;
 const ROUTING_GROUP_RULE_LIMIT = 4096;
+const ROUTING_GLOBAL_RULE_LIMIT = 20000;
 
 function hasUsableServerAndClientAddresses(value: string) {
   const parsed = parseCidr(value);
@@ -62,6 +63,33 @@ export const RoutingGroupPrefixSchema = z
   .refine((value) => isCidrVersion(value, 4), 'Expected an IPv4 CIDR')
   .transform((value) => normalizeCidr(value));
 
+export const ServerAllowedIpPrefixSchema = z
+  .string()
+  .refine((value) => {
+    try {
+      return parseCidr(value).prefixPresent;
+    } catch {
+      return false;
+    }
+  }, 'zod.client.serverAllowedIps')
+  .refine(
+    (value) => {
+      try {
+        return Number(parseCidr(value).prefix) !== 0;
+      } catch {
+        return true;
+      }
+    },
+    {
+      message: 'zod.client.serverAllowedIps',
+    }
+  )
+  .transform((value) => normalizeCidr(value));
+
+export const ServerAllowedIpsSchema = z
+  .array(ServerAllowedIpPrefixSchema)
+  .transform((prefixes) => [...new Set(prefixes)]);
+
 export const ConfigFormatSchema = z.enum(CONFIG_FORMAT_SELECTIONS);
 export const ConcreteConfigFormatSchema = z.enum(CONFIG_FORMATS);
 
@@ -77,9 +105,20 @@ const RoutingGroupExitSchema = z.object({
   enabled: z.boolean(),
 });
 
+const RoutingGroupNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(
+    // eslint-disable-next-line no-control-regex
+    /^[^\x00-\x1f\x7f]+$/,
+    'Routing group names cannot contain control characters'
+  );
+
 export const RoutingGroupSchema = z
   .object({
-    name: z.string().trim().min(1),
+    name: RoutingGroupNameSchema,
     enabled: z.boolean(),
     exits: z.array(RoutingGroupExitSchema).max(ROUTING_GROUP_EXIT_LIMIT),
     natEnabled: z.boolean(),
@@ -162,6 +201,13 @@ export const RoutingGroupSchema = z
     }
   });
 
+export const RoutingHealthSettingsSchema = z.object({
+  healthCheckIntervalSeconds: z.number().int().min(10).max(3600),
+  healthTimeoutSeconds: z.number().int().min(30).max(86400),
+  minHoldSeconds: z.number().int().min(0).max(86400),
+  failbackDelaySeconds: z.number().int().min(0).max(86400),
+});
+
 export const schemaLimits = {
   linuxInterfaceNameMaxBytes: LINUX_INTERFACE_NAME_MAX_BYTES,
   routingSlotMin: ROUTING_SLOT_MIN,
@@ -170,4 +216,5 @@ export const schemaLimits = {
   routingGroupPrefixLimit: ROUTING_GROUP_PREFIX_LIMIT,
   routingGroupMemberLimit: ROUTING_GROUP_MEMBER_LIMIT,
   routingGroupRuleLimit: ROUTING_GROUP_RULE_LIMIT,
+  routingGlobalRuleLimit: ROUTING_GLOBAL_RULE_LIMIT,
 } as const;

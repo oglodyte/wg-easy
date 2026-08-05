@@ -1,9 +1,10 @@
-import { getValidatedRouterParams, readValidatedBody } from 'h3';
+import { createError, getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
+import { RoutingValidationError } from '#server/utils/routing';
 import {
   ClientGetSchema,
   ClientUpdateSchema,
@@ -26,7 +27,18 @@ export default definePermissionEventHandler(
     const client = await Database.clients.get(clientId);
     checkPermissions(client);
 
-    await Database.clients.update(clientId, data);
+    try {
+      await Database.clients.update(clientId, data);
+    } catch (error) {
+      if (error instanceof RoutingValidationError) {
+        throw createError({
+          statusCode: 409,
+          statusMessage: error.message,
+          data: { issues: error.issues },
+        });
+      }
+      throw error;
+    }
     return WireGuard.requestReconcile('update-client', [
       { interfaceId: client!.interfaceId, action: 'sync' },
     ]);

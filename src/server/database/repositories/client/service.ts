@@ -1,4 +1,4 @@
-import { eq, sql, or, like, and } from 'drizzle-orm';
+import { eq, sql, or, like, and, inArray } from 'drizzle-orm';
 import { containsCidr, parseCidr } from 'cidr-tools';
 
 import { client } from './schema';
@@ -10,13 +10,102 @@ import type {
 } from './types';
 
 import { nextIP } from '#server/utils/ip';
+import {
+  RoutingValidationError,
+  canonicalizeServerAllowedIps,
+  findRoutingPrefixConflicts,
+  findServerAllowedIpConflicts,
+} from '#server/utils/routing';
 import type { ID } from '#server/utils/types';
 import { wg } from '#server/utils/wgHelper';
 import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 import type { DBType } from '#db/sqlite';
-import { wgInterface, userConfig } from '#db/schema';
+import {
+  routingGroupExit,
+  routingGroupMember,
+  routingGroupRuntimeState,
+  userConfig,
+  wgInterface,
+} from '#db/schema';
 
 export class InterfaceUnavailableForClientCreationError extends Error {}
+
+export class ClientRoutingReferenceError extends Error {
+  readonly kind: 'exit' | 'member';
+  readonly groupIds: number[];
+
+  constructor(kind: 'exit' | 'member', groupIds: number[], message: string) {
+    super(message);
+    this.name = 'ClientRoutingReferenceError';
+    this.kind = kind;
+    this.groupIds = groupIds;
+  }
+}
+
+type ClientTransaction = Parameters<Parameters<DBType['transaction']>[0]>[0];
+
+async function validateServerAllowedIpsUpdate(
+  tx: ClientTransaction,
+  clientId: number,
+  prefixes: readonly string[],
+  persistentKeepalive: number
+) {
+  const normalized = canonicalizeServerAllowedIps(prefixes);
+  const [clients, groups, exits, general] = await Promise.all([
+    tx.query.client.findMany().execute(),
+    tx.query.routingGroup.findMany().execute(),
+    tx.query.routingGroupExit.findMany().execute(),
+    tx.query.general.findFirst().execute(),
+  ]);
+  if (!general) throw new Error('General Config not found');
+  const assignments = clients.map((existing) => ({
+    ...existing,
+    serverAllowedIps:
+      existing.id === clientId ? normalized : existing.serverAllowedIps,
+  }));
+  const conflictGroups = groups.map((group) => ({
+    id: group.id,
+    enabled: group.enabled,
+    routedIpv4Prefixes: group.routedIpv4Prefixes,
+    exits: exits
+      .filter(({ groupId }) => groupId === group.id)
+      .map(({ clientId: exitClientId, enabled }) => ({
+        clientId: exitClientId,
+        enabled,
+      })),
+  }));
+  const issues = [
+    ...findServerAllowedIpConflicts(assignments),
+    ...findRoutingPrefixConflicts({
+      clients: assignments,
+      groups: conflictGroups,
+    }),
+  ];
+  const enabledGroupIds = new Set(
+    groups.filter(({ enabled }) => enabled).map(({ id }) => id)
+  );
+  const isEnabledExit = exits.some(
+    (exit) =>
+      exit.clientId === clientId &&
+      exit.enabled &&
+      enabledGroupIds.has(exit.groupId)
+  );
+  const maximumKeepalive = Math.floor(
+    general.routingExitHealthTimeoutSeconds / 3
+  );
+  if (
+    isEnabledExit &&
+    (persistentKeepalive <= 0 || persistentKeepalive > maximumKeepalive)
+  ) {
+    issues.push({
+      code: 'exit_keepalive_invalid',
+      message: `Exit client ${clientId} persistent keepalive must be between 1 and ${maximumKeepalive} seconds`,
+      clientIds: [clientId],
+    });
+  }
+  if (issues.length > 0) throw new RoutingValidationError(issues);
+  return normalized;
+}
 
 function createPreparedStatement(db: DBType) {
   return {
@@ -267,14 +356,64 @@ export class ClientService {
     });
   }
 
-  delete(id: ID) {
+  delete(id: ID, { removeRoutingMembership = false } = {}) {
     return this.#db.transaction(async (tx) => {
       const existing = await tx.query.client
         .findFirst({ where: eq(client.id, id) })
         .execute();
       if (!existing) throw new Error('Client not found');
+      const [exitReferences, memberReferences] = await Promise.all([
+        tx.query.routingGroupExit
+          .findMany({ where: eq(routingGroupExit.clientId, id) })
+          .execute(),
+        tx.query.routingGroupMember
+          .findMany({ where: eq(routingGroupMember.clientId, id) })
+          .execute(),
+      ]);
+      if (exitReferences.length > 0) {
+        const groupIds = exitReferences.map(({ groupId }) => groupId);
+        throw new ClientRoutingReferenceError(
+          'exit',
+          groupIds,
+          `Client deletion is blocked while it is an exit for routing group(s) ${groupIds.join(', ')}`
+        );
+      }
+      if (memberReferences.length > 0 && !removeRoutingMembership) {
+        const groupIds = memberReferences.map(({ groupId }) => groupId);
+        throw new ClientRoutingReferenceError(
+          'member',
+          groupIds,
+          `Client belongs to routing group(s) ${groupIds.join(', ')}; confirm membership removal before deletion`
+        );
+      }
+      if (memberReferences.length > 0) {
+        await tx
+          .delete(routingGroupMember)
+          .where(eq(routingGroupMember.clientId, id))
+          .execute();
+      }
       await tx.delete(client).where(eq(client.id, id)).execute();
-      await bumpDesiredRevision(tx, [existing.interfaceId]);
+      const revision = await bumpDesiredRevision(tx, [existing.interfaceId]);
+      if (memberReferences.length > 0) {
+        const groupIds = [
+          ...new Set(memberReferences.map(({ groupId }) => groupId)),
+        ];
+        await tx
+          .update(routingGroupRuntimeState)
+          .set({
+            selectedExitClientId: null,
+            appliedExitClientId: null,
+            evaluatedRevision: revision,
+            appliedRevision: null,
+            selectedSince: null,
+            appliedSince: null,
+            status: 'draft_invalid',
+            reason:
+              'A member was explicitly removed during client deletion; review the routing group before enabling execution.',
+          })
+          .where(inArray(routingGroupRuntimeState.groupId, groupIds))
+          .execute();
+      }
     });
   }
 
@@ -302,7 +441,17 @@ export class ClientService {
         throw new Error('IPv6 address is not within the CIDR range');
       }
 
-      await tx.update(client).set(data).where(eq(client.id, id)).execute();
+      const serverAllowedIps = await validateServerAllowedIpsUpdate(
+        tx,
+        id,
+        data.serverAllowedIps,
+        data.persistentKeepalive
+      );
+      await tx
+        .update(client)
+        .set({ ...data, serverAllowedIps })
+        .where(eq(client.id, id))
+        .execute();
       await bumpDesiredRevision(tx, [existingClient.interfaceId]);
     });
   }

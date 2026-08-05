@@ -22,7 +22,10 @@ import {
   schemaForType,
   t,
 } from '#server/utils/types';
-import { InterfaceNameSchema } from '#shared/utils/schemas';
+import {
+  InterfaceNameSchema,
+  ServerAllowedIpsSchema,
+} from '#shared/utils/schemas';
 
 export type ClientType = InferSelectModel<typeof client>;
 
@@ -70,10 +73,6 @@ const address6 = z
   .pipe(controlStringRefine)
   .refine((v) => isIPv6(v));
 
-const serverAllowedIps = z.array(AddressSchema, {
-  message: t('zod.client.serverAllowedIps'),
-});
-
 export const ClientCreateSchema = z.object({
   name: name,
   expiresAt: expiresAt,
@@ -106,7 +105,7 @@ export const ClientUpdateSchema = schemaForType<UpdateClientType>()(
     preDown: HookSchema,
     postDown: HookSchema,
     allowedIps: AllowedIpsSchema.nullable(),
-    serverAllowedIps: serverAllowedIps,
+    serverAllowedIps: ServerAllowedIpsSchema,
     firewallIps: FirewallIpsSchema.nullable(),
     mtu: MtuSchema,
     jC: JcSchema,
@@ -127,6 +126,13 @@ const clientId = z.coerce.number({ message: t('zod.client.id') });
 
 export const ClientGetSchema = z.object({
   clientId: clientId,
+});
+
+export const ClientDeleteQuerySchema = z.object({
+  removeRoutingMembership: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
 });
 
 export type ClientCreateFromExistingType = Pick<

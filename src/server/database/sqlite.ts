@@ -12,6 +12,7 @@ import { HooksService } from '#db/repositories/hooks/service';
 import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
 import { ClientService } from '#db/repositories/client/service';
 import { RuntimeStateService } from '#db/repositories/runtime/service';
+import { RoutingGroupService } from '#db/repositories/routingGroup/service';
 import { finalizePhase1DataMigration } from '#db/phase1Migration';
 import * as schema from '#db/schema';
 import { WG_ENV, WG_INITIAL_ENV } from '#server/utils/config';
@@ -46,6 +47,7 @@ class DBService {
   hooks: HooksService;
   oneTimeLinks: OneTimeLinkService;
   runtime: RuntimeStateService;
+  routingGroups: RoutingGroupService;
 
   constructor(db: DBType) {
     this.clients = new ClientService(db);
@@ -56,6 +58,7 @@ class DBService {
     this.hooks = new HooksService(db);
     this.oneTimeLinks = new OneTimeLinkService(db);
     this.runtime = new RuntimeStateService(db);
+    this.routingGroups = new RoutingGroupService(db);
   }
 }
 
