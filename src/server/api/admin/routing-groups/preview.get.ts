@@ -62,7 +62,8 @@ export default definePermissionEventHandler('admin', 'any', async () => {
           candidateEnabled: exit.enabled,
           clientEnabled: client.enabled,
           interfaceEnabled: wgInterface.enabled,
-          interfaceObservedUp: wgInterface.observedUp,
+          interfaceObservedUp:
+            wgInterface.observedUp && wgInterface.runtimeStatus === 'up',
           persistentKeepalive: client.persistentKeepalive,
           latestHandshakeAt: status?.latestHandshakeAt ?? null,
           endpoint: status?.endpoint ?? null,
@@ -87,9 +88,8 @@ export default definePermissionEventHandler('admin', 'any', async () => {
   });
 
   return {
-    executionAvailable: false,
-    executionReason:
-      'This endpoint previews a pure plan only; Phase 6 executes it.',
+    executionAvailable: true,
+    executionReason: null,
     desiredRevision: snapshot.runtime.desiredRevision,
     appliedRevision: snapshot.runtime.appliedRevision,
     dumpFailures: dump.failures.map(({ interfaceId }) => ({ interfaceId })),

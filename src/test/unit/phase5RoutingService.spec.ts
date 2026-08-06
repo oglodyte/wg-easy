@@ -160,7 +160,7 @@ describe('Phase 5 routing-group repository and service', () => {
     expect(created.group).toMatchObject({
       routingSlot: 1,
       enabled: false,
-      execution: { available: false, active: false },
+      execution: { available: true, active: false },
     });
     expect(created.group.validationWarnings).toContainEqual(
       expect.stringContaining('requires at least one member')
@@ -182,9 +182,9 @@ describe('Phase 5 routing-group repository and service', () => {
         selectedExitClientId: null,
         appliedExitClientId: null,
         appliedRevision: null,
-        status: 'awaiting_exit',
+        status: 'selected_pending',
       },
-      execution: { available: false, active: false },
+      execution: { available: true, active: false },
     });
     expect(updated.group.validationWarnings).toEqual([]);
 

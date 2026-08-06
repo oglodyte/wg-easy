@@ -1,6 +1,7 @@
 import { createError, getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
+import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { RoutingValidationError } from '#server/utils/routing';
 import { validateZod } from '#server/utils/types';
@@ -25,17 +26,15 @@ export default definePermissionEventHandler(
         groupId,
         input
       );
-      const runtime = await Database.runtime.getGlobal();
+      const reconciled = await WireGuard.requestReconcile(
+        'routing-group-update'
+      );
       return {
         success: true,
         revision,
-        runtime: {
-          status: 'pending' as const,
-          appliedRevision: runtime.appliedRevision,
-        },
-        executionAvailable: false,
-        warning: 'The group is saved, but routing execution waits for Phase 6.',
-        group,
+        runtime: reconciled.runtime,
+        executionAvailable: true,
+        group: await Database.routingGroups.get(group.id),
       };
     } catch (error) {
       if (error instanceof RoutingGroupNotFoundError) {

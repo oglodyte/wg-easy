@@ -16,6 +16,7 @@ export const FWMARK_NAMESPACE = 0x54000000;
 export const FWMARK_MASK = 0xffff0000;
 export const ROUTING_MARK_CHAIN = 'WG_ROUTE_MARK';
 export const ROUTING_NAT_CHAIN = 'WG_ROUTE_NAT';
+export const ROUTING_OWNER_COMMENT = 'wg-easy common routing';
 
 export type RoutingValidationIssue = {
   code:
@@ -444,6 +445,8 @@ export type ObservedRoute = {
   table: number;
   protocol?: number;
   prefix: string;
+  type?: 'unicast' | 'unreachable';
+  device?: string;
 };
 
 export type ObservedRoutingChain = {
@@ -463,6 +466,14 @@ export type ObservedRoutingState = {
   routes: readonly ObservedRoute[];
   chains: readonly ObservedRoutingChain[];
   markUses: readonly ObservedMarkUse[];
+  ownedParentJumps?: readonly {
+    table: 'mangle' | 'nat';
+    line: string;
+  }[];
+  ownedChainRules?: readonly {
+    table: 'mangle' | 'nat';
+    line: string;
+  }[];
 };
 
 export type OwnershipConflict = {
@@ -497,7 +508,7 @@ export function formatMark(mark: number) {
   return `0x${(mark >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-function isExactOwnedRule(rule: ObservedPolicyRule) {
+export function isOwnedRoutingRule(rule: ObservedPolicyRule) {
   if (rule.protocol !== WG_EASY_ROUTE_PROTOCOL) return false;
   if (
     rule.priority === SITE_TO_SITE_PRIORITY &&
@@ -518,6 +529,12 @@ function isExactOwnedRule(rule: ObservedPolicyRule) {
   );
 }
 
+export function isOwnedRoutingRoute(route: ObservedRoute) {
+  return (
+    route.protocol === WG_EASY_ROUTE_PROTOCOL && isRoutingTable(route.table)
+  );
+}
+
 export function preflightRoutingOwnership(observed: ObservedRoutingState): {
   ok: boolean;
   conflicts: OwnershipConflict[];
@@ -530,7 +547,7 @@ export function preflightRoutingOwnership(observed: ObservedRoutingState): {
       isRoutingTable(rule.table) ||
       (rule.mask !== undefined &&
         ((rule.mask >>> 0) & FWMARK_MASK) >>> 0 !== 0);
-    if (touchesOwnedRange && !isExactOwnedRule(rule)) {
+    if (touchesOwnedRange && !isOwnedRoutingRule(rule)) {
       conflicts.push({
         kind: 'rule',
         description: `non-owned policy rule uses priority ${rule.priority}, table ${rule.table}, or the wg-easy mark mask`,
@@ -600,12 +617,12 @@ export type RoutingPlanGroup = {
   selectedExitClientId: number | null;
 };
 
-type CommandIntent = {
+export type CommandIntent = {
   executable: 'ip';
   args: string[];
 };
 
-type PlannedRoute = {
+export type PlannedRoute = {
   family: 4 | 6;
   table: number;
   protocol: number;
@@ -615,7 +632,7 @@ type PlannedRoute = {
   command: CommandIntent;
 };
 
-type PlannedPolicyRule = {
+export type PlannedPolicyRule = {
   family: 4 | 6;
   priority: number;
   table: number;
@@ -626,7 +643,7 @@ type PlannedPolicyRule = {
 };
 
 export type RoutingPlan = {
-  executionAvailable: false;
+  executionAvailable: true;
   ownership: {
     routeProtocol: number;
     tableRange: [number, number];
@@ -655,6 +672,7 @@ export type RoutingPlan = {
     fwmark: number;
   }[];
   parentMarkJumps: { interfaceId: string; args: string[] }[];
+  parentNatJump: string[] | null;
   markChainRules: string[][];
   natChainRules: string[][];
   routes: PlannedRoute[];
@@ -662,6 +680,104 @@ export type RoutingPlan = {
   peerAllowedIps: { clientId: number; prefixes: string[] }[];
   warnings: string[];
 };
+
+function ruleHasGroup(rule: readonly string[], groupId: number) {
+  return rule.includes(`${ROUTING_OWNER_COMMENT} group ${groupId}`);
+}
+
+/**
+ * Keep the last verified policy for unchanged groups while installing
+ * fail-closed bootstrap policy for new groups or exit transitions. Peer
+ * AllowedIPs stay on the last verified selection until the replacement
+ * configs are ready.
+ */
+export function buildSafetyRoutingPlan({
+  previous,
+  bootstrap,
+  blockGroupIds,
+}: {
+  previous?: RoutingPlan;
+  bootstrap: RoutingPlan;
+  blockGroupIds: ReadonlySet<number>;
+}): RoutingPlan {
+  if (!previous) return bootstrap;
+
+  const bootstrapById = new Map(
+    bootstrap.groups.map((group) => [group.groupId, group])
+  );
+  const chosenGroups = [
+    ...previous.groups.filter(({ groupId }) => !blockGroupIds.has(groupId)),
+    ...bootstrap.groups.filter(({ groupId }) => blockGroupIds.has(groupId)),
+  ].sort(
+    (left, right) =>
+      left.routingSlot - right.routingSlot || left.groupId - right.groupId
+  );
+  for (const groupId of blockGroupIds) {
+    if (!bootstrapById.has(groupId)) {
+      throw new Error(`Bootstrap routing plan is missing group ${groupId}`);
+    }
+  }
+  const routeSourceByTable = new Map<number, RoutingPlan>();
+  const ruleSourceByPriority = new Map<number, RoutingPlan>();
+  for (const group of chosenGroups) {
+    const source = blockGroupIds.has(group.groupId) ? bootstrap : previous;
+    routeSourceByTable.set(group.table, source);
+    ruleSourceByPriority.set(group.priority, source);
+  }
+  routeSourceByTable.set(SITE_TO_SITE_TABLE_ID, previous);
+  ruleSourceByPriority.set(SITE_TO_SITE_PRIORITY, previous);
+
+  const routes = [...routeSourceByTable].flatMap(([table, source]) =>
+    source.routes.filter((route) => route.table === table)
+  );
+  const policyRules = [...ruleSourceByPriority].flatMap(([priority, source]) =>
+    source.policyRules.filter((rule) => rule.priority === priority)
+  );
+  const markChainRules = [
+    ...bootstrap.markChainRules.filter((rule) =>
+      rule.includes(`${ROUTING_OWNER_COMMENT} managed-cidr bypass`)
+    ),
+    ...chosenGroups.flatMap((group) => {
+      const source = blockGroupIds.has(group.groupId) ? bootstrap : previous;
+      return source.markChainRules.filter((rule) =>
+        ruleHasGroup(rule, group.groupId)
+      );
+    }),
+  ];
+  const natChainRules = chosenGroups.flatMap((group) => {
+    const source = blockGroupIds.has(group.groupId) ? bootstrap : previous;
+    return source.natChainRules.filter((rule) =>
+      ruleHasGroup(rule, group.groupId)
+    );
+  });
+  const parentMarkJumps = markChainRules.some((rule) =>
+    rule.includes('--set-xmark')
+  )
+    ? [
+        ...new Map(
+          [...previous.parentMarkJumps, ...bootstrap.parentMarkJumps].map(
+            (jump) => [jump.interfaceId, jump]
+          )
+        ).values(),
+      ].sort((left, right) => left.interfaceId.localeCompare(right.interfaceId))
+    : [];
+
+  return {
+    ...bootstrap,
+    groups: chosenGroups,
+    routes,
+    policyRules,
+    markChainRules,
+    natChainRules,
+    parentMarkJumps,
+    parentNatJump:
+      natChainRules.length > 0
+        ? (previous.parentNatJump ?? bootstrap.parentNatJump)
+        : null,
+    peerAllowedIps: previous.peerAllowedIps,
+    warnings: [...new Set([...previous.warnings, ...bootstrap.warnings])],
+  };
+}
 
 function serverIpv4Address(cidr: string) {
   const parsed = parseRequiredCidr(cidr);
@@ -782,6 +898,10 @@ export function buildRoutingPlan({
       ROUTING_MARK_CHAIN,
       '-d',
       normalizeCidr(wgInterface.ipv4Cidr),
+      '-m',
+      'comment',
+      '--comment',
+      `${ROUTING_OWNER_COMMENT} managed-cidr bypass`,
       '-j',
       'RETURN',
     ]);
@@ -871,12 +991,16 @@ export function buildRoutingPlan({
         natChainRules.push([
           '-A',
           ROUTING_NAT_CHAIN,
+          '-o',
+          exitInterface.interfaceId,
           '-m',
           'mark',
           '--mark',
           `${formatMark(fwmark)}/${formatMark(FWMARK_MASK)}`,
-          '-o',
-          exitInterface.interfaceId,
+          '-m',
+          'comment',
+          '--comment',
+          `${ROUTING_OWNER_COMMENT} group ${group.id}`,
           '-j',
           'SNAT',
           '--to-source',
@@ -924,7 +1048,7 @@ export function buildRoutingPlan({
             '-m',
             'comment',
             '--comment',
-            `wg-easy route group ${group.id}`,
+            `${ROUTING_OWNER_COMMENT} group ${group.id}`,
             '-j',
             'MARK',
             '--set-xmark',
@@ -986,6 +1110,10 @@ export function buildRoutingPlan({
             'PREROUTING',
             '-i',
             interfaceId,
+            '-m',
+            'comment',
+            '--comment',
+            ROUTING_OWNER_COMMENT,
             '-j',
             ROUTING_MARK_CHAIN,
           ],
@@ -995,7 +1123,7 @@ export function buildRoutingPlan({
     : undefined;
 
   return {
-    executionAvailable: false,
+    executionAvailable: true,
     ownership: {
       routeProtocol: WG_EASY_ROUTE_PROTOCOL,
       tableRange: [
@@ -1021,6 +1149,19 @@ export function buildRoutingPlan({
       : { status: 'not_evaluated', ok: null, conflicts: [] },
     groups: groupPlans,
     parentMarkJumps,
+    parentNatJump:
+      natChainRules.length === 0
+        ? null
+        : [
+            '-A',
+            'POSTROUTING',
+            '-m',
+            'comment',
+            '--comment',
+            ROUTING_OWNER_COMMENT,
+            '-j',
+            ROUTING_NAT_CHAIN,
+          ],
     markChainRules,
     natChainRules,
     routes,

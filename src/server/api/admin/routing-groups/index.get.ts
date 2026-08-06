@@ -7,8 +7,8 @@ export default definePermissionEventHandler('admin', 'any', async () => {
     Database.runtime.getGlobal(),
   ]);
   return {
-    executionAvailable: false,
-    executionReason: 'Common routing execution is unavailable until Phase 6.',
+    executionAvailable: true,
+    executionReason: null,
     desiredRevision: runtime.desiredRevision,
     appliedRevision: runtime.appliedRevision,
     groups,

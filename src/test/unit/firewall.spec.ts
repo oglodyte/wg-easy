@@ -418,4 +418,55 @@ describe('firewall', () => {
       ]);
     });
   });
+
+  describe('atomic multi-interface restore planning', () => {
+    const activeState = {
+      wgInterface: {
+        name: 'wg0',
+        enabled: true,
+        firewallEnabled: true,
+      },
+      observedUp: true,
+      clients: [
+        {
+          id: 1,
+          name: 'phone',
+          ipv4Address: '10.8.0.2',
+          ipv6Address: 'fd00::2',
+          allowedIps: ['0.0.0.0/0'],
+          firewallIps: ['198.51.100.0/24:443/tcp'],
+          enabled: true,
+        },
+      ],
+      userConfig: { defaultAllowedIps: ['0.0.0.0/0'] },
+    };
+
+    test('renders a complete quoted chain and exact managed parent jump', () => {
+      const document = firewallTestExports.buildRestoreDocument({
+        family: 4,
+        states: [activeState] as never,
+        existingSave: ':WG_CLIENTS - [0:0]\n-A FORWARD -i wg0 -j WG_CLIENTS',
+      });
+
+      expect(document).toContain('-D FORWARD -i wg0 -j WG_CLIENTS');
+      expect(document).toContain(
+        '-I FORWARD 1 -i wg0 -m comment --comment "wg-easy client firewall" -j WG_CLIENTS'
+      );
+      expect(document).toContain('--comment "client 1: phone" -j ACCEPT');
+      expect(document).toContain(
+        '--comment "wg-easy client firewall default deny" -j DROP'
+      );
+    });
+
+    test('refuses a non-owned jump into the reserved client chain', () => {
+      expect(() =>
+        firewallTestExports.buildRestoreDocument({
+          family: 4,
+          states: [activeState] as never,
+          existingSave:
+            ':WG_CLIENTS - [0:0]\n-A FORWARD -i unmanaged0 -j WG_CLIENTS',
+        })
+      ).toThrow('non-owned FORWARD rule');
+    });
+  });
 });

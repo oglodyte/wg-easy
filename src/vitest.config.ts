@@ -19,6 +19,22 @@ export default defineConfig({
           environment: 'node',
         },
       },
+      {
+        resolve: {
+          alias: {
+            '#server': fileURLToPath(new URL('./server', import.meta.url)),
+            '#shared': fileURLToPath(new URL('./shared', import.meta.url)),
+            '#db': fileURLToPath(new URL('./server/database', import.meta.url)),
+          },
+        },
+        test: {
+          name: 'integration',
+          include: ['test/integration/*.{test,spec}.ts'],
+          environment: 'node',
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
     ],
     coverage: {
       enabled: true,

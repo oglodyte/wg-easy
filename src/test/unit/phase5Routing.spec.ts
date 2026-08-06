@@ -70,7 +70,7 @@ describe('Phase 5 pure routing planner', () => {
     const second = buildRoutingPlan({ interfaces, clients, groups: [group()] });
 
     expect(first).toEqual(second);
-    expect(first.executionAvailable).toBe(false);
+    expect(first.executionAvailable).toBe(true);
     expect(first.preflight.status).toBe('not_evaluated');
     expect(first.groups).toEqual([
       expect.objectContaining({
@@ -108,7 +108,7 @@ describe('Phase 5 pure routing planner', () => {
       '-m',
       'comment',
       '--comment',
-      'wg-easy route group 17',
+      'wg-easy common routing group 17',
       '-j',
       'MARK',
       '--set-xmark',

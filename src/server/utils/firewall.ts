@@ -9,6 +9,7 @@ import { InterfaceNameSchema } from '#shared/utils/schemas';
 
 const FW_DEBUG = createDebug('Firewall');
 const CHAIN_NAME = 'WG_CLIENTS';
+const OWNER_COMMENT = 'wg-easy client firewall';
 
 // Mutex to prevent concurrent rule rebuilds
 let rebuildInProgress = false;
@@ -180,6 +181,129 @@ function generateRuleArgs(
   }
 
   return rules;
+}
+
+function restoreArgument(value: string) {
+  return /^[A-Za-z0-9_./:=+-]+$/.test(value)
+    ? value
+    : `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+}
+
+function restoreRule(args: readonly string[]) {
+  return args.map(restoreArgument).join(' ');
+}
+
+function buildRestoreDocument({
+  family,
+  states,
+  existingSave,
+}: {
+  family: 4 | 6;
+  states: readonly FirewallInterfaceState[];
+  existingSave: string;
+}) {
+  const active = states.filter(
+    ({ wgInterface, observedUp }) =>
+      observedUp && wgInterface.enabled && wgInterface.firewallEnabled
+  );
+  const managedInterfaces = new Set(
+    states.map(({ wgInterface }) => InterfaceNameSchema.parse(wgInterface.name))
+  );
+  const rules: string[][] = [];
+  for (const { clients, userConfig } of active) {
+    for (const client of clients) {
+      if (!client.enabled) continue;
+      const effectiveIps =
+        client.firewallIps && client.firewallIps.length > 0
+          ? client.firewallIps
+          : (client.allowedIps ?? userConfig.defaultAllowedIps);
+      const comment = sanitizeComment(client.id, client.name);
+      for (const entry of effectiveIps.map(parseFirewallEntry)) {
+        const baseIp = entry.ip.split('/')[0] ?? entry.ip;
+        if ((family === 6) !== isIPv6(baseIp)) continue;
+        rules.push(
+          ...generateRuleArgs(
+            family === 6 ? client.ipv6Address : client.ipv4Address,
+            entry,
+            comment
+          )
+        );
+      }
+    }
+  }
+
+  const savedLines = existingSave
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const jumpLines = savedLines.filter(
+    (line) =>
+      line.startsWith('-A FORWARD ') && line.endsWith(`-j ${CHAIN_NAME}`)
+  );
+  const ownedJumpLines = jumpLines.filter((line) => {
+    if (line.includes(`--comment "${OWNER_COMMENT}"`)) return true;
+    const interfaceMatch = line.match(/^-A FORWARD -i (\S+) /);
+    return interfaceMatch?.[1]
+      ? managedInterfaces.has(interfaceMatch[1])
+      : false;
+  });
+  if (ownedJumpLines.length !== jumpLines.length) {
+    throw new Error(
+      `A non-owned FORWARD rule jumps to reserved chain ${CHAIN_NAME}`
+    );
+  }
+  const chainExists = savedLines.some((line) =>
+    line.startsWith(`:${CHAIN_NAME} `)
+  );
+  const ownerMarkerExists = savedLines.some(
+    (line) =>
+      line.startsWith(`-A ${CHAIN_NAME} `) &&
+      line.includes(`--comment "${OWNER_COMMENT} owner"`)
+  );
+  if (chainExists && !ownerMarkerExists && ownedJumpLines.length === 0) {
+    throw new Error(`Reserved chain ${CHAIN_NAME} is not owned by wg-easy`);
+  }
+  const existingJumps = ownedJumpLines.map((line) =>
+    line.replace(/^-A /, '-D ')
+  );
+  const desiredJumps = active
+    .map(({ wgInterface }) => InterfaceNameSchema.parse(wgInterface.name))
+    .sort((left, right) => left.localeCompare(right))
+    .map(
+      (interfaceName) =>
+        `-I FORWARD 1 -i ${interfaceName} -m comment --comment "${OWNER_COMMENT}" -j ${CHAIN_NAME}`
+    );
+
+  return [
+    '*filter',
+    `:${CHAIN_NAME} - [0:0]`,
+    `-F ${CHAIN_NAME}`,
+    ...existingJumps,
+    `-A ${CHAIN_NAME} -m comment --comment "${OWNER_COMMENT} owner"`,
+    ...rules.map(restoreRule),
+    ...(active.length > 0
+      ? [
+          `-A ${CHAIN_NAME} -m comment --comment "${OWNER_COMMENT} default deny" -j DROP`,
+        ]
+      : []),
+    ...desiredJumps,
+    'COMMIT',
+    '',
+  ].join('\n');
+}
+
+async function applyRestoreDocument(
+  executable: 'iptables-restore' | 'ip6tables-restore',
+  document: string
+) {
+  await execFile(executable, ['--test', '--noflush'], {
+    input: document,
+    log: `${executable} --test --noflush <generated-firewall>`,
+  });
+  await execFile(executable, ['--noflush'], {
+    input: document,
+    log: `${executable} --noflush <generated-firewall>`,
+  });
 }
 
 export const firewall = {
@@ -357,60 +481,32 @@ export const firewall = {
 
   /**
    * Rebuild the current shared client-filter chain from fresh state for every
-   * managed interface. Phase 6 replaces the sequential rule application with
-   * an atomic restore transaction; this Phase 3 form fixes cross-interface
-   * identity and deletion without introducing common-routing behavior.
+   * managed interface through one complete restore transaction.
    */
   async rebuildAllRules(
     states: readonly FirewallInterfaceState[],
     enableIpv6: boolean
   ): Promise<void> {
-    const active = states.filter(
+    const hasActiveFiltering = states.some(
       ({ wgInterface, observedUp }) =>
         observedUp && wgInterface.enabled && wgInterface.firewallEnabled
     );
-
-    for (const { wgInterface } of states) {
-      if (
-        !active.some(({ wgInterface: item }) => item.name === wgInterface.name)
-      ) {
-        await this.removeInterfaceJump(wgInterface.name, enableIpv6);
-      }
-    }
-
-    if (active.length === 0) {
-      await execFile('iptables', ['-F', CHAIN_NAME]).catch(() => {});
-      await execFile('iptables', ['-X', CHAIN_NAME]).catch(() => {});
-      if (enableIpv6) {
-        await execFile('ip6tables', ['-F', CHAIN_NAME]).catch(() => {});
-        await execFile('ip6tables', ['-X', CHAIN_NAME]).catch(() => {});
-      }
-      return;
-    }
-
     if (!(await this.isAvailable(enableIpv6))) {
+      if (!hasActiveFiltering) return;
       throw new Error('Per-client firewall tools are unavailable');
     }
 
-    for (const { wgInterface } of active) {
-      await this.initChain(wgInterface.name, enableIpv6);
-    }
-    await this.flushChain(enableIpv6);
-
-    for (const { clients, userConfig } of active) {
-      for (const client of clients) {
-        if (!client.enabled) continue;
-        await this.applyClientRules(
-          client,
-          userConfig.defaultAllowedIps,
-          enableIpv6
-        );
-      }
-    }
-
-    await execFile('iptables', ['-A', CHAIN_NAME, '-j', 'DROP']);
+    const ipv4Save = await execFile('iptables-save', ['-t', 'filter']);
+    await applyRestoreDocument(
+      'iptables-restore',
+      buildRestoreDocument({ family: 4, states, existingSave: ipv4Save })
+    );
     if (enableIpv6) {
-      await execFile('ip6tables', ['-A', CHAIN_NAME, '-j', 'DROP']);
+      const ipv6Save = await execFile('ip6tables-save', ['-t', 'filter']);
+      await applyRestoreDocument(
+        'ip6tables-restore',
+        buildRestoreDocument({ family: 6, states, existingSave: ipv6Save })
+      );
     }
   },
 
@@ -474,11 +570,13 @@ export const firewall = {
     try {
       // Check for iptables (always required)
       await execFile('iptables', ['--version']);
+      await execFile('iptables-restore', ['--version']);
       FW_DEBUG('iptables is available');
 
       // Check for ip6tables (only if IPv6 is enabled)
       if (enableIpv6) {
         await execFile('ip6tables', ['--version']);
+        await execFile('ip6tables-restore', ['--version']);
         FW_DEBUG('ip6tables is available');
       } else {
         FW_DEBUG('IPv6 disabled, skipping ip6tables check');
@@ -505,4 +603,5 @@ export const firewallTestExports = {
   parseFirewallEntry,
   generateRuleArgs,
   sanitizeComment,
+  buildRestoreDocument,
 };

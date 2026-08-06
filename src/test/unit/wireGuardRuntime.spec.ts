@@ -5,10 +5,15 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
+async function loadRuntime(
+  failedInterface?: string,
+  legacyInterface?: string,
+  withRouting = false
+) {
   const interfaces = [
     {
       name: 'wg0',
+      ipv4Cidr: '10.8.0.0/24',
       enabled: true,
       pendingDelete: false,
       defaultConfigFormat: 'wireguard',
@@ -18,6 +23,7 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
     },
     {
       name: 'awg1',
+      ipv4Cidr: '10.9.0.0/24',
       enabled: true,
       pendingDelete: false,
       defaultConfigFormat: 'amneziawg',
@@ -51,6 +57,10 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
         id: 1,
         interfaceId: 'wg0',
         name: 'wg-client',
+        publicKey: 'wg-client-key',
+        ipv4Address: '10.8.0.2',
+        persistentKeepalive: 25,
+        serverAllowedIps: [] as string[],
         enabled: true,
         expiresAt: null as string | null,
         oneTimeLink: null,
@@ -61,12 +71,77 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
         id: 2,
         interfaceId: 'awg1',
         name: 'awg-client',
+        publicKey: 'awg-client-key',
+        ipv4Address: '10.9.0.2',
+        persistentKeepalive: 25,
+        serverAllowedIps: [] as string[],
         enabled: true,
         expiresAt: null as string | null,
         oneTimeLink: null,
       },
     ],
   };
+  const routingGroupRuntime = {
+    groupId: 1,
+    selectedExitClientId: null as number | null,
+    appliedExitClientId: null as number | null,
+    evaluatedRevision: 2,
+    appliedRevision: null as number | null,
+    selectedSince: null as string | null,
+    appliedSince: null as string | null,
+    lastEvaluatedAt: null as string | null,
+    lastFailoverAt: null as string | null,
+    status: 'awaiting_exit',
+    reason: null as string | null,
+  };
+  const routingSnapshot = () => ({
+    settings: {
+      healthCheckIntervalSeconds: 60,
+      healthTimeoutSeconds: 180,
+      minHoldSeconds: 60,
+      failbackDelaySeconds: 180,
+    },
+    runtime: globalState,
+    interfaces: interfaces.map((wgInterface) => ({
+      interfaceId: wgInterface.name,
+      ipv4Cidr: wgInterface.ipv4Cidr,
+      enabled: wgInterface.enabled,
+      observedUp:
+        runtimeStates.find(
+          (runtime) => runtime.interfaceId === wgInterface.name
+        )?.observedUp ?? false,
+      runtimeStatus:
+        runtimeStates.find(
+          (runtime) => runtime.interfaceId === wgInterface.name
+        )?.status ?? 'pending',
+    })),
+    clients: [...clients.wg0, ...clients.awg1],
+    groups: [
+      {
+        id: 1,
+        routingSlot: 1,
+        enabled: true,
+        natEnabled: true,
+        allExitsDownPolicy: 'block' as const,
+        routedIpv4Prefixes: ['203.0.113.0/24'],
+        memberClientIds: [1],
+        exits: [{ clientId: 2, priority: 10, enabled: true }],
+        runtime: routingGroupRuntime,
+      },
+    ],
+    tombstones: [],
+  });
+  const updateRuntimeStates = vi.fn(
+    async (
+      updates: Array<{
+        groupId: number;
+        state: Record<string, unknown>;
+      }>
+    ) => {
+      for (const update of updates)
+        Object.assign(routingGroupRuntime, update.state);
+    }
+  );
 
   const runtime = {
     markApplying: vi.fn(async () => 2),
@@ -144,7 +219,10 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
     hooks: { get: vi.fn(async () => ({})) },
     userConfigs: { get: vi.fn(async () => ({})) },
     routingGroups: {
-      hasDeferredRoutingState: vi.fn(async () => false),
+      hasDeferredRoutingState: vi.fn(async () => withRouting),
+      getPlannerSnapshot: vi.fn(async () => routingSnapshot()),
+      updateRuntimeStates,
+      releaseTombstones: vi.fn(async () => {}),
     },
     runtime,
   };
@@ -182,15 +260,34 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
       existingDevices.has(interfaceId)
     ),
     sync: vi.fn(async () => {}),
-    dump: vi.fn(async () => []),
+    dump: vi.fn(async (interfaceId: string) =>
+      withRouting && interfaceId === 'awg1'
+        ? [
+            {
+              publicKey: 'awg-client-key',
+              allowedIps: '10.9.0.2/32,203.0.113.0/24',
+              endpoint: '192.0.2.10:51820',
+              latestHandshakeAt: new Date(),
+              transferRx: 1,
+              transferTx: 1,
+            },
+          ]
+        : []
+    ),
     generatePrivateKey: vi.fn(async () => 'private'),
     getPublicKey: vi.fn(async () => 'public'),
   };
   const firewall = { rebuildAllRules: vi.fn(async () => {}) };
+  const applyRouting = vi.fn(async () => {});
 
   vi.doMock('#server/utils/Database', () => ({ default: Database }));
   vi.doMock('#server/utils/wgHelper', () => ({ wg }));
   vi.doMock('#server/utils/firewall', () => ({ firewall }));
+  vi.doMock('#server/utils/routingExecutor', () => ({
+    RoutingExecutor: class {
+      apply = applyRouting;
+    },
+  }));
   vi.doMock('#server/utils/atomicFile', () => ({ atomicWriteFile }));
   vi.doMock('#server/utils/config', () => ({
     OLD_ENV: {},
@@ -206,6 +303,9 @@ async function loadRuntime(failedInterface?: string, legacyInterface?: string) {
     wg,
     atomicWriteFile,
     firewall,
+    applyRouting,
+    routingGroupRuntime,
+    updateRuntimeStates,
   };
 }
 
@@ -327,5 +427,71 @@ describe('interface-scoped WireGuard runtime', () => {
     expect(wg.down).toHaveBeenCalledTimes(2);
     expect(wg.down).toHaveBeenCalledWith('wg0');
     expect(wg.down).toHaveBeenCalledWith('awg1');
+  });
+
+  test('bootstraps block policy, moves prefixes to the selected exit, and verifies runtime state', async () => {
+    const {
+      WireGuard,
+      wg,
+      applyRouting,
+      routingGroupRuntime,
+      updateRuntimeStates,
+    } = await loadRuntime(undefined, undefined, true);
+
+    const result = await WireGuard.requestReconcile('routing-group-update');
+
+    expect(result.runtime.status).toBe('applied');
+    expect(applyRouting).toHaveBeenCalledTimes(2);
+    expect(applyRouting.mock.calls[0]?.[0].groups).toContainEqual(
+      expect.objectContaining({ outcome: 'block' })
+    );
+    expect(applyRouting.mock.calls[1]?.[0].groups).toContainEqual(
+      expect.objectContaining({
+        outcome: 'selected_exit',
+        selectedExitClientId: 2,
+      })
+    );
+    expect(wg.generateServerPeer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 2 }),
+      expect.objectContaining({
+        additionalAllowedIps: ['203.0.113.0/24'],
+      })
+    );
+    expect(updateRuntimeStates).toHaveBeenCalled();
+    expect(routingGroupRuntime).toMatchObject({
+      selectedExitClientId: 2,
+      appliedExitClientId: 2,
+      appliedRevision: 2,
+      status: 'active',
+    });
+
+    await WireGuard.requestReconcile('routing-health-check');
+    expect(applyRouting).toHaveBeenCalledTimes(2);
+  });
+
+  test('retains the bootstrap plan when exit peer prefixes cannot be verified', async () => {
+    const { WireGuard, wg, applyRouting, routingGroupRuntime } =
+      await loadRuntime(undefined, undefined, true);
+    wg.dump.mockResolvedValue([
+      {
+        publicKey: 'awg-client-key',
+        allowedIps: '10.9.0.2/32',
+        endpoint: '192.0.2.10:51820',
+        latestHandshakeAt: new Date(),
+        transferRx: 1,
+        transferTx: 1,
+      },
+    ]);
+
+    const result = await WireGuard.requestReconcile('routing-group-update');
+
+    expect(result.runtime.status).toBe('degraded');
+    expect(applyRouting).toHaveBeenCalledTimes(3);
+    expect(routingGroupRuntime).toMatchObject({
+      selectedExitClientId: 2,
+      appliedExitClientId: null,
+      appliedRevision: null,
+      status: 'degraded',
+    });
   });
 });

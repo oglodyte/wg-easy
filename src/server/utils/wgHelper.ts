@@ -15,6 +15,7 @@ import { InterfaceNameSchema } from '#shared/utils/schemas';
 type Options = {
   enableIpv6?: boolean;
   format?: ConfigFormat;
+  additionalAllowedIps?: readonly string[];
 };
 
 // needed to support cli
@@ -53,12 +54,15 @@ export const wg = {
     client: Omit<ClientType, 'createdAt' | 'updatedAt'>,
     options: Options = {}
   ) => {
-    const { enableIpv6 = true } = options;
+    const { enableIpv6 = true, additionalAllowedIps = [] } = options;
 
     const allowedIps = [
-      `${client.ipv4Address}/32`,
-      ...(enableIpv6 ? [`${client.ipv6Address}/128`] : []),
-      ...(client.serverAllowedIps ?? []),
+      ...new Set([
+        `${client.ipv4Address}/32`,
+        ...(enableIpv6 ? [`${client.ipv6Address}/128`] : []),
+        ...(client.serverAllowedIps ?? []),
+        ...additionalAllowedIps,
+      ]),
     ];
 
     const extraLines = [];

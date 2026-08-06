@@ -12,6 +12,16 @@ import { mergeClientStatuses } from '#server/utils/clientStatus';
 import { OLD_ENV, WG_ENV } from '#server/utils/config';
 import { firewall } from '#server/utils/firewall';
 import { encodeQRCode } from '#server/utils/qr';
+import {
+  buildRoutingPlan,
+  buildSafetyRoutingPlan,
+  evaluateExitReadiness,
+  selectActiveExit,
+  type ExitCandidateObservation,
+  type ExitSelectionResult,
+  type RoutingPlan,
+} from '#server/utils/routing';
+import { RoutingExecutor } from '#server/utils/routingExecutor';
 import type { ID } from '#server/utils/types';
 import { wg } from '#server/utils/wgHelper';
 import { setIntervalImmediately } from '#shared/utils/time';
@@ -39,10 +49,31 @@ type InterfaceDump = Awaited<ReturnType<typeof wg.dump>>[number] & {
   interfaceId: string;
 };
 type FirewallState = Parameters<typeof firewall.rebuildAllRules>[0][number];
+type RoutingPlannerSnapshot = Awaited<
+  ReturnType<typeof Database.routingGroups.getPlannerSnapshot>
+>;
+type RoutingEvaluation = {
+  snapshot: RoutingPlannerSnapshot;
+  dump: {
+    statuses: InterfaceDump[];
+    failures: { interfaceId: string; error: string }[];
+  };
+  evaluations: Array<{
+    groupId: number;
+    selection: ExitSelectionResult;
+  }>;
+  plan: RoutingPlan;
+  now: Date;
+};
 
 class WireGuard {
   #cronStarted = false;
   #cronTimer?: ReturnType<typeof setInterval>;
+  #routingHealthTimer?: ReturnType<typeof setInterval>;
+  #routingBootstrapped = false;
+  #lastSafeRoutingPlan?: RoutingPlan;
+  #exitHealthySince = new Map<string, Date>();
+  #routingExecutor = new RoutingExecutor();
   #reconciler = new RuntimeReconciler((request) => this.#reconcile(request));
 
   requestReconcile(
@@ -101,6 +132,7 @@ class WireGuard {
       }))
     );
     this.startCronJob();
+    await this.startRoutingHealthMonitor();
     return result;
   }
 
@@ -261,8 +293,20 @@ class WireGuard {
     }, 60 * 1000);
   }
 
+  async startRoutingHealthMonitor() {
+    if (this.#routingHealthTimer) return;
+    const { settings } = await Database.routingGroups.getPlannerSnapshot();
+    this.#routingHealthTimer = setInterval(() => {
+      this.requestReconcile('routing-health-check').catch((error) => {
+        WG_DEBUG('Routing health reconciliation failed.');
+        console.error(error);
+      });
+    }, settings.healthCheckIntervalSeconds * 1000);
+  }
+
   async Shutdown() {
     if (this.#cronTimer) clearInterval(this.#cronTimer);
+    if (this.#routingHealthTimer) clearInterval(this.#routingHealthTimer);
     await this.#reconciler.stop();
     const [interfaces, runtimeStates] = await Promise.all([
       Database.interfaces.getAll(),
@@ -330,12 +374,480 @@ class WireGuard {
     }
   }
 
+  async #evaluateRouting({
+    bootstrap = false,
+  } = {}): Promise<RoutingEvaluation> {
+    const now = new Date();
+    const [snapshot, dump] = await Promise.all([
+      Database.routingGroups.getPlannerSnapshot(),
+      bootstrap
+        ? Promise.resolve({ statuses: [], failures: [] })
+        : this.dumpAll(),
+    ]);
+    const interfaceById = new Map(
+      snapshot.interfaces.map((wgInterface) => [
+        wgInterface.interfaceId,
+        wgInterface,
+      ])
+    );
+    const clientById = new Map(
+      snapshot.clients.map((client) => [client.id, client])
+    );
+    const statusByPeer = new Map(
+      dump.statuses.map((status) => [
+        `${status.interfaceId}\u0000${status.publicKey}`,
+        status,
+      ])
+    );
+    const evaluations: Array<{
+      groupId: number;
+      selection: ExitSelectionResult;
+    }> = [];
+
+    const groups = snapshot.groups.map((group) => {
+      if (!group.enabled || group.runtime?.status === 'draft_invalid') {
+        return { ...group, enabled: false, selectedExitClientId: null };
+      }
+      if (bootstrap) {
+        return { ...group, selectedExitClientId: null };
+      }
+
+      const candidates = group.exits.map((exit) => {
+        const client = clientById.get(exit.clientId);
+        if (!client) throw new Error(`Routing exit ${exit.clientId} not found`);
+        const wgInterface = interfaceById.get(client.interfaceId);
+        if (!wgInterface) {
+          throw new Error(
+            `Routing exit interface ${client.interfaceId} not found`
+          );
+        }
+        const status = statusByPeer.get(
+          `${client.interfaceId}\u0000${client.publicKey}`
+        );
+        const observation: ExitCandidateObservation = {
+          clientId: client.id,
+          priority: exit.priority,
+          candidateEnabled: exit.enabled,
+          clientEnabled: client.enabled,
+          interfaceEnabled: wgInterface.enabled,
+          interfaceObservedUp:
+            wgInterface.observedUp && wgInterface.runtimeStatus === 'up',
+          persistentKeepalive: client.persistentKeepalive,
+          latestHandshakeAt: status?.latestHandshakeAt ?? null,
+          endpoint: status?.endpoint ?? null,
+        };
+        const key = `${group.id}:${client.id}`;
+        if (
+          evaluateExitReadiness(observation, snapshot.settings, now)
+            .observedHealthy
+        ) {
+          if (!this.#exitHealthySince.has(key)) {
+            this.#exitHealthySince.set(key, now);
+          }
+        } else {
+          this.#exitHealthySince.delete(key);
+        }
+        return {
+          ...observation,
+          healthySince: this.#exitHealthySince.get(key) ?? null,
+        };
+      });
+      const selection = selectActiveExit({
+        candidates,
+        current: {
+          selectedExitClientId: group.runtime?.selectedExitClientId ?? null,
+          selectedSince: group.runtime?.selectedSince
+            ? new Date(group.runtime.selectedSince)
+            : null,
+        },
+        settings: snapshot.settings,
+        now,
+      });
+      evaluations.push({ groupId: group.id, selection });
+      return { ...group, selectedExitClientId: selection.selectedExitClientId };
+    });
+
+    const plan = buildRoutingPlan({
+      interfaces: snapshot.interfaces.map((wgInterface) => ({
+        ...wgInterface,
+        observedUp: bootstrap ? wgInterface.enabled : wgInterface.observedUp,
+      })),
+      clients: snapshot.clients,
+      groups,
+    });
+    return { snapshot, dump, evaluations, plan, now };
+  }
+
+  async #recordRoutingSelections(
+    evaluation: RoutingEvaluation,
+    revision: number
+  ) {
+    const evaluationByGroup = new Map(
+      evaluation.evaluations.map((item) => [item.groupId, item.selection])
+    );
+    await Database.routingGroups.updateRuntimeStates(
+      evaluation.snapshot.groups.map((group) => {
+        const selection = evaluationByGroup.get(group.id);
+        const selectedExitClientId = selection?.selectedExitClientId ?? null;
+        const selectionChanged =
+          selectedExitClientId !==
+          (group.runtime?.selectedExitClientId ?? null);
+        return {
+          groupId: group.id,
+          state: {
+            selectedExitClientId,
+            evaluatedRevision: revision,
+            selectedSince: selectedExitClientId
+              ? selectionChanged
+                ? evaluation.now.toISOString()
+                : (group.runtime?.selectedSince ?? evaluation.now.toISOString())
+              : null,
+            lastEvaluatedAt: evaluation.now.toISOString(),
+            lastFailoverAt: selectionChanged
+              ? evaluation.now.toISOString()
+              : group.runtime?.lastFailoverAt,
+            status: group.enabled
+              ? selectedExitClientId
+                ? ('selected_pending' as const)
+                : ('awaiting_exit' as const)
+              : ('disabled' as const),
+            reason: group.enabled
+              ? (selection?.reason ?? 'no healthy exit candidate')
+              : null,
+          },
+        };
+      })
+    );
+  }
+
+  async #markRoutingApplied(evaluation: RoutingEvaluation, revision: number) {
+    const groupById = new Map(
+      evaluation.snapshot.groups.map((group) => [group.id, group])
+    );
+    await Database.routingGroups.updateRuntimeStates(
+      evaluation.plan.groups.map((groupPlan) => {
+        const group = groupById.get(groupPlan.groupId)!;
+        const previous = group.runtime;
+        const active = groupPlan.outcome === 'selected_exit';
+        return {
+          groupId: groupPlan.groupId,
+          state: {
+            appliedExitClientId: active ? groupPlan.selectedExitClientId : null,
+            appliedRevision: revision,
+            appliedSince:
+              active &&
+              previous?.appliedExitClientId === groupPlan.selectedExitClientId
+                ? (previous.appliedSince ?? evaluation.now.toISOString())
+                : active
+                  ? evaluation.now.toISOString()
+                  : null,
+            status:
+              groupPlan.outcome === 'selected_exit'
+                ? ('active' as const)
+                : groupPlan.outcome === 'block'
+                  ? ('blocked' as const)
+                  : groupPlan.outcome === 'host'
+                    ? ('host_fallback' as const)
+                    : ('disabled' as const),
+            reason:
+              groupPlan.outcome === 'selected_exit'
+                ? 'selected exit and Linux policy verified'
+                : groupPlan.outcome === 'block'
+                  ? 'all exits are down; matching traffic is blocked'
+                  : groupPlan.outcome === 'host'
+                    ? 'all exits are down; host routing fallback is active'
+                    : null,
+          },
+        };
+      })
+    );
+  }
+
+  async #markRoutingFailed(evaluation: RoutingEvaluation, error: unknown) {
+    const reason = getSafeRuntimeErrorMessage(error);
+    await Database.routingGroups.updateRuntimeStates(
+      evaluation.snapshot.groups.map((group) => ({
+        groupId: group.id,
+        state: {
+          status: group.enabled ? ('degraded' as const) : ('disabled' as const),
+          reason: group.enabled ? reason : null,
+        },
+      }))
+    );
+  }
+
+  #peerPrefixes(plan: RoutingPlan) {
+    return new Map(
+      plan.peerAllowedIps.map(({ clientId, prefixes }) => [clientId, prefixes])
+    );
+  }
+
+  #routingPlansEqual(left: RoutingPlan, right?: RoutingPlan) {
+    return (
+      right !== undefined && JSON.stringify(left) === JSON.stringify(right)
+    );
+  }
+
+  async #syncRoutingPeerConfigs(target: RoutingPlan, previous?: RoutingPlan) {
+    const targetPrefixes = this.#peerPrefixes(target);
+    const previousPrefixes = previous
+      ? this.#peerPrefixes(previous)
+      : new Map<number, string[]>();
+    const changedClients = new Set<number>();
+    for (const clientId of new Set([
+      ...targetPrefixes.keys(),
+      ...previousPrefixes.keys(),
+    ])) {
+      if (
+        JSON.stringify(targetPrefixes.get(clientId) ?? []) !==
+        JSON.stringify(previousPrefixes.get(clientId) ?? [])
+      ) {
+        changedClients.add(clientId);
+      }
+    }
+    if (changedClients.size === 0) return;
+
+    const clients = await Database.clients.getAll();
+    const affectedInterfaces = new Set(
+      clients
+        .filter(({ id }) => changedClients.has(id))
+        .map(({ interfaceId }) => interfaceId)
+    );
+    const runtimeByInterface = new Map(
+      (await Database.runtime.getAllInterfaces()).map((runtime) => [
+        runtime.interfaceId,
+        runtime,
+      ])
+    );
+    for (const interfaceId of affectedInterfaces) {
+      const wgInterface = await Database.interfaces.getByName(interfaceId);
+      if (!wgInterface.enabled || wgInterface.pendingDelete) continue;
+      await this.#saveInterfaceConfig(wgInterface, targetPrefixes);
+      if (runtimeByInterface.get(interfaceId)?.observedUp) {
+        await wg.sync(interfaceId);
+      }
+    }
+  }
+
+  async #verifyRoutingPeerConfigs(target: RoutingPlan, previous?: RoutingPlan) {
+    const targetPrefixes = this.#peerPrefixes(target);
+    const previousPrefixes = previous
+      ? this.#peerPrefixes(previous)
+      : new Map<number, string[]>();
+    const relevantClientIds = new Set([
+      ...targetPrefixes.keys(),
+      ...previousPrefixes.keys(),
+    ]);
+    if (relevantClientIds.size === 0) return;
+
+    const clients = await Database.clients.getAll();
+    const clientById = new Map(clients.map((client) => [client.id, client]));
+    const relevantPrefixes = new Set([
+      ...targetPrefixes.values().flatMap((prefixes) => prefixes),
+      ...previousPrefixes.values().flatMap((prefixes) => prefixes),
+    ]);
+    const interfaceIds = new Set(
+      [...relevantClientIds].flatMap((clientId) => {
+        const client = clientById.get(clientId);
+        return client ? [client.interfaceId] : [];
+      })
+    );
+    const dumpByInterface = new Map(
+      await Promise.all(
+        [...interfaceIds].map(
+          async (interfaceId) =>
+            [interfaceId, await this.dumpInterface(interfaceId)] as const
+        )
+      )
+    );
+
+    for (const clientId of relevantClientIds) {
+      const expected = new Set(targetPrefixes.get(clientId) ?? []);
+      const client = clientById.get(clientId);
+      if (!client) {
+        if (expected.size > 0) {
+          throw new Error(`Routing exit client ${clientId} no longer exists`);
+        }
+        continue;
+      }
+      const peer = dumpByInterface
+        .get(client.interfaceId)
+        ?.find(({ publicKey }) => publicKey === client.publicKey);
+      if (!peer) {
+        if (expected.size > 0) {
+          throw new Error(
+            `Routing exit client ${clientId} is missing from interface ${client.interfaceId}`
+          );
+        }
+        continue;
+      }
+      const observed = new Set(
+        peer.allowedIps
+          .split(',')
+          .map((prefix) => prefix.trim())
+          .filter(Boolean)
+      );
+      if (
+        [...expected].some((prefix) => !observed.has(prefix)) ||
+        [...relevantPrefixes].some(
+          (prefix) => !expected.has(prefix) && observed.has(prefix)
+        )
+      ) {
+        throw new Error(
+          `Routing peer prefixes were not verified for client ${clientId} on interface ${client.interfaceId}`
+        );
+      }
+    }
+  }
+
   async #reconcile({
     reasons,
     impacts,
   }: ReconcileRequest): Promise<MutationResult> {
     WG_DEBUG(`Reconciling runtime state: ${reasons.join(', ')}`);
     const applyingRevision = await Database.runtime.markApplying();
+
+    const hasRoutingState =
+      await Database.routingGroups.hasDeferredRoutingState();
+    if (!this.#routingBootstrapped) {
+      if (!hasRoutingState) {
+        this.#routingBootstrapped = true;
+      } else {
+        const bootstrap = await this.#evaluateRouting({ bootstrap: true });
+        const requiresBlockProtection = bootstrap.snapshot.groups.some(
+          (group) => group.enabled && group.allExitsDownPolicy === 'block'
+        );
+        if (requiresBlockProtection) {
+          try {
+            await this.#routingExecutor.apply(bootstrap.plan, {
+              previousPlan: this.#lastSafeRoutingPlan,
+            });
+            this.#lastSafeRoutingPlan = bootstrap.plan;
+          } catch (error) {
+            const clientById = new Map(
+              bootstrap.snapshot.clients.map((client) => [client.id, client])
+            );
+            const affectedInterfaces = new Set(
+              bootstrap.snapshot.groups
+                .filter(
+                  (group) =>
+                    group.enabled && group.allExitsDownPolicy === 'block'
+                )
+                .flatMap((group) => group.memberClientIds)
+                .flatMap((clientId) => {
+                  const client = clientById.get(clientId);
+                  return client ? [client.interfaceId] : [];
+                })
+            );
+            for (const interfaceId of affectedInterfaces) {
+              await this.#downInterface(interfaceId).catch(() => {});
+              await Database.runtime.markInterfaceFailed(
+                interfaceId,
+                new Error(
+                  'Common-routing bootstrap protection could not be installed'
+                ),
+                false
+              );
+            }
+            await this.#markRoutingFailed(bootstrap, error);
+            const state = await Database.runtime.markGlobalFailed(error);
+            return {
+              success: true,
+              revision: applyingRevision,
+              runtime: {
+                status: 'degraded',
+                appliedRevision: state.appliedRevision,
+                error: 'Runtime reconciliation failed for: routing-bootstrap',
+              },
+            };
+          }
+        }
+        this.#routingBootstrapped = true;
+      }
+    }
+
+    const initialRouting =
+      hasRoutingState || this.#lastSafeRoutingPlan
+        ? await this.#evaluateRouting()
+        : undefined;
+    if (initialRouting) {
+      const previousByGroup = new Map(
+        (this.#lastSafeRoutingPlan?.groups ?? []).map((group) => [
+          group.groupId,
+          group,
+        ])
+      );
+      const blockGroupIds = new Set(
+        initialRouting.plan.groups
+          .filter((group) => {
+            if (group.outcome === 'disabled') return false;
+            const configured = initialRouting.snapshot.groups.find(
+              ({ id }) => id === group.groupId
+            );
+            if (configured?.allExitsDownPolicy !== 'block') return false;
+            const previous = previousByGroup.get(group.groupId);
+            return (
+              !previous ||
+              previous.selectedExitClientId !== group.selectedExitClientId
+            );
+          })
+          .map(({ groupId }) => groupId)
+      );
+      if (blockGroupIds.size > 0) {
+        const bootstrap = await this.#evaluateRouting({ bootstrap: true });
+        const safetyPlan = buildSafetyRoutingPlan({
+          previous: this.#lastSafeRoutingPlan,
+          bootstrap: bootstrap.plan,
+          blockGroupIds,
+        });
+        try {
+          if (!this.#routingPlansEqual(safetyPlan, this.#lastSafeRoutingPlan)) {
+            await this.#routingExecutor.apply(safetyPlan, {
+              previousPlan: this.#lastSafeRoutingPlan,
+            });
+          }
+          this.#lastSafeRoutingPlan = safetyPlan;
+        } catch (error) {
+          const clientById = new Map(
+            bootstrap.snapshot.clients.map((client) => [client.id, client])
+          );
+          const affectedInterfaces = new Set(
+            bootstrap.snapshot.groups
+              .filter((group) => blockGroupIds.has(group.id))
+              .flatMap((group) => group.memberClientIds)
+              .flatMap((clientId) => {
+                const client = clientById.get(clientId);
+                return client ? [client.interfaceId] : [];
+              })
+          );
+          for (const interfaceId of affectedInterfaces) {
+            await this.#downInterface(interfaceId).catch(() => {});
+            await Database.runtime.markInterfaceFailed(
+              interfaceId,
+              new Error(
+                'Common-routing transition protection could not be installed'
+              ),
+              false
+            );
+          }
+          await this.#markRoutingFailed(initialRouting, error);
+          const state = await Database.runtime.markGlobalFailed(error);
+          return {
+            success: true,
+            revision: applyingRevision,
+            runtime: {
+              status: 'degraded',
+              appliedRevision: state.appliedRevision,
+              error:
+                'Runtime reconciliation failed for: routing-transition-safety',
+            },
+          };
+        }
+      }
+    }
+    const initialPeerPrefixes = initialRouting
+      ? this.#peerPrefixes(initialRouting.plan)
+      : new Map<number, string[]>();
 
     // Runtime revisions are captured before desired rows. A concurrent commit
     // can therefore make this pass conservatively under-claim, never claim a
@@ -386,7 +898,8 @@ class WireGuard {
           wgInterface,
           action,
           runtimeState.observedUp,
-          runtimeState.desiredRevision
+          runtimeState.desiredRevision,
+          initialPeerPrefixes
         );
       }
     );
@@ -398,11 +911,44 @@ class WireGuard {
       await Database.runtime.markInterfaceFailed(interfaceId, error, stillUp);
     }
 
+    const finalRouting =
+      hasRoutingState || this.#lastSafeRoutingPlan
+        ? await this.#evaluateRouting()
+        : undefined;
+    if (finalRouting) {
+      await this.#recordRoutingSelections(finalRouting, applyingRevision);
+    }
+
+    let routingPeerConfigFailed = false;
+    if (finalRouting) {
+      try {
+        await this.#syncRoutingPeerConfigs(
+          finalRouting.plan,
+          this.#lastSafeRoutingPlan
+        );
+      } catch (error) {
+        routingPeerConfigFailed = true;
+        failureDetails.push(
+          `routing-peer-config: ${getSafeRuntimeErrorMessage(error)}`
+        );
+        failedScopes.push('routing-peer-config');
+        await this.#markRoutingFailed(finalRouting, error);
+        if (this.#lastSafeRoutingPlan) {
+          await this.#syncRoutingPeerConfigs(
+            this.#lastSafeRoutingPlan,
+            finalRouting.plan
+          ).catch(() => {});
+        }
+      }
+    }
+
     let firewallStates: FirewallState[] = [];
+    let firewallFailed = false;
     try {
       firewallStates = await this.#getFirewallStates();
       await firewall.rebuildAllRules(firewallStates, !WG_ENV.DISABLE_IPV6);
     } catch (error) {
+      firewallFailed = true;
       failureDetails.push(`firewall: ${getSafeRuntimeErrorMessage(error)}`);
       failedScopes.push('firewall');
       for (const { wgInterface, observedUp } of firewallStates) {
@@ -413,6 +959,38 @@ class WireGuard {
             true,
             false
           );
+        }
+      }
+    }
+
+    if (finalRouting && !routingPeerConfigFailed && !firewallFailed) {
+      const previousPlan = this.#lastSafeRoutingPlan;
+      let linuxPlanApplied = false;
+      try {
+        if (!this.#routingPlansEqual(finalRouting.plan, previousPlan)) {
+          await this.#routingExecutor.apply(finalRouting.plan, {
+            previousPlan,
+          });
+          linuxPlanApplied = true;
+          await this.#verifyRoutingPeerConfigs(finalRouting.plan, previousPlan);
+        }
+        await this.#markRoutingApplied(finalRouting, applyingRevision);
+        await Database.routingGroups.releaseTombstones(applyingRevision);
+        this.#lastSafeRoutingPlan = finalRouting.plan;
+      } catch (error) {
+        failureDetails.push(`routing: ${getSafeRuntimeErrorMessage(error)}`);
+        failedScopes.push('routing');
+        await this.#markRoutingFailed(finalRouting, error);
+        if (linuxPlanApplied && previousPlan) {
+          await this.#routingExecutor
+            .apply(previousPlan, { previousPlan: finalRouting.plan })
+            .catch(() => {});
+        }
+        if (previousPlan) {
+          await this.#syncRoutingPeerConfigs(
+            previousPlan,
+            finalRouting.plan
+          ).catch(() => {});
         }
       }
     }
@@ -428,20 +1006,6 @@ class WireGuard {
           status: 'degraded',
           appliedRevision: state.appliedRevision,
           error: `Runtime reconciliation failed for: ${failedScopes.join(', ')}`,
-        },
-      };
-    }
-
-    if (await Database.routingGroups.hasDeferredRoutingState()) {
-      const state = await Database.runtime.markGlobalPending({
-        ensureUnapplied: true,
-      });
-      return {
-        success: true,
-        revision: state.desiredRevision,
-        runtime: {
-          status: 'pending',
-          appliedRevision: state.appliedRevision,
         },
       };
     }
@@ -462,7 +1026,8 @@ class WireGuard {
     wgInterface: InterfaceType,
     action: InterfaceRuntimeAction,
     observedUp: boolean,
-    appliedRevision: number
+    appliedRevision: number,
+    peerPrefixes: ReadonlyMap<number, readonly string[]>
   ) {
     if (wgInterface.pendingDelete || !wgInterface.enabled) {
       if (observedUp || action === 'down') {
@@ -508,7 +1073,7 @@ class WireGuard {
       return;
     }
 
-    await this.#saveInterfaceConfig(prepared);
+    await this.#saveInterfaceConfig(prepared, peerPrefixes);
 
     if (action === 'sync' && observedUp) {
       await wg.sync(prepared.name);
@@ -582,7 +1147,10 @@ class WireGuard {
     return wgInterface;
   }
 
-  async #saveInterfaceConfig(wgInterface: InterfaceType) {
+  async #saveInterfaceConfig(
+    wgInterface: InterfaceType,
+    peerPrefixes: ReadonlyMap<number, readonly string[]> = new Map()
+  ) {
     const [clients, hooks] = await Promise.all([
       Database.clients.getAllForInterface(wgInterface.name),
       Database.hooks.get(wgInterface.name),
@@ -596,6 +1164,7 @@ class WireGuard {
         .map((client) =>
           wg.generateServerPeer(client, {
             enableIpv6: !WG_ENV.DISABLE_IPV6,
+            additionalAllowedIps: peerPrefixes.get(client.id) ?? [],
           })
         ),
       '',

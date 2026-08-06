@@ -1,6 +1,7 @@
 import { createError, getValidatedRouterParams } from 'h3';
 
 import Database from '#server/utils/Database';
+import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { RoutingGroupNotFoundError } from '#db/repositories/routingGroup/service';
@@ -17,18 +18,15 @@ export default definePermissionEventHandler(
     try {
       const { revision, routingSlot } =
         await Database.routingGroups.delete(groupId);
-      const runtime = await Database.runtime.getGlobal();
+      const reconciled = await WireGuard.requestReconcile(
+        'routing-group-delete'
+      );
       return {
         success: true,
         revision,
-        runtime: {
-          status: 'pending' as const,
-          appliedRevision: runtime.appliedRevision,
-        },
-        executionAvailable: false,
+        runtime: reconciled.runtime,
+        executionAvailable: true,
         routingSlotTombstone: routingSlot,
-        warning:
-          'The routing slot remains reserved until Phase 6 verifies Linux-state cleanup.',
       };
     } catch (error) {
       if (error instanceof RoutingGroupNotFoundError) {

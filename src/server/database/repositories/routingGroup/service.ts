@@ -28,8 +28,8 @@ import {
 } from '#server/utils/routing';
 import { RoutingGroupSchema, schemaLimits } from '#shared/utils/schemas';
 
-const ROUTING_EXECUTION_UNAVAILABLE =
-  'Routing plans are preview-only until Phase 6; no Linux routing state has been applied.';
+const ROUTING_EXECUTION_PENDING =
+  'Routing execution is waiting for runtime reconciliation and verification.';
 
 type QueryDatabase = Pick<DBType, 'query'>;
 
@@ -351,9 +351,13 @@ function buildAggregates(state: ValidationState): RoutingGroupAggregate[] {
         runtime: runtimeByGroup.get(group.id) ?? null,
         validationWarnings: warningsByGroup.get(group.id) ?? [],
         execution: {
-          available: false,
-          active: false,
-          reason: ROUTING_EXECUTION_UNAVAILABLE,
+          available: true,
+          active: runtimeByGroup.get(group.id)?.status === 'active',
+          reason:
+            runtimeByGroup.get(group.id)?.reason ??
+            (group.enabled
+              ? ROUTING_EXECUTION_PENDING
+              : 'Routing group is disabled.'),
         },
       } satisfies RoutingGroupAggregate;
     });
@@ -426,7 +430,7 @@ export class RoutingGroupService {
           groupId: created.id,
           evaluatedRevision: revision,
           status: input.enabled ? 'awaiting_exit' : 'disabled',
-          reason: input.enabled ? ROUTING_EXECUTION_UNAVAILABLE : null,
+          reason: input.enabled ? ROUTING_EXECUTION_PENDING : null,
         })
         .execute();
       return { id: created.id, revision };
@@ -486,19 +490,16 @@ export class RoutingGroupService {
           groupId: id,
           evaluatedRevision: revision,
           status: input.enabled ? 'awaiting_exit' : 'disabled',
-          reason: input.enabled ? ROUTING_EXECUTION_UNAVAILABLE : null,
+          reason: input.enabled ? ROUTING_EXECUTION_PENDING : null,
         })
         .onConflictDoUpdate({
           target: routingGroupRuntimeState.groupId,
           set: {
             selectedExitClientId: null,
-            appliedExitClientId: null,
             evaluatedRevision: revision,
-            appliedRevision: null,
             selectedSince: null,
-            appliedSince: null,
-            status: input.enabled ? 'awaiting_exit' : 'disabled',
-            reason: input.enabled ? ROUTING_EXECUTION_UNAVAILABLE : null,
+            status: input.enabled ? 'selected_pending' : 'disabled',
+            reason: input.enabled ? ROUTING_EXECUTION_PENDING : null,
           },
         })
         .execute();
@@ -547,15 +548,6 @@ export class RoutingGroupService {
       Omit<RoutingGroupRuntimeStateType, 'groupId' | 'createdAt' | 'updatedAt'>
     >
   ) {
-    if (
-      state.status === 'active' ||
-      state.appliedExitClientId != null ||
-      state.appliedRevision != null
-    ) {
-      throw new Error(
-        'Routing runtime cannot be marked applied before Phase 6 execution and verification'
-      );
-    }
     const result = await this.#db
       .update(routingGroupRuntimeState)
       .set(state)
@@ -566,6 +558,28 @@ export class RoutingGroupService {
         'Routing group runtime state not found'
       );
     }
+  }
+
+  async updateRuntimeStates(
+    updates: readonly {
+      groupId: number;
+      state: Partial<
+        Omit<
+          RoutingGroupRuntimeStateType,
+          'groupId' | 'createdAt' | 'updatedAt'
+        >
+      >;
+    }[]
+  ) {
+    await this.#db.transaction(async (tx) => {
+      for (const { groupId, state } of updates) {
+        await tx
+          .update(routingGroupRuntimeState)
+          .set(state)
+          .where(eq(routingGroupRuntimeState.groupId, groupId))
+          .execute();
+      }
+    });
   }
 
   releaseTombstones(appliedRevision: number) {
@@ -618,6 +632,8 @@ export class RoutingGroupService {
         enabled: wgInterface.enabled && !wgInterface.pendingDelete,
         observedUp:
           runtimeByInterface.get(wgInterface.name)?.observedUp === true,
+        runtimeStatus:
+          runtimeByInterface.get(wgInterface.name)?.status ?? 'pending',
       })),
       clients: state.clients.map((client) => ({
         id: client.id,
@@ -648,4 +664,4 @@ export class RoutingGroupService {
   }
 }
 
-export { ROUTING_EXECUTION_UNAVAILABLE };
+export { ROUTING_EXECUTION_PENDING };

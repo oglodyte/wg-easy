@@ -42,8 +42,8 @@ export default defineEventHandler(async () => {
     })),
     runtime: toSafeRuntimeState(reconciliation),
     commonRouting: {
-      available: false,
-      reason: 'Common routing is unavailable until Phase 6.',
+      available: true,
+      reason: null,
     },
   };
 });

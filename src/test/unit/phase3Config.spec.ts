@@ -89,6 +89,24 @@ describe('Phase 3 assigned-interface config generation', () => {
     expect(config).not.toContain('\nJc =');
   });
 
+  test('unions selected-exit routing prefixes into server peer AllowedIPs', () => {
+    const peer = wg.generateServerPeer(
+      {
+        ...client,
+        publicKey: 'client-public',
+        serverAllowedIps: ['192.0.2.0/24'],
+      },
+      {
+        enableIpv6: false,
+        additionalAllowedIps: ['0.0.0.0/0', '192.0.2.0/24'],
+      }
+    );
+
+    expect(peer).toContain(
+      'AllowedIPs = 10.252.0.2/32, 192.0.2.0/24, 0.0.0.0/0'
+    );
+  });
+
   test('uses the assigned interface key and endpoint in compatibility mode', () => {
     const config = wg.generateClientConfig(
       compatibilityInterface,

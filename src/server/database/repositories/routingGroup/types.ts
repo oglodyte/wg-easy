@@ -52,8 +52,8 @@ export type RoutingGroupAggregate = RoutingGroupType & {
   runtime: RoutingGroupRuntimeStateType | null;
   validationWarnings: string[];
   execution: {
-    available: false;
-    active: false;
+    available: boolean;
+    active: boolean;
     reason: string;
   };
 };
