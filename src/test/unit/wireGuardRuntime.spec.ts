@@ -260,8 +260,22 @@ async function loadRuntime(
       existingDevices.has(interfaceId)
     ),
     sync: vi.fn(async () => {}),
-    dump: vi.fn(async (interfaceId: string) =>
-      withRouting && interfaceId === 'awg1'
+    dump: vi.fn(async (interfaceId: string) => {
+      if (!withRouting) return [];
+      if (interfaceId === 'wg0') {
+        return clients.wg0.map((client) => ({
+          publicKey: client.publicKey,
+          allowedIps: [
+            `${client.ipv4Address}/32`,
+            ...client.serverAllowedIps,
+          ].join(','),
+          endpoint: '192.0.2.20:51820',
+          latestHandshakeAt: new Date(),
+          transferRx: 1,
+          transferTx: 1,
+        }));
+      }
+      return interfaceId === 'awg1'
         ? [
             {
               publicKey: 'awg-client-key',
@@ -272,8 +286,8 @@ async function loadRuntime(
               transferTx: 1,
             },
           ]
-        : []
-    ),
+        : [];
+    }),
     generatePrivateKey: vi.fn(async () => 'private'),
     getPublicKey: vi.fn(async () => 'public'),
   };
@@ -434,9 +448,12 @@ describe('interface-scoped WireGuard runtime', () => {
       WireGuard,
       wg,
       applyRouting,
+      Database,
       routingGroupRuntime,
       updateRuntimeStates,
     } = await loadRuntime(undefined, undefined, true);
+    const [siteToSiteClient] = await Database.clients.getAll();
+    siteToSiteClient!.serverAllowedIps = ['198.51.100.0/24'];
 
     const result = await WireGuard.requestReconcile('routing-group-update');
 
@@ -445,10 +462,28 @@ describe('interface-scoped WireGuard runtime', () => {
     expect(applyRouting.mock.calls[0]?.[0].groups).toContainEqual(
       expect.objectContaining({ outcome: 'block' })
     );
+    expect(applyRouting.mock.calls[0]?.[0].routes).not.toContainEqual(
+      expect.objectContaining({ table: 51999 })
+    );
+    expect(applyRouting.mock.calls[0]?.[0].policyRules).not.toContainEqual(
+      expect.objectContaining({ priority: 23000 })
+    );
+    expect(
+      applyRouting.mock.calls[0]?.[0].routes.every(
+        (route: { device?: string }) => route.device === undefined
+      )
+    ).toBe(true);
     expect(applyRouting.mock.calls[1]?.[0].groups).toContainEqual(
       expect.objectContaining({
         outcome: 'selected_exit',
         selectedExitClientId: 2,
+      })
+    );
+    expect(applyRouting.mock.calls[1]?.[0].routes).toContainEqual(
+      expect.objectContaining({
+        table: 51999,
+        prefix: '198.51.100.0/24',
+        device: 'wg0',
       })
     );
     expect(wg.generateServerPeer).toHaveBeenCalledWith(

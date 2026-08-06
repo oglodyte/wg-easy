@@ -17,6 +17,8 @@ import {
   buildSafetyRoutingPlan,
   evaluateExitReadiness,
   selectActiveExit,
+  SITE_TO_SITE_PRIORITY,
+  SITE_TO_SITE_TABLE_ID,
   type ExitCandidateObservation,
   type ExitSelectionResult,
   type RoutingPlan,
@@ -65,6 +67,16 @@ type RoutingEvaluation = {
   plan: RoutingPlan;
   now: Date;
 };
+
+function buildDeviceIndependentBootstrapPlan(plan: RoutingPlan): RoutingPlan {
+  return {
+    ...plan,
+    routes: plan.routes.filter(({ table }) => table !== SITE_TO_SITE_TABLE_ID),
+    policyRules: plan.policyRules.filter(
+      ({ priority }) => priority !== SITE_TO_SITE_PRIORITY
+    ),
+  };
+}
 
 class WireGuard {
   #cronStarted = false;
@@ -467,7 +479,7 @@ class WireGuard {
       return { ...group, selectedExitClientId: selection.selectedExitClientId };
     });
 
-    const plan = buildRoutingPlan({
+    const planned = buildRoutingPlan({
       interfaces: snapshot.interfaces.map((wgInterface) => ({
         ...wgInterface,
         observedUp: bootstrap ? wgInterface.enabled : wgInterface.observedUp,
@@ -475,6 +487,12 @@ class WireGuard {
       clients: snapshot.clients,
       groups,
     });
+    // Bootstrap protection runs before managed interfaces are recreated. Keep
+    // fail-closed group rules/routes, but defer site-to-site routes whose
+    // devices cannot exist until the interface phase of this reconciliation.
+    const plan = bootstrap
+      ? buildDeviceIndependentBootstrapPlan(planned)
+      : planned;
     return { snapshot, dump, evaluations, plan, now };
   }
 
