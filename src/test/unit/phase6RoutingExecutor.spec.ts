@@ -117,7 +117,12 @@ class FakeLinuxRouting {
           line.startsWith('-A ') ||
           line.startsWith('-I ')
       )
-      .map((line) => line.replace(/^-I (\S+) 1 /, '-A $1 '))
+      .map((line) =>
+        line
+          .replace(/^-I (\S+) 1 /, '-A $1 ')
+          // iptables-save canonicalizes an explicit IPv4 default destination.
+          .replace(/ -d 0\.0\.0\.0\/0(?= |$)/g, '')
+      )
       .join('\n');
   }
 }
@@ -167,7 +172,10 @@ const clients = [
   },
 ];
 
-function plan(selectedExitClientId: number | null): RoutingPlan {
+function plan(
+  selectedExitClientId: number | null,
+  routedIpv4Prefixes = ['203.0.113.0/24']
+): RoutingPlan {
   return buildRoutingPlan({
     interfaces,
     clients,
@@ -178,7 +186,7 @@ function plan(selectedExitClientId: number | null): RoutingPlan {
         enabled: true,
         natEnabled: true,
         allExitsDownPolicy: 'block',
-        routedIpv4Prefixes: ['203.0.113.0/24'],
+        routedIpv4Prefixes,
         memberClientIds: [1],
         selectedExitClientId,
       },
@@ -291,6 +299,16 @@ describe('Phase 6 routing execution', () => {
     expect(ruleIndex).toBeLessThan(markIndex);
     expect(linux.tables.mangle).toContain('WG_ROUTE_MARK');
     expect(linux.tables.nat).toContain('-o awg1');
+  });
+
+  test('verifies all-traffic mark rules after iptables-save omits the default destination', async () => {
+    const linux = new FakeLinuxRouting();
+
+    await expect(
+      new RoutingExecutor(linux.run).apply(plan(2, ['0.0.0.0/0']))
+    ).resolves.toBeUndefined();
+
+    expect(linux.tables.mangle).not.toContain('-d 0.0.0.0/0');
   });
 
   test('reuses an exact owned policy rule without unsupported replacement or duplication', async () => {

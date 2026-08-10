@@ -221,6 +221,13 @@ function restoreRule(args: readonly string[]) {
   return args.map(restoreArgument).join(' ');
 }
 
+function canonicalizeIptablesRule(rule: string) {
+  // iptables-save omits an explicit IPv4 default-destination match. Keep the
+  // verifier aligned with that canonical representation without changing the
+  // generated restore input, which remains explicit and readable.
+  return rule.replace(/ -d 0\.0\.0\.0\/0(?= |$)/g, '');
+}
+
 function renderRestoreDocument({
   table,
   chain,
@@ -558,11 +565,17 @@ export class RoutingExecutor {
     );
     const ownedChainRules = verified.ownedChainRules ?? [];
     const observedChainRules = new Set(
-      ownedChainRules.map(({ table, line }) => `${table}:${line}`)
+      ownedChainRules.map(
+        ({ table, line }) => `${table}:${canonicalizeIptablesRule(line)}`
+      )
     );
     const desiredChainRules = new Set([
-      ...plan.markChainRules.map((args) => `mangle:${restoreRule(args)}`),
-      ...plan.natChainRules.map((args) => `nat:${restoreRule(args)}`),
+      ...plan.markChainRules.map(
+        (args) => `mangle:${canonicalizeIptablesRule(restoreRule(args))}`
+      ),
+      ...plan.natChainRules.map(
+        (args) => `nat:${canonicalizeIptablesRule(restoreRule(args))}`
+      ),
     ]);
     const ownedParentJumps = verified.ownedParentJumps ?? [];
     const observedParentJumps = new Set(
