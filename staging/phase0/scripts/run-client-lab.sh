@@ -67,22 +67,33 @@ for container in \
   "${docker_cmd[@]}" exec "$container" ping -c 2 -W 2 "$server_ip" >/dev/null
 done
 
+configure_exit_egress() {
+  local container=$1
+  local egress_device
+
+  egress_device=$("${docker_cmd[@]}" exec "$container" \
+    sh -c "ip -o route get '$sink_ip' | awk '{for (i=1; i<=NF; i++) if (\$i == \"dev\") print \$(i+1)}'" | head -n 1)
+  [ -n "$egress_device" ] || fail "could not determine egress device for $container"
+
+  "${docker_cmd[@]}" exec "$container" \
+    iptables -C FORWARD -i client -o "$egress_device" -j ACCEPT 2>/dev/null ||
+    "${docker_cmd[@]}" exec "$container" \
+      iptables -A FORWARD -i client -o "$egress_device" -j ACCEPT
+  "${docker_cmd[@]}" exec "$container" \
+    iptables -C FORWARD -i "$egress_device" -o client -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null ||
+    "${docker_cmd[@]}" exec "$container" \
+      iptables -A FORWARD -i "$egress_device" -o client -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+  "${docker_cmd[@]}" exec "$container" \
+    iptables -t nat -C POSTROUTING -d 172.30.111.0/24 -o "$egress_device" -j MASQUERADE 2>/dev/null ||
+    "${docker_cmd[@]}" exec "$container" \
+      iptables -t nat -A POSTROUTING -d 172.30.111.0/24 -o "$egress_device" -j MASQUERADE
+}
+
+configure_exit_egress wg-easy-phase0-exit-primary
+configure_exit_egress wg-easy-phase0-exit-backup
+
 egress_device=$("${docker_cmd[@]}" exec wg-easy-phase0-exit-primary \
   sh -c "ip -o route get '$sink_ip' | awk '{for (i=1; i<=NF; i++) if (\$i == \"dev\") print \$(i+1)}'" | head -n 1)
-[ -n "$egress_device" ] || fail "could not determine primary-exit egress device"
-
-"${docker_cmd[@]}" exec wg-easy-phase0-exit-primary \
-  iptables -C FORWARD -i client -o "$egress_device" -j ACCEPT 2>/dev/null ||
-  "${docker_cmd[@]}" exec wg-easy-phase0-exit-primary \
-    iptables -A FORWARD -i client -o "$egress_device" -j ACCEPT
-"${docker_cmd[@]}" exec wg-easy-phase0-exit-primary \
-  iptables -C FORWARD -i "$egress_device" -o client -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null ||
-  "${docker_cmd[@]}" exec wg-easy-phase0-exit-primary \
-    iptables -A FORWARD -i "$egress_device" -o client -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-"${docker_cmd[@]}" exec wg-easy-phase0-exit-primary \
-  iptables -t nat -C POSTROUTING -d 172.30.111.0/24 -o "$egress_device" -j MASQUERADE 2>/dev/null ||
-  "${docker_cmd[@]}" exec wg-easy-phase0-exit-primary \
-    iptables -t nat -A POSTROUTING -d 172.30.111.0/24 -o "$egress_device" -j MASQUERADE
 
 nat_on=$("${docker_cmd[@]}" exec wg-easy-phase0-wg-member \
   curl --fail --silent --show-error --max-time 10 "http://${sink_ip}:8080/nat-on")
