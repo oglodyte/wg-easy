@@ -11,6 +11,8 @@ export default definePermissionEventHandler('admin', 'any', async () => {
     executionReason: null,
     desiredRevision: runtime.desiredRevision,
     appliedRevision: runtime.appliedRevision,
+    status: runtime.status,
+    lastError: runtime.lastError,
     groups,
   };
 });

@@ -1,10 +1,11 @@
 import { sql } from 'drizzle-orm';
 
 import { general } from './schema';
-import type { GeneralUpdateType } from './types';
+import type { GeneralUpdateType, RoutingHealthSettingsType } from './types';
 
 import { hashPassword, isValidPasswordHash } from '#server/utils/password';
 import type { DBType } from '#db/sqlite';
+import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 
 function createPreparedStatement(db: DBType) {
   return {
@@ -29,6 +30,10 @@ function createPreparedStatement(db: DBType) {
           metricsPrometheus: true,
           metricsJson: true,
           metricsPassword: true,
+          routingExitHealthCheckIntervalSeconds: true,
+          routingExitHealthTimeoutSeconds: true,
+          routingExitMinHoldSeconds: true,
+          routingExitFailbackDelaySeconds: true,
         },
       })
       .prepare(),
@@ -39,6 +44,16 @@ function createPreparedStatement(db: DBType) {
           metricsPrometheus: true,
           metricsJson: true,
           metricsPassword: true,
+        },
+      })
+      .prepare(),
+    getRoutingHealthSettings: db.query.general
+      .findFirst({
+        columns: {
+          routingExitHealthCheckIntervalSeconds: true,
+          routingExitHealthTimeoutSeconds: true,
+          routingExitMinHoldSeconds: true,
+          routingExitFailbackDelaySeconds: true,
         },
       })
       .prepare(),
@@ -130,5 +145,23 @@ export class GeneralService {
     }
 
     return result;
+  }
+
+  async getRoutingHealthSettings() {
+    const result = await this.#statements.getRoutingHealthSettings.execute();
+    if (!result) throw new Error('General Config not found');
+    return result;
+  }
+
+  async updateRoutingHealthSettings(data: RoutingHealthSettingsType) {
+    return this.#db.transaction(async (tx) => {
+      await tx.update(general).set({
+        routingExitHealthCheckIntervalSeconds: data.healthCheckIntervalSeconds,
+        routingExitHealthTimeoutSeconds: data.healthTimeoutSeconds,
+        routingExitMinHoldSeconds: data.minHoldSeconds,
+        routingExitFailbackDelaySeconds: data.failbackDelaySeconds,
+      });
+      return bumpDesiredRevision(tx, []);
+    });
   }
 }

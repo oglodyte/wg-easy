@@ -57,6 +57,7 @@ const route = useRoute();
 const menuItems = computed(() => [
   { id: 'general', name: t('pages.admin.general') },
   { id: 'interfaces', name: t('pages.admin.interfaces') },
+  { id: 'routing', name: t('pages.admin.routing') },
 ]);
 
 const defaultItem = { id: '', name: t('pages.admin.panel') };

@@ -14,6 +14,7 @@ import type {
   ClientType,
   UpdateClientType,
 } from '#db/repositories/client/types';
+import { GeneralService } from '#db/repositories/general/service';
 import { InterfaceService } from '#db/repositories/interface/service';
 import { RoutingGroupService } from '#db/repositories/routingGroup/service';
 import type { RoutingGroupInput } from '#db/repositories/routingGroup/types';
@@ -61,6 +62,7 @@ async function createServices() {
     rawClient,
     db: typedDb,
     clients: new ClientService(typedDb),
+    general: new GeneralService(typedDb),
     interfaces: new InterfaceService(typedDb),
     routingGroups: new RoutingGroupService(typedDb),
   };
@@ -149,6 +151,29 @@ function updateData(
 }
 
 describe('Phase 5 routing-group repository and service', () => {
+  test('persists routing health settings and advances the desired revision', async () => {
+    const { db, general } = await createServices();
+    const before = await db.query.runtimeReconciliationState
+      .findFirst()
+      .execute();
+    expect(before).not.toBeNull();
+
+    const revision = await general.updateRoutingHealthSettings({
+      healthCheckIntervalSeconds: 30,
+      healthTimeoutSeconds: 120,
+      minHoldSeconds: 15,
+      failbackDelaySeconds: 45,
+    });
+
+    await expect(general.getRoutingHealthSettings()).resolves.toEqual({
+      routingExitHealthCheckIntervalSeconds: 30,
+      routingExitHealthTimeoutSeconds: 120,
+      routingExitMinHoldSeconds: 15,
+      routingExitFailbackDelaySeconds: 45,
+    });
+    expect(revision).toBe(before!.desiredRevision + 1);
+  });
+
   test('stores disabled drafts and atomically enables complete aggregates', async () => {
     const { rawClient, db, clients, interfaces, routingGroups } =
       await createServices();
