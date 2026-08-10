@@ -104,6 +104,59 @@ function toConflictGroup(
   };
 }
 
+function clientReference(state: ValidationState, clientId: number) {
+  const client = state.clients.find(({ id }) => id === clientId);
+  return client
+    ? `client “${client.name}” (#${client.id})`
+    : `client #${clientId}`;
+}
+
+function groupReference(
+  state: ValidationState,
+  groupId: number,
+  prospectiveGroupName?: string
+) {
+  if (groupId === 0 && prospectiveGroupName) {
+    return `new routing group “${prospectiveGroupName}”`;
+  }
+  const group = state.groups.find(({ id }) => id === groupId);
+  return group
+    ? `routing group “${group.name}” (#${group.id})`
+    : `routing group #${groupId}`;
+}
+
+function formatRoutingIssue(
+  state: ValidationState,
+  issue: RoutingValidationIssue,
+  prospectiveGroupName?: string
+) {
+  const [firstClientId, secondClientId] = issue.clientIds ?? [];
+  const [firstGroupId, secondGroupId] = issue.groupIds ?? [];
+  const [firstPrefix, secondPrefix] = issue.prefixes ?? [];
+
+  switch (issue.code) {
+    case 'client_not_found':
+      return `Routing group references missing ${clientReference(
+        state,
+        firstClientId!
+      )}`;
+    case 'member_already_assigned':
+      return `${clientReference(state, firstClientId!)} already belongs to ${groupReference(state, firstGroupId!, prospectiveGroupName)}`;
+    case 'exit_keepalive_invalid':
+      return `Exit ${clientReference(state, firstClientId!)} persistent keepalive must be between 1 and ${Math.floor(
+        state.general.routingExitHealthTimeoutSeconds / 3
+      )} seconds`;
+    case 'server_allowed_ip_conflict':
+      return `Server allowed IP conflict: ${clientReference(state, firstClientId!)} uses ${firstPrefix}, which overlaps ${clientReference(state, secondClientId!)} using ${secondPrefix}`;
+    case 'routing_group_overlap':
+      return `${groupReference(state, firstGroupId!, prospectiveGroupName)} and ${groupReference(state, secondGroupId!, prospectiveGroupName)} have overlapping prefixes through ${clientReference(state, firstClientId!)} and ${clientReference(state, secondClientId!)}`;
+    case 'routing_server_allowed_ip_overlap':
+      return `${groupReference(state, firstGroupId!, prospectiveGroupName)} prefix ${firstPrefix} conflicts with server allowed IP ${secondPrefix} on ${clientReference(state, secondClientId!)}; choose a non-overlapping prefix or remove that server allowed IP from the client configuration`;
+    default:
+      return issue.message;
+  }
+}
+
 function validationIssues(
   state: ValidationState,
   input: RoutingGroupInput,
@@ -225,8 +278,14 @@ function validationIssues(
   }
 
   return {
-    issues,
-    blockingIssues,
+    issues: issues.map((issue) => ({
+      ...issue,
+      message: formatRoutingIssue(state, issue, input.name),
+    })),
+    blockingIssues: blockingIssues.map((issue) => ({
+      ...issue,
+      message: formatRoutingIssue(state, issue, input.name),
+    })),
   };
 }
 
@@ -291,7 +350,7 @@ function buildAggregates(state: ValidationState): RoutingGroupAggregate[] {
       ) {
         addWarning(
           group.id,
-          `Exit client ${exit.clientId} persistent keepalive must be between 1 and ${maximumKeepalive} seconds`
+          `Exit ${clientReference(state, exit.clientId)} persistent keepalive must be between 1 and ${maximumKeepalive} seconds`
         );
       }
     }
@@ -307,7 +366,9 @@ function buildAggregates(state: ValidationState): RoutingGroupAggregate[] {
   ];
   for (const issue of aggregateIssues) {
     const affectedGroups = issue.groupIds ?? state.groups.map(({ id }) => id);
-    affectedGroups.forEach((groupId) => addWarning(groupId, issue.message));
+    affectedGroups.forEach((groupId) =>
+      addWarning(groupId, formatRoutingIssue(state, issue))
+    );
   }
   const enabledTogetherRuleCount = state.groups.reduce((total, group) => {
     const input = inputByGroup.get(group.id)!;

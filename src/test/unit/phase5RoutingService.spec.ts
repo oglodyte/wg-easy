@@ -279,7 +279,33 @@ describe('Phase 5 routing-group repository and service', () => {
       routingGroups.createAggregate(
         draft('second-draft', { memberClientIds: [memberId] })
       )
-    ).rejects.toThrow('already belongs to routing group');
+    ).rejects.toThrow('client “member” (#1) already belongs to routing group');
+  });
+
+  test('identifies named clients in routing conflict errors', async () => {
+    const { db, clients, interfaces, routingGroups } = await createServices();
+    await addInterface(interfaces, 'awg1', 1);
+    const memberId = await addClient(clients, db, 'member', 'wg0');
+    const exitId = await addClient(clients, db, 'exit', 'awg1', 25);
+    const siteClientId = await addClient(clients, db, 'site-route', 'awg1');
+    const siteClient = (await clients.get(siteClientId))!;
+    await clients.update(
+      siteClientId,
+      updateData(siteClient, { serverAllowedIps: ['198.51.100.0/24'] })
+    );
+
+    await expect(
+      routingGroups.createAggregate(
+        draft('conflict', {
+          enabled: true,
+          exits: [{ clientId: exitId, priority: 10, enabled: true }],
+          memberClientIds: [memberId],
+          routedIpv4Prefixes: ['198.51.100.0/24'],
+        })
+      )
+    ).rejects.toThrow(
+      'new routing group “conflict” prefix 198.51.100.0/24 conflicts with server allowed IP 198.51.100.0/24 on client “site-route” (#3)'
+    );
   });
 
   test('keeps deleted routing slots tombstoned until a verified revision releases them', async () => {

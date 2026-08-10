@@ -190,7 +190,7 @@
                   type="checkbox"
                   @change="toggleMember(client.id)"
                 />
-                <span>{{ client.name }}</span>
+                <span>{{ clientLabel(client) }}</span>
                 <span class="text-xs text-gray-500 dark:text-neutral-300">{{
                   client.ipv4Address
                 }}</span>
@@ -226,7 +226,7 @@
                     type="checkbox"
                     @change="toggleExit(client.id)"
                   />
-                  <span>{{ client.name }}</span>
+                  <span>{{ clientLabel(client) }}</span>
                   <span class="text-xs text-gray-500 dark:text-neutral-300">{{
                     client.ipv4Address
                   }}</span>
@@ -571,8 +571,12 @@ function clientFor(clientId: number) {
 function clientName(clientId: number) {
   const client = clientFor(clientId);
   return client
-    ? `${client.name} (${client.interfaceId})`
-    : `Client ${clientId}`;
+    ? `${clientLabel(client)} (${client.interfaceId})`
+    : `#${clientId}`;
+}
+
+function clientLabel(client: Pick<Client, 'id' | 'name'>) {
+  return t('admin.routing.clientLabel', { id: client.id, name: client.name });
 }
 
 function interfaceRuntime(clientId: number) {

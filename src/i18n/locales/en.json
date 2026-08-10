@@ -257,6 +257,7 @@
       "host": "Use normal host routing (fail open)",
       "members": "Member profiles",
       "membersHelp": "A profile can belong to at most one routing group and cannot be an exit in this group.",
+      "clientLabel": "#{id} · {name}",
       "disabledClient": "disabled",
       "exits": "Ordered exit candidates",
       "exitsHelp": "Lower priority is tried first. Disabled candidates remain saved but are never selected.",
