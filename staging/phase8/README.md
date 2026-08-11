@@ -43,7 +43,8 @@ The privileged routing test is Linux-only and must not be counted as passing
 when Vitest reports it skipped:
 
 ```sh
-sudo env "PATH=$PATH" WG_EASY_RUN_PRIVILEGED_TESTS=1 pnpm test:integration
+sudo env "PATH=$PATH" WG_EASY_RUN_PRIVILEGED_TESTS=1 \
+  node node_modules/vitest/vitest.mjs run --project integration
 ```
 
 ## Security review

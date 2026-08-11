@@ -18,7 +18,7 @@ while IFS= read -r script; do
 done < <(find "$PHASE8_DIR" -type f -name '*.sh' -print | sort)
 
 grep -q 'privileged-routing:' "$WORKFLOW"
-grep -q 'WG_EASY_RUN_PRIVILEGED_TESTS=1 pnpm test:integration' "$WORKFLOW"
+grep -q 'WG_EASY_RUN_PRIVILEGED_TESTS=1 node node_modules/vitest/vitest.mjs run --project integration' "$WORKFLOW"
 grep -q 'docker/setup-qemu-action@v4' "$WORKFLOW"
 grep -q 'platforms: linux/amd64,linux/arm64' "$WORKFLOW"
 grep -q 'for platform in linux/amd64 linux/arm64' "$WORKFLOW"
