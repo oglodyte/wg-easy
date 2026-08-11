@@ -48,7 +48,7 @@ grep -q -- \
   '--preserve-env=WG_EASY_IMAGE,WG_EASY_ENV_FILE,WG_EASY_VOLUME' \
   "${PHASE0_DIR}/scripts/common.sh"
 grep -q -- \
-  '--preserve-env=WG_CLIENT_IMAGE,AWG_CLIENT_IMAGE,TRAFFIC_SINK_IMAGE,LAB_ARTIFACT_ROOT' \
+  '--preserve-env=WG_CLIENT_IMAGE,AWG_CLIENT_IMAGE,TRAFFIC_SINK_IMAGE,LAB_ARTIFACT_ROOT,AWG_FORCE_USERSPACE' \
   "${PHASE0_DIR}/scripts/common.sh"
 grep -q 'ensure_network wg-easy-phase0-management 172.30.113.0/24 false' \
   "${PHASE0_DIR}/scripts/deploy.sh"
@@ -62,6 +62,10 @@ fi
 grep -q 'net.ipv4.conf.all.src_valid_mark: 1' "${PHASE0_DIR}/compose.lab.yml"
 grep -q 'wg-easy-stage.lan:172.30.110.2' "${PHASE0_DIR}/compose.lab.yml"
 grep -q 'privileged: true' "${PHASE0_DIR}/compose.lab.yml"
+[ "$(grep -c 'AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}' \
+  "${PHASE0_DIR}/compose.lab.yml")" -eq 3 ]
+grep -q 'AWG_FORCE_USERSPACE must be true or false' \
+  "${PHASE0_DIR}/scripts/common.sh"
 grep -q 'if curl --fail --silent --show-error' "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q 'up -d --remove-orphans --force-recreate' "${PHASE0_DIR}/scripts/deploy.sh"
 grep -q 'PHASE0_ENDPOINT_HOST' "${PHASE0_DIR}/scripts/seed-baseline.sh"

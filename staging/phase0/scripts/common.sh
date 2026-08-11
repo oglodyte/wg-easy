@@ -24,7 +24,7 @@ server_compose=(
   docker compose -f "$SERVER_COMPOSE"
 )
 lab_compose=(
-  sudo -n --preserve-env=WG_CLIENT_IMAGE,AWG_CLIENT_IMAGE,TRAFFIC_SINK_IMAGE,LAB_ARTIFACT_ROOT
+  sudo -n --preserve-env=WG_CLIENT_IMAGE,AWG_CLIENT_IMAGE,TRAFFIC_SINK_IMAGE,LAB_ARTIFACT_ROOT,AWG_FORCE_USERSPACE
   docker compose -f "$LAB_COMPOSE"
 )
 
@@ -78,6 +78,11 @@ load_image_environment() {
   : "${WG_CLIENT_IMAGE:?Missing WG_CLIENT_IMAGE}"
   : "${AWG_CLIENT_IMAGE:?Missing AWG_CLIENT_IMAGE}"
   : "${TRAFFIC_SINK_IMAGE:?Missing TRAFFIC_SINK_IMAGE}"
+  AWG_FORCE_USERSPACE=${AWG_FORCE_USERSPACE:-false}
+
+  if [ "$AWG_FORCE_USERSPACE" != false ] && [ "$AWG_FORCE_USERSPACE" != true ]; then
+    fail "AWG_FORCE_USERSPACE must be true or false"
+  fi
 
   require_digest_ref WG_EASY_IMAGE "$WG_EASY_IMAGE"
   require_digest_ref WG_CLIENT_IMAGE "$WG_CLIENT_IMAGE"
@@ -86,6 +91,7 @@ load_image_environment() {
   require_endpoint_host "$PHASE0_ENDPOINT_HOST"
 
   export WG_EASY_IMAGE WG_CLIENT_IMAGE AWG_CLIENT_IMAGE TRAFFIC_SINK_IMAGE
+  export AWG_FORCE_USERSPACE
   export WG_EASY_ENV_FILE WG_EASY_VOLUME LAB_ARTIFACT_ROOT PHASE0_ENDPOINT_HOST
 }
 

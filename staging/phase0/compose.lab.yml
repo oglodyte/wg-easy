@@ -34,6 +34,8 @@ services:
     <<: *vpn-common
     image: ${AWG_CLIENT_IMAGE:?Set AWG_CLIENT_IMAGE to an immutable digest}
     container_name: wg-easy-phase0-awg-member
+    environment:
+      AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}
     volumes:
       - ${LAB_ARTIFACT_ROOT:?Set LAB_ARTIFACT_ROOT}/awg-member.conf:/run/wg-easy-lab/client.conf:ro
     networks:
@@ -44,6 +46,8 @@ services:
     <<: *vpn-common
     image: ${AWG_CLIENT_IMAGE:?Set AWG_CLIENT_IMAGE to an immutable digest}
     container_name: wg-easy-phase0-exit-primary
+    environment:
+      AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}
     sysctls:
       net.ipv4.ip_forward: 1
     volumes:
@@ -58,6 +62,8 @@ services:
     <<: *vpn-common
     image: ${AWG_CLIENT_IMAGE:?Set AWG_CLIENT_IMAGE to an immutable digest}
     container_name: wg-easy-phase0-exit-backup
+    environment:
+      AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}
     sysctls:
       net.ipv4.ip_forward: 1
     volumes:

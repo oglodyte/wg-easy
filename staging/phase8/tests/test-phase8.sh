@@ -14,6 +14,7 @@ QR_ROUTE="${REPOSITORY_ROOT}/src/server/api/client/[clientId]/qrcode.svg.get.ts"
 ONE_TIME_LINK_ROUTE="${REPOSITORY_ROOT}/src/server/api/client/[clientId]/generateOneTimeLink.post.ts"
 AWG_PATCH="${REPOSITORY_ROOT}/staging/phase0/client-lab/patch-awg-quick.sh"
 SERVER_COMPOSE="${REPOSITORY_ROOT}/staging/phase0/compose.server.yml"
+LAB_COMPOSE="${REPOSITORY_ROOT}/staging/phase0/compose.lab.yml"
 
 while IFS= read -r script; do
   bash -n "$script"
@@ -27,6 +28,8 @@ grep -q 'for architecture in amd64 arm64' "$WORKFLOW"
 grep -q 'expected exactly one platform manifest' "$WORKFLOW"
 grep -Fq 'AWG_FORCE_USERSPACE:-false' "$AWG_PATCH"
 grep -Fq '/dev/net/tun:/dev/net/tun' "$SERVER_COMPOSE"
+[ "$(grep -c 'AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}' \
+  "$LAB_COMPOSE")" -eq 3 ]
 grep -q '^AWG_FORCE_USERSPACE=false$' \
   "$REPOSITORY_ROOT/staging/phase0/server.env.example"
 grep -q 'AWG_FORCE_USERSPACE=true' "$PHASE8_DIR/README.md"
