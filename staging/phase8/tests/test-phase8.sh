@@ -21,7 +21,8 @@ grep -q 'privileged-routing:' "$WORKFLOW"
 grep -q 'WG_EASY_RUN_PRIVILEGED_TESTS=1 node node_modules/vitest/vitest.mjs run --project integration' "$WORKFLOW"
 grep -q 'docker/setup-qemu-action@v4' "$WORKFLOW"
 grep -q 'platforms: linux/amd64,linux/arm64' "$WORKFLOW"
-grep -q 'for platform in linux/amd64 linux/arm64' "$WORKFLOW"
+grep -q 'for architecture in amd64 arm64' "$WORKFLOW"
+grep -q 'expected exactly one platform manifest' "$WORKFLOW"
 
 grep -q "randomBytes(32).toString('base64url')" "$ONE_TIME_LINK"
 if grep -Eq 'Math\.random|CRC32|crc-32' "$ONE_TIME_LINK"; then

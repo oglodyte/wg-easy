@@ -157,9 +157,24 @@ jobs:
           SERVER_DIGEST: ${{ steps.server.outputs.digest }}
         run: |
           docker buildx imagetools inspect "${SERVER_IMAGE}@${SERVER_DIGEST}"
-          for platform in linux/amd64 linux/arm64; do
+          manifest=$(docker buildx imagetools inspect --raw "${SERVER_IMAGE}@${SERVER_DIGEST}")
+          for architecture in amd64 arm64; do
+            platform="linux/${architecture}"
+            image_digest=$(
+              jq -er --arg architecture "${architecture}" '
+                [.manifests[]
+                  | select(
+                      .platform.os == "linux"
+                      and .platform.architecture == $architecture
+                    )
+                ]
+                | if length == 1 then .[0].digest
+                  else error("expected exactly one platform manifest")
+                  end
+              ' <<<"${manifest}"
+            )
             docker run --rm --platform "${platform}" \
-              "${SERVER_IMAGE}@${SERVER_DIGEST}" \
+              "${SERVER_IMAGE}@${image_digest}" \
               sh -ec 'node --version; awg --version; ip -Version; test -x /usr/bin/amneziawg-go'
           done
 
