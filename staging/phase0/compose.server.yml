@@ -16,6 +16,8 @@ services:
     volumes:
       - wireguard-data:/etc/wireguard
       - /lib/modules:/lib/modules:ro
+    devices:
+      - /dev/net/tun:/dev/net/tun
     ports:
       - 51821:51821/tcp
       - 51820:51820/udp

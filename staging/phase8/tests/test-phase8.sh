@@ -12,6 +12,8 @@ COMMAND_RUNNER="${REPOSITORY_ROOT}/src/server/utils/cmd.ts"
 CONFIG_ROUTE="${REPOSITORY_ROOT}/src/server/api/client/[clientId]/configuration.get.ts"
 QR_ROUTE="${REPOSITORY_ROOT}/src/server/api/client/[clientId]/qrcode.svg.get.ts"
 ONE_TIME_LINK_ROUTE="${REPOSITORY_ROOT}/src/server/api/client/[clientId]/generateOneTimeLink.post.ts"
+AWG_PATCH="${REPOSITORY_ROOT}/staging/phase0/client-lab/patch-awg-quick.sh"
+SERVER_COMPOSE="${REPOSITORY_ROOT}/staging/phase0/compose.server.yml"
 
 while IFS= read -r script; do
   bash -n "$script"
@@ -23,6 +25,12 @@ grep -q 'docker/setup-qemu-action@v4' "$WORKFLOW"
 grep -q 'platforms: linux/amd64,linux/arm64' "$WORKFLOW"
 grep -q 'for architecture in amd64 arm64' "$WORKFLOW"
 grep -q 'expected exactly one platform manifest' "$WORKFLOW"
+grep -Fq 'AWG_FORCE_USERSPACE:-false' "$AWG_PATCH"
+grep -Fq '/dev/net/tun:/dev/net/tun' "$SERVER_COMPOSE"
+grep -q '^AWG_FORCE_USERSPACE=false$' \
+  "$REPOSITORY_ROOT/staging/phase0/server.env.example"
+grep -q 'AWG_FORCE_USERSPACE=true' "$PHASE8_DIR/README.md"
+grep -q '/dev/net/tun' "$PHASE8_DIR/README.md"
 
 grep -q "randomBytes(32).toString('base64url')" "$ONE_TIME_LINK"
 if grep -Eq 'Math\.random|CRC32|crc-32' "$ONE_TIME_LINK"; then

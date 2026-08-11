@@ -83,6 +83,13 @@ The recorded end-to-end result must cover:
 - snapshot rollback to the accepted Phase 7 image and a repeat candidate
   upgrade from the restored pre-feature baseline.
 
+Both the server and AmneziaWG client containers must mount `/dev/net/tun` so
+the bundled userspace implementation is a real fallback. If the staging host's
+kernel module is present but fails the compatibility gate, set
+`AWG_FORCE_USERSPACE=true` in the restricted server environment and on the
+AmneziaWG lab services. Confirm the userspace control sockets and TUN devices;
+do not infer userspace selection from a successful container start alone.
+
 Secret configs, tokens, databases, and credentials stay outside Git and must
 not be printed into ordinary logs. Record only non-secret checksums, IDs,
 digests, and summarized outcomes in the external runbook.

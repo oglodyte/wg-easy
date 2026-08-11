@@ -20,6 +20,8 @@ FROM ${ALPINE_IMAGE} AS awg-tools-build
 
 ARG AMNEZIAWG_TOOLS_COMMIT=d09ecc38425082e472368dd2bf8c4c42d10cae03
 
+COPY patch-awg-quick.sh /tmp/patch-awg-quick.sh
+
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
     build-base=0.5-r3 \
@@ -29,6 +31,7 @@ RUN apk add --no-cache \
 
 RUN git clone https://github.com/amnezia-vpn/amneziawg-tools.git /src/amneziawg-tools && \
     git -C /src/amneziawg-tools checkout --detach "${AMNEZIAWG_TOOLS_COMMIT}" && \
+    sh /tmp/patch-awg-quick.sh /src/amneziawg-tools/src/wg-quick/linux.bash && \
     make -C /src/amneziawg-tools/src
 
 FROM ${ALPINE_IMAGE} AS vpn-base

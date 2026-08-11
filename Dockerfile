@@ -18,11 +18,13 @@ COPY src ./
 RUN pnpm build
 
 # Build amneziawg-tools
+COPY staging/phase0/client-lab/patch-awg-quick.sh /tmp/patch-awg-quick.sh
 RUN apk add linux-headers build-base go git && \
     git clone https://github.com/amnezia-vpn/amneziawg-tools.git && \
     git clone https://github.com/amnezia-vpn/amneziawg-go && \
     git -C amneziawg-tools checkout --detach "${AMNEZIAWG_TOOLS_COMMIT}" && \
     git -C amneziawg-go checkout --detach "${AMNEZIAWG_GO_COMMIT}" && \
+    sh /tmp/patch-awg-quick.sh amneziawg-tools/src/wg-quick/linux.bash && \
     cd amneziawg-go && \
     make && \
     cd ../amneziawg-tools/src && \

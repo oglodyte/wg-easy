@@ -175,7 +175,7 @@ jobs:
             )
             docker run --rm --platform "${platform}" \
               "${SERVER_IMAGE}@${image_digest}" \
-              sh -ec 'node --version; awg --version; ip -Version; test -x /usr/bin/amneziawg-go'
+              sh -ec 'node --version; awg --version; ip -Version; test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick'
           done
 
       - name: Build and push generic WireGuard lab image
@@ -225,6 +225,14 @@ jobs:
           tags: ${{ steps.names.outputs.sink }}:${{ steps.names.outputs.phase_tag }}
           cache-from: type=gha,scope=phase-lab-sink-amd64
           cache-to: type=gha,mode=max,scope=phase-lab-sink-amd64
+
+      - name: Verify AmneziaWG lab userspace override
+        env:
+          AWG_IMAGE: ${{ steps.names.outputs.awg }}
+          AWG_DIGEST: ${{ steps.awg.outputs.digest }}
+        run: |
+          docker run --rm --entrypoint sh "${AWG_IMAGE}@${AWG_DIGEST}" \
+            -ec 'test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick'
 
       - name: Publish digest evidence
         shell: bash
