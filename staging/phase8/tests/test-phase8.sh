@@ -27,6 +27,7 @@ grep -q 'platforms: linux/amd64,linux/arm64' "$WORKFLOW"
 grep -q 'for architecture in amd64 arm64' "$WORKFLOW"
 grep -q 'expected exactly one platform manifest' "$WORKFLOW"
 grep -Fq 'AWG_FORCE_USERSPACE:-false' "$AWG_PATCH"
+grep -Fq 'WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1' "$AWG_PATCH"
 grep -Fq '/dev/net/tun:/dev/net/tun' "$SERVER_COMPOSE"
 [ "$(grep -c 'AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}' \
   "$LAB_COMPOSE")" -eq 3 ]

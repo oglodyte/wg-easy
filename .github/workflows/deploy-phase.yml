@@ -175,7 +175,7 @@ jobs:
             )
             docker run --rm --platform "${platform}" \
               "${SERVER_IMAGE}@${image_digest}" \
-              sh -ec 'node --version; awg --version; ip -Version; test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick'
+              sh -ec 'node --version; awg --version; ip -Version; test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick; grep -F "WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1" /usr/bin/awg-quick'
           done
 
       - name: Build and push generic WireGuard lab image
@@ -232,7 +232,7 @@ jobs:
           AWG_DIGEST: ${{ steps.awg.outputs.digest }}
         run: |
           docker run --rm --entrypoint sh "${AWG_IMAGE}@${AWG_DIGEST}" \
-            -ec 'test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick'
+            -ec 'test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick; grep -F "WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1" /usr/bin/awg-quick'
 
       - name: Publish digest evidence
         shell: bash
