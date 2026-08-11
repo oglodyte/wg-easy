@@ -7,6 +7,7 @@ import { firewall } from '#server/utils/firewall';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { InterfaceUpdateSchema } from '#db/repositories/interface/types';
+import { InterfaceReservationConflictError } from '#db/repositories/interface/service';
 import { getInterfaceRuntimeAction } from '#shared/utils/interfaceLifecycle';
 
 export default definePermissionEventHandler(
@@ -56,7 +57,14 @@ export default definePermissionEventHandler(
           : data.firewallEnabled !== defaultInterface.firewallEnabled
             ? 'sync'
             : 'none';
-    await Database.interfaces.update(defaultInterface.name, data);
+    try {
+      await Database.interfaces.update(defaultInterface.name, data);
+    } catch (error) {
+      if (error instanceof InterfaceReservationConflictError) {
+        throw createError({ statusCode: 409, statusMessage: error.message });
+      }
+      throw error;
+    }
     return WireGuard.requestReconcile('update-default-interface', [
       { interfaceId: defaultInterface.name, action },
     ]);

@@ -11,6 +11,7 @@ import {
   InterfaceGetSchema,
   InterfaceUpdateSchema,
 } from '#db/repositories/interface/types';
+import { InterfaceReservationConflictError } from '#db/repositories/interface/service';
 
 export default definePermissionEventHandler(
   'admin',
@@ -54,7 +55,14 @@ export default definePermissionEventHandler(
             ? getInterfaceRuntimeAction({ kind: 'peer' })
             : 'none';
 
-    await Database.interfaces.update(interfaceId, data);
+    try {
+      await Database.interfaces.update(interfaceId, data);
+    } catch (error) {
+      if (error instanceof InterfaceReservationConflictError) {
+        throw createError({ statusCode: 409, statusMessage: error.message });
+      }
+      throw error;
+    }
     return WireGuard.requestReconcile('update-interface', [
       { interfaceId, action },
     ]);

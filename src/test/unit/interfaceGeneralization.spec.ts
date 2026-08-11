@@ -9,7 +9,10 @@ import { migrate } from 'drizzle-orm/libsql/migrator';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ClientService } from '#db/repositories/client/service';
-import { InterfaceService } from '#db/repositories/interface/service';
+import {
+  InterfaceReservationConflictError,
+  InterfaceService,
+} from '#db/repositories/interface/service';
 import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
 import { OneTimeLinkGetSchema } from '#db/repositories/oneTimeLink/types';
 import { UserConfigService } from '#db/repositories/userConfig/service';
@@ -137,25 +140,33 @@ describe('Phase 2 interface-scoped repositories', () => {
       ipv6Cidr: 'fd42:252::/64',
     });
 
-    await expect(
-      interfaces.create({
-        name: 'awg2',
-        device: 'eth1',
-        port: 51822,
-        ipv4Cidr: '10.252.0.7/24',
-        ipv6Cidr: 'fd42:253::/64',
-      })
-    ).rejects.toThrow('IPv4 CIDR overlaps with interface awg1');
+    const overlappingCidr = interfaces.create({
+      name: 'awg2',
+      device: 'eth1',
+      port: 51822,
+      ipv4Cidr: '10.252.0.7/24',
+      ipv6Cidr: 'fd42:253::/64',
+    });
+    await expect(overlappingCidr).rejects.toBeInstanceOf(
+      InterfaceReservationConflictError
+    );
+    await expect(overlappingCidr).rejects.toThrow(
+      'IPv4 CIDR overlaps with interface awg1'
+    );
 
-    await expect(
-      interfaces.create({
-        name: 'awg2',
-        device: 'eth1',
-        port: 51821,
-        ipv4Cidr: '10.253.0.0/24',
-        ipv6Cidr: 'fd42:253::/64',
-      })
-    ).rejects.toThrow('Listen port is already used by interface awg1');
+    const duplicatePort = interfaces.create({
+      name: 'awg2',
+      device: 'eth1',
+      port: 51821,
+      ipv4Cidr: '10.253.0.0/24',
+      ipv6Cidr: 'fd42:253::/64',
+    });
+    await expect(duplicatePort).rejects.toBeInstanceOf(
+      InterfaceReservationConflictError
+    );
+    await expect(duplicatePort).rejects.toThrow(
+      'Listen port is already used by interface awg1'
+    );
   });
 
   test('allocates, filters, and validates clients against their assigned interface', async () => {

@@ -22,6 +22,8 @@ import type { DBType } from '#db/sqlite';
 
 export class InterfaceDeletionBlockedError extends Error {}
 
+export class InterfaceReservationConflictError extends Error {}
+
 function createPreparedStatement(db: DBType) {
   return {
     get: db.query.wgInterface
@@ -152,16 +154,20 @@ export class InterfaceService {
         containsCidr(existing.ipv4Cidr, data.ipv4Cidr) ||
         containsCidr(data.ipv4Cidr, existing.ipv4Cidr)
       ) {
-        throw new Error(`IPv4 CIDR overlaps with interface ${existing.name}`);
+        throw new InterfaceReservationConflictError(
+          `IPv4 CIDR overlaps with interface ${existing.name}`
+        );
       }
       if (
         containsCidr(existing.ipv6Cidr, data.ipv6Cidr) ||
         containsCidr(data.ipv6Cidr, existing.ipv6Cidr)
       ) {
-        throw new Error(`IPv6 CIDR overlaps with interface ${existing.name}`);
+        throw new InterfaceReservationConflictError(
+          `IPv6 CIDR overlaps with interface ${existing.name}`
+        );
       }
       if (data.port !== undefined && existing.port === data.port) {
-        throw new Error(
+        throw new InterfaceReservationConflictError(
           `Listen port is already used by interface ${existing.name}`
         );
       }
