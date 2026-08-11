@@ -27,6 +27,27 @@ scrape_configs:
           credentials: 'SuperSecurePassword'
 ```
 
+## Multi-interface and routing metrics
+
+Peer metrics include `interface`, `client_id`, and `client_name` labels. Use
+`client_id` as the stable identity because names can change. Interface metrics
+report desired and applied revisions, observed runtime status, listen port,
+compatibility mode, and whether a restart is still required.
+
+Common-routing metrics report the configured group count, enabled and verified
+active state, member and prefix counts, all-exits-down state, candidate
+priorities, and the number of groups or members depending on each exit client.
+Detailed reconciliation errors remain in the authenticated API and application
+logs; they are not emitted as unbounded Prometheus labels.
+
+The main metric families are:
+
+- `wg_easy_interface_*`
+- `wireguard_*` and `wg_easy_client_*`
+- `wg_easy_routing_group_*`
+- `wg_easy_exit_client_*`
+- `wg_easy_runtime_*`
+
 ## Grafana Dashboard
 
 You can use the following Grafana dashboard to visualize the metrics:

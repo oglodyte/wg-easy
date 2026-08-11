@@ -1,5 +1,6 @@
+import { randomBytes } from 'node:crypto';
+
 import { eq, sql } from 'drizzle-orm';
-import CRC32 from 'crc-32';
 
 import { oneTimeLink } from './schema';
 
@@ -62,12 +63,10 @@ export class OneTimeLinkService {
   }
 
   async generate(id: ID, requestedFormat: ConfigFormat = 'auto') {
-    // SECURITY
-    // This is known to be vulnerable to brute force attacks
-    // Mitigations: Small Window, One Time Use
-    // Making it longer defeats the whole purpose
-    const key = `${id}-${Math.floor(Math.random() * 1000)}`;
-    const oneTimeLink = Math.abs(CRC32.str(key)).toString(16);
+    // The link is a bearer credential. Keep it independent from the client ID
+    // and use enough CSPRNG entropy that the short validity window is defense
+    // in depth rather than the primary protection against guessing.
+    const oneTimeLink = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
     const client = await this.#db.query.client.findFirst({

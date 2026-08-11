@@ -10,11 +10,18 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ClientService } from '#db/repositories/client/service';
 import { InterfaceService } from '#db/repositories/interface/service';
+import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
+import { OneTimeLinkGetSchema } from '#db/repositories/oneTimeLink/types';
 import { UserConfigService } from '#db/repositories/userConfig/service';
 import * as schema from '#db/schema';
 import type { DBType } from '#db/sqlite';
 
 vi.mock('#server/utils/wgHelper', () => ({
+  resolveClientConfigFormat: (
+    _wgInterface: unknown,
+    _client: unknown,
+    requestedFormat: 'auto' | 'wireguard' | 'amneziawg'
+  ) => (requestedFormat === 'auto' ? 'wireguard' : requestedFormat),
   wg: {
     generatePrivateKey: vi.fn(async () => 'generated-private-key'),
     getPublicKey: vi.fn(async () => 'generated-public-key'),
@@ -59,6 +66,7 @@ async function createServices() {
     client,
     clients: new ClientService(typedDb),
     interfaces: new InterfaceService(typedDb),
+    oneTimeLinks: new OneTimeLinkService(typedDb),
     userConfigs: new UserConfigService(typedDb),
   };
 }
@@ -215,5 +223,45 @@ describe('Phase 2 interface-scoped repositories', () => {
         interfaceId: 'awg1',
       })
     ).rejects.toThrow('WireGuard interface is pending deletion');
+  });
+
+  test('creates unguessable one-time-link bearer tokens with a concrete format', async () => {
+    const { client, clients, oneTimeLinks } = await createServices();
+    const created = await clients.create({
+      name: 'one-time-link-client',
+      expiresAt: null,
+      interfaceId: 'wg0',
+    });
+    const clientId = created[0]!.clientId;
+
+    await oneTimeLinks.generate(clientId, 'wireguard');
+    const first = await client.execute({
+      sql: `SELECT one_time_link, config_format FROM one_time_links_table WHERE id = ?`,
+      args: [clientId],
+    });
+    const firstToken = String(first.rows[0]?.one_time_link);
+
+    await oneTimeLinks.delete(clientId);
+    await oneTimeLinks.generate(clientId, 'wireguard');
+    const second = await client.execute({
+      sql: `SELECT one_time_link, config_format FROM one_time_links_table WHERE id = ?`,
+      args: [clientId],
+    });
+    const secondToken = String(second.rows[0]?.one_time_link);
+
+    expect(firstToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(secondToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(secondToken).not.toBe(firstToken);
+    expect(first.rows[0]?.config_format).toBe('wireguard');
+    expect(second.rows[0]?.config_format).toBe('wireguard');
+    expect(
+      OneTimeLinkGetSchema.parse({ oneTimeLink: 'preserved-legacy-abc123' })
+    ).toEqual({ oneTimeLink: 'preserved-legacy-abc123' });
+    expect(() =>
+      OneTimeLinkGetSchema.parse({ oneTimeLink: '../unexpected/path' })
+    ).toThrow();
+    expect(() =>
+      OneTimeLinkGetSchema.parse({ oneTimeLink: 'a'.repeat(129) })
+    ).toThrow();
   });
 });

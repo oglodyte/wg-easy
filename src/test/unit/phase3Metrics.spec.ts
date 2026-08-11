@@ -6,8 +6,20 @@ vi.mock('#server/utils/Database', () => ({
   default: {
     interfaces: {
       getAll: vi.fn(async () => [
-        { name: 'wg0', enabled: true },
-        { name: 'awg1', enabled: true },
+        {
+          name: 'wg0',
+          enabled: true,
+          port: 51820,
+          awgParametersEnabled: false,
+          defaultConfigFormat: 'wireguard',
+        },
+        {
+          name: 'awg1',
+          enabled: true,
+          port: 51821,
+          awgParametersEnabled: true,
+          defaultConfigFormat: 'amneziawg',
+        },
       ]),
     },
     runtime: {
@@ -18,6 +30,7 @@ vi.mock('#server/utils/Database', () => ({
           desiredRevision: 4,
           appliedRevision: 4,
           status: 'up',
+          restartRequired: false,
         },
         {
           interfaceId: 'awg1',
@@ -25,6 +38,7 @@ vi.mock('#server/utils/Database', () => ({
           desiredRevision: 3,
           appliedRevision: 2,
           status: 'degraded',
+          restartRequired: true,
         },
       ]),
       getGlobal: vi.fn(async () => ({
@@ -33,6 +47,84 @@ vi.mock('#server/utils/Database', () => ({
         status: 'degraded',
         lastSucceededAt: null,
       })),
+    },
+    routingGroups: {
+      getAll: vi.fn(async () => [
+        {
+          id: 7,
+          name: 'phones "via" home',
+          enabled: true,
+          routedIpv4Prefixes: ['0.0.0.0/0'],
+          exits: [
+            {
+              clientId: 2,
+              priority: 10,
+              enabled: true,
+              client: {
+                id: 2,
+                name: 'router',
+                interfaceId: 'awg1',
+                enabled: true,
+                persistentKeepalive: 25,
+              },
+            },
+          ],
+          members: [
+            {
+              clientId: 1,
+              client: {
+                id: 1,
+                name: 'phone',
+                interfaceId: 'wg0',
+                enabled: true,
+                persistentKeepalive: 25,
+              },
+            },
+          ],
+          runtime: {
+            status: 'active',
+            appliedExitClientId: 2,
+          },
+          execution: { active: true },
+        },
+        {
+          id: 8,
+          name: 'offline exits',
+          enabled: true,
+          routedIpv4Prefixes: ['203.0.113.0/24'],
+          exits: [
+            {
+              clientId: 1,
+              priority: 20,
+              enabled: true,
+              client: {
+                id: 1,
+                name: 'phone',
+                interfaceId: 'wg0',
+                enabled: true,
+                persistentKeepalive: 25,
+              },
+            },
+          ],
+          members: [
+            {
+              clientId: 2,
+              client: {
+                id: 2,
+                name: 'router',
+                interfaceId: 'awg1',
+                enabled: true,
+                persistentKeepalive: 25,
+              },
+            },
+          ],
+          runtime: {
+            status: 'host_fallback',
+            appliedExitClientId: null,
+          },
+          execution: { active: false },
+        },
+      ]),
     },
   },
 }));
@@ -96,5 +188,37 @@ describe('Phase 3 metrics identity', () => {
     expect(metrics).toContain('wg_easy_runtime_desired_revision 4');
     expect(metrics).toContain('wg_easy_runtime_applied_revision 3');
     expect(metrics).toContain('wg_easy_runtime_reconciliation_degraded 1');
+    expect(metrics).toContain('wg_easy_interface_port{interface="awg1"} 51821');
+    expect(metrics).toContain(
+      'wg_easy_interface_info{interface="awg1",awg_parameters_enabled="true",default_config_format="amneziawg"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_interface_runtime_status{interface="awg1",status="degraded"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_interface_restart_required{interface="awg1"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_client_enabled{interface="wg0",client_id="1",client_name="phone"} 1'
+    );
+    expect(metrics).toContain('wg_easy_routing_groups_total 2');
+    expect(metrics).toContain(
+      'wg_easy_routing_group_active{group_id="7",group_name="phones \\"via\\" home"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_routing_group_members{group_id="7",group_name="phones \\"via\\" home"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_routing_group_all_exits_down{group_id="8",group_name="offline exits"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_client_is_exit{interface="awg1",client_id="2",client_name="router"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_exit_client_active_groups{interface="awg1",client_id="2",client_name="router"} 1'
+    );
+    expect(metrics).toContain(
+      'wg_easy_exit_client_candidate_priority{interface="awg1",client_id="2",client_name="router",group_id="7"} 10'
+    );
   });
 });

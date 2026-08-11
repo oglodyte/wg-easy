@@ -61,9 +61,39 @@ jobs:
           pnpm format:check
           pnpm build
 
+  privileged-routing:
+    name: Verify privileged routing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "lts/krypton"
+          check-latest: true
+          cache: pnpm
+          cache-dependency-path: src/pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        working-directory: src
+        run: pnpm install --frozen-lockfile
+
+      - name: Install privileged networking test tools
+        run: sudo apt-get update && sudo apt-get install --yes iproute2 iptables tcpdump
+
+      - name: Run privileged namespace suite
+        working-directory: src
+        run: sudo env "PATH=$PATH" WG_EASY_RUN_PRIVILEGED_TESTS=1 pnpm test:integration
+
   build:
     name: Build immutable images
-    needs: verify
+    needs:
+      - verify
+      - privileged-routing
     runs-on: ubuntu-latest
     outputs:
       phase_tag: ${{ steps.names.outputs.phase_tag }}
@@ -103,6 +133,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: docker/setup-qemu-action@v4
+
       - uses: docker/setup-buildx-action@v4
 
       - name: Build and push server image
@@ -110,14 +142,26 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: mode=max
           sbom: true
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: ${{ steps.names.outputs.server }}:${{ steps.names.outputs.phase_tag }}
-          cache-from: type=gha,scope=phase-server-amd64
-          cache-to: type=gha,mode=max,scope=phase-server-amd64
+          cache-from: type=gha,scope=phase-server-multiarch
+          cache-to: type=gha,mode=max,scope=phase-server-multiarch
+
+      - name: Verify server manifest and architecture binaries
+        env:
+          SERVER_IMAGE: ${{ steps.names.outputs.server }}
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+        run: |
+          docker buildx imagetools inspect "${SERVER_IMAGE}@${SERVER_DIGEST}"
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm --platform "${platform}" \
+              "${SERVER_IMAGE}@${SERVER_DIGEST}" \
+              sh -ec 'node --version; awg --version; ip -Version; test -x /usr/bin/amneziawg-go'
+          done
 
       - name: Build and push generic WireGuard lab image
         id: wg
