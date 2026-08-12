@@ -1,17 +1,17 @@
-FROM docker.io/library/node:krypton-alpine AS build
+ARG NODE_IMAGE=docker.io/library/node:22.22.0-alpine3.23@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 
 ARG AMNEZIAWG_GO_COMMIT=9f5d948bc72cc554791cfe0fb91527e4acfb6b79
 ARG AMNEZIAWG_TOOLS_COMMIT=d09ecc38425082e472368dd2bf8c4c42d10cae03
+ARG PNPM_VERSION=11.15.1
 
-# update corepack
-RUN npm install --global corepack@latest
-# Install pnpm
-RUN corepack enable pnpm
+# Install the repository-declared package manager without a moving Corepack update.
+RUN corepack enable pnpm && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
 # Copy Web UI
 COPY src/package.json src/pnpm-lock.yaml src/pnpm-workspace.yaml ./
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 
 # Build UI
 COPY src ./
@@ -31,13 +31,14 @@ RUN apk add linux-headers build-base go git && \
     make && \
     sed -i 's|\[\[ $proto == -4 \]\] && cmd sysctl -q net\.ipv4\.conf\.all\.src_valid_mark=1|[[ $proto == -4 ]] \&\& [[ $(sysctl -n net.ipv4.conf.all.src_valid_mark) != 1 ]] \&\& cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1|' ./wg-quick/linux.bash
 
-FROM docker.io/library/node:krypton-alpine AS build-libsql
+FROM ${NODE_IMAGE} AS build-libsql
 WORKDIR /app
-RUN npm install --no-save --omit=dev libsql
+ARG LIBSQL_VERSION=0.5.29
+RUN npm install --no-save --omit=dev --package-lock=false "libsql@${LIBSQL_VERSION}"
 
 # Copy build result to a new image.
 # This saves a lot of disk space.
-FROM docker.io/library/node:krypton-alpine
+FROM ${NODE_IMAGE}
 WORKDIR /app
 
 HEALTHCHECK --interval=1m --timeout=5s --retries=3 CMD /usr/bin/timeout 5s /usr/bin/wget -q -O /dev/null http://127.0.0.1:51821/api/health
@@ -90,6 +91,8 @@ ENV INIT_ENABLED=false
 ENV DISABLE_IPV6=false
 
 LABEL org.opencontainers.image.source=https://github.com/wg-easy/wg-easy
+LABEL org.opencontainers.image.node.version="22.22.0"
+LABEL org.opencontainers.image.libsql.version="0.5.29"
 LABEL org.opencontainers.image.amneziawg-go.revision="9f5d948bc72cc554791cfe0fb91527e4acfb6b79"
 LABEL org.opencontainers.image.amneziawg-tools.revision="d09ecc38425082e472368dd2bf8c4c42d10cae03"
 

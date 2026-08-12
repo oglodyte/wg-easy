@@ -15,6 +15,8 @@ ONE_TIME_LINK_ROUTE="${REPOSITORY_ROOT}/src/server/api/client/[clientId]/generat
 AWG_PATCH="${REPOSITORY_ROOT}/staging/phase0/client-lab/patch-awg-quick.sh"
 SERVER_COMPOSE="${REPOSITORY_ROOT}/staging/phase0/compose.server.yml"
 LAB_COMPOSE="${REPOSITORY_ROOT}/staging/phase0/compose.lab.yml"
+DOCKERFILE="${REPOSITORY_ROOT}/Dockerfile"
+DATABASE_NATIVE_SMOKE="${PHASE8_DIR}/database-native-smoke.mjs"
 
 while IFS= read -r script; do
   bash -n "$script"
@@ -26,6 +28,19 @@ grep -q 'docker/setup-qemu-action@v4' "$WORKFLOW"
 grep -q 'platforms: linux/amd64,linux/arm64' "$WORKFLOW"
 grep -q 'for architecture in amd64 arm64' "$WORKFLOW"
 grep -q 'expected exactly one platform manifest' "$WORKFLOW"
+grep -Fq 'node-version: "22.22.0"' "$WORKFLOW"
+grep -Fq 'node --expose-gc /tmp/database-native-smoke.mjs' "$WORKFLOW"
+grep -Fq 'node:22.22.0-alpine3.23@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34' "$DOCKERFILE"
+grep -Fq 'corepack prepare "pnpm@${PNPM_VERSION}" --activate' "$DOCKERFILE"
+grep -Fq 'pnpm install --frozen-lockfile' "$DOCKERFILE"
+grep -Fq '"libsql@${LIBSQL_VERSION}"' "$DOCKERFILE"
+grep -Fq 'for (let round = 0; round < 100; round += 1)' \
+  "$DATABASE_NATIVE_SMOKE"
+grep -Fq 'process.exit(0)' "$DATABASE_NATIVE_SMOKE"
+if grep -Fq 'corepack@latest' "$DOCKERFILE"; then
+  echo "The production image must not install a moving Corepack release." >&2
+  exit 1
+fi
 grep -Fq 'AWG_FORCE_USERSPACE:-false' "$AWG_PATCH"
 grep -Fq 'WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1' "$AWG_PATCH"
 grep -Fq '/dev/net/tun:/dev/net/tun' "$SERVER_COMPOSE"

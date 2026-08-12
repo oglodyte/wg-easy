@@ -17,6 +17,10 @@ because the selected disposable staging host is x86_64.
 
 Record the immutable manifest digest from the workflow artifact. Do not treat
 the tag alone as release evidence and never replace an existing phase tag.
+The production Dockerfile pins Node 22.22.0/Alpine 3.23 by its multi-platform
+digest, pnpm 11.15.1, and the separately copied libSQL package at the lockfile's
+exact 0.5.29 version. CI verifies those versions and runs native database churn
+with forced garbage collection on both target architectures.
 
 ## Local and CI gate
 
@@ -78,6 +82,8 @@ The recorded end-to-end result must cover:
 - cross-interface routing, NAT on/off, ordered failover/failback, block/host,
   restart/crash recovery, collision refusal, and exact owned-state cleanup;
 - a repeated health-check/expiration soak with resource and log observations;
+- Docker lifecycle-event capture proving no unexpected application exit,
+  signal, OOM, or automatic restart during the functional gate or soak;
 - one independent client outside the same-host container lab reaching the
   published staging tunnel endpoint and passing traffic;
 - snapshot rollback to the accepted Phase 7 image and a repeat candidate
