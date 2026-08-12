@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=docker.io/library/node:22.22.0-alpine3.23@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+ARG NODE_IMAGE=docker.io/library/node:24.19.0-alpine3.23@sha256:244cc2b53f46f9e876304391d17682b0ddae9ac33491f4857e25e35a36ba7995
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 
@@ -31,11 +31,6 @@ RUN apk add linux-headers build-base go git && \
     make && \
     sed -i 's|\[\[ $proto == -4 \]\] && cmd sysctl -q net\.ipv4\.conf\.all\.src_valid_mark=1|[[ $proto == -4 ]] \&\& [[ $(sysctl -n net.ipv4.conf.all.src_valid_mark) != 1 ]] \&\& cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1|' ./wg-quick/linux.bash
 
-FROM ${NODE_IMAGE} AS build-libsql
-WORKDIR /app
-ARG LIBSQL_VERSION=0.5.29
-RUN npm install --no-save --omit=dev --package-lock=false "libsql@${LIBSQL_VERSION}"
-
 # Copy build result to a new image.
 # This saves a lot of disk space.
 FROM ${NODE_IMAGE}
@@ -47,9 +42,6 @@ HEALTHCHECK --interval=1m --timeout=5s --retries=3 CMD /usr/bin/timeout 5s /usr/
 COPY --from=build /app/.output /app
 # Copy migrations
 COPY --from=build /app/server/database/migrations /app/server/database/migrations
-# libsql (https://github.com/nitrojs/nitro/issues/3328)
-COPY --from=build-libsql /app/node_modules /app/server/node_modules
-
 # cli
 COPY --from=build /app/cli/cli.sh /usr/local/bin/cli
 RUN chmod +x /usr/local/bin/cli
@@ -91,8 +83,7 @@ ENV INIT_ENABLED=false
 ENV DISABLE_IPV6=false
 
 LABEL org.opencontainers.image.source=https://github.com/wg-easy/wg-easy
-LABEL org.opencontainers.image.node.version="22.22.0"
-LABEL org.opencontainers.image.libsql.version="0.5.29"
+LABEL org.opencontainers.image.node.version="24.19.0"
 LABEL org.opencontainers.image.amneziawg-go.revision="9f5d948bc72cc554791cfe0fb91527e4acfb6b79"
 LABEL org.opencontainers.image.amneziawg-tools.revision="d09ecc38425082e472368dd2bf8c4c42d10cae03"
 

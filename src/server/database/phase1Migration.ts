@@ -1,10 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { Client } from '@libsql/client';
-
 import { InterfaceNameSchema } from '#shared/utils/schemas';
 import type { ConcreteConfigFormat } from '#shared/types/runtime';
+import type { NodeSqliteExecutor, NodeSqliteRawDatabase } from '#db/nodeSqlite';
 
 const AWG_DIRECTIVE_PATTERN =
   /^(Jc|Jmin|Jmax|S1|S2|S3|S4|H1|H2|H3|H4|I1|I2|I3|I4|I5)\s*=\s*(.*?)\s*$/gim;
@@ -112,7 +111,7 @@ async function readGeneratedConfig(
   }
 }
 
-async function isFreshInstall(client: Client) {
+async function isFreshInstall(client: NodeSqliteExecutor) {
   const result = await client.execute({
     sql: `
       SELECT
@@ -132,7 +131,7 @@ async function isFreshInstall(client: Client) {
 }
 
 export async function finalizePhase1DataMigration(
-  client: Client,
+  client: NodeSqliteRawDatabase,
   {
     configDirectory,
     legacyEnvironment,
@@ -174,8 +173,7 @@ export async function finalizePhase1DataMigration(
     })
   );
 
-  const transaction = await client.transaction('write');
-  try {
+  await client.transaction(async (transaction) => {
     for (const { interfaceId, resolution } of resolutions) {
       if (!resolution) {
         await transaction.execute({
@@ -240,12 +238,7 @@ export async function finalizePhase1DataMigration(
             ]
           : ['pending', null],
     });
-
-    await transaction.commit();
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
-  }
+  });
 
   return {
     migrated: resolutions

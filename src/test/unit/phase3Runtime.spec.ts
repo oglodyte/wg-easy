@@ -3,9 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import {
@@ -21,15 +18,18 @@ import {
 } from '#db/repositories/runtime/service';
 import * as schema from '#db/schema';
 import type { DBType } from '#db/sqlite';
+import { createNodeSqliteDatabase } from '#db/nodeSqlite';
 import type { MutationResult } from '#shared/types/runtime';
 
 const migrationsDirectory = fileURLToPath(
   new URL('../../server/database/migrations', import.meta.url)
 );
 const temporaryRoots: string[] = [];
+const databases: Array<ReturnType<typeof createNodeSqliteDatabase>> = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  await Promise.all(databases.splice(0).map((database) => database.close()));
   await Promise.all(
     temporaryRoots
       .splice(0)
@@ -42,6 +42,13 @@ const appliedResult: MutationResult = {
   revision: 2,
   runtime: { status: 'applied', appliedRevision: 2 },
 };
+
+async function createRuntimeDatabase(root: string) {
+  const database = createNodeSqliteDatabase(path.join(root, 'test.db'), schema);
+  databases.push(database);
+  await database.migrate({ migrationsFolder: migrationsDirectory });
+  return database.db as DBType;
+}
 
 describe('Phase 3 runtime reconciliation', () => {
   test('coalesces simultaneous requests into one serialized pass', async () => {
@@ -145,10 +152,7 @@ describe('Phase 3 runtime reconciliation', () => {
   test('tracks desired and applied revisions independently', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-easy-runtime-'));
     temporaryRoots.push(root);
-    const client = createClient({ url: `file:${path.join(root, 'test.db')}` });
-    const db = drizzle({ client, schema });
-    await migrate(db, { migrationsFolder: migrationsDirectory });
-    const typedDb = db as unknown as DBType;
+    const typedDb = await createRuntimeDatabase(root);
     const runtime = new RuntimeStateService(typedDb);
 
     expect(await runtime.getGlobal()).toMatchObject({
@@ -178,10 +182,7 @@ describe('Phase 3 runtime reconciliation', () => {
   test('does not claim a revision committed after a pass started', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-easy-runtime-'));
     temporaryRoots.push(root);
-    const client = createClient({ url: `file:${path.join(root, 'test.db')}` });
-    const db = drizzle({ client, schema });
-    await migrate(db, { migrationsFolder: migrationsDirectory });
-    const typedDb = db as unknown as DBType;
+    const typedDb = await createRuntimeDatabase(root);
     const runtime = new RuntimeStateService(typedDb);
 
     await bumpDesiredRevision(typedDb, ['wg0']);
@@ -208,10 +209,8 @@ describe('Phase 3 runtime reconciliation', () => {
   test('can represent newly deferred runtime work as an unapplied revision', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-easy-runtime-'));
     temporaryRoots.push(root);
-    const client = createClient({ url: `file:${path.join(root, 'test.db')}` });
-    const db = drizzle({ client, schema });
-    await migrate(db, { migrationsFolder: migrationsDirectory });
-    const runtime = new RuntimeStateService(db as unknown as DBType);
+    const db = await createRuntimeDatabase(root);
+    const runtime = new RuntimeStateService(db);
 
     await runtime.markGlobalApplied(1);
     expect(await runtime.getGlobal()).toMatchObject({

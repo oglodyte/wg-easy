@@ -3,9 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ClientService } from '#db/repositories/client/service';
@@ -16,6 +13,7 @@ import {
 import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
 import { OneTimeLinkGetSchema } from '#db/repositories/oneTimeLink/types';
 import { UserConfigService } from '#db/repositories/userConfig/service';
+import { createNodeSqliteDatabase } from '#db/nodeSqlite';
 import * as schema from '#db/schema';
 import type { DBType } from '#db/sqlite';
 
@@ -36,8 +34,10 @@ const migrationsDirectory = fileURLToPath(
   new URL('../../server/database/migrations', import.meta.url)
 );
 const temporaryRoots: string[] = [];
+const databases: Array<ReturnType<typeof createNodeSqliteDatabase>> = [];
 
 afterEach(async () => {
+  await Promise.all(databases.splice(0).map((database) => database.close()));
   await Promise.all(
     temporaryRoots
       .splice(0)
@@ -48,9 +48,11 @@ afterEach(async () => {
 async function createServices() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-easy-phase2-'));
   temporaryRoots.push(root);
-  const client = createClient({ url: `file:${path.join(root, 'test.db')}` });
-  const db = drizzle({ client, schema });
-  await migrate(db, { migrationsFolder: migrationsDirectory });
+  const database = createNodeSqliteDatabase(path.join(root, 'test.db'), schema);
+  databases.push(database);
+  await database.migrate({ migrationsFolder: migrationsDirectory });
+  const client = database.raw;
+  const db = database.db;
   await client.execute({
     sql: `INSERT INTO users_table
       (id, username, password, email, name, role, totp_key, totp_verified, enabled)
@@ -64,7 +66,7 @@ async function createServices() {
       WHERE name = 'wg0'`,
     args: [],
   });
-  const typedDb = db as unknown as DBType;
+  const typedDb = db as DBType;
   return {
     client,
     clients: new ClientService(typedDb),

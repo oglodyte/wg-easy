@@ -17,6 +17,7 @@ SERVER_COMPOSE="${REPOSITORY_ROOT}/staging/phase0/compose.server.yml"
 LAB_COMPOSE="${REPOSITORY_ROOT}/staging/phase0/compose.lab.yml"
 DOCKERFILE="${REPOSITORY_ROOT}/Dockerfile"
 DATABASE_NATIVE_SMOKE="${PHASE8_DIR}/database-native-smoke.mjs"
+PNPM_WORKSPACE="${REPOSITORY_ROOT}/src/pnpm-workspace.yaml"
 
 while IFS= read -r script; do
   bash -n "$script"
@@ -28,19 +29,33 @@ grep -q 'docker/setup-qemu-action@v4' "$WORKFLOW"
 grep -q 'platforms: linux/amd64,linux/arm64' "$WORKFLOW"
 grep -q 'for architecture in amd64 arm64' "$WORKFLOW"
 grep -q 'expected exactly one platform manifest' "$WORKFLOW"
-grep -Fq 'node-version: "22.22.0"' "$WORKFLOW"
-grep -Fq 'node --expose-gc /tmp/database-native-smoke.mjs' "$WORKFLOW"
-grep -Fq 'node:22.22.0-alpine3.23@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34' "$DOCKERFILE"
+grep -Fq 'node-version: "24.19.0"' "$WORKFLOW"
+grep -Fq 'timeout 30s node --expose-gc /tmp/database-native-smoke.mjs' "$WORKFLOW"
+grep -Fq 'node:24.19.0-alpine3.23@sha256:244cc2b53f46f9e876304391d17682b0ddae9ac33491f4857e25e35a36ba7995' "$DOCKERFILE"
 grep -Fq 'corepack prepare "pnpm@${PNPM_VERSION}" --activate' "$DOCKERFILE"
 grep -Fq 'pnpm install --frozen-lockfile' "$DOCKERFILE"
-grep -Fq '"libsql@${LIBSQL_VERSION}"' "$DOCKERFILE"
 grep -Fq 'for (let round = 0; round < 100; round += 1)' \
   "$DATABASE_NATIVE_SMOKE"
-grep -Fq 'const Database = require("/app/server/node_modules/libsql")' \
+grep -Fq 'import { DatabaseSync } from "node:sqlite"' \
   "$DATABASE_NATIVE_SMOKE"
-grep -Fq 'process.exit(0)' "$DATABASE_NATIVE_SMOKE"
+grep -Fq "from 'node:sqlite'" \
+  "$REPOSITORY_ROOT/src/server/database/nodeSqlite.ts"
 if grep -Fq 'corepack@latest' "$DOCKERFILE"; then
   echo "The production image must not install a moving Corepack release." >&2
+  exit 1
+fi
+if rg -q '@libsql/client|drizzle-orm/libsql|libsql@' \
+  "$REPOSITORY_ROOT/src/package.json" \
+  "$REPOSITORY_ROOT/src/server" \
+  "$REPOSITORY_ROOT/src/cli" \
+  "$DOCKERFILE"; then
+  echo "The production runtime must not load the external libSQL addon." >&2
+  exit 1
+fi
+grep -Fq 'autoInstallPeers: false' "$PNPM_WORKSPACE"
+grep -Fq '"vue": "3.5.40"' "$REPOSITORY_ROOT/src/package.json"
+if grep -Fq 'process.exit(0)' "$DATABASE_NATIVE_SMOKE"; then
+  echo "The database smoke must exit naturally after deterministic close." >&2
   exit 1
 fi
 grep -Fq 'AWG_FORCE_USERSPACE:-false' "$AWG_PATCH"

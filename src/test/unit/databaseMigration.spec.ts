@@ -3,20 +3,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createClient, type Client } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
 import { afterEach, describe, expect, test } from 'vitest';
 
 import { finalizePhase1DataMigration } from '#db/phase1Migration';
+import { createNodeSqliteDatabase } from '#db/nodeSqlite';
 import * as schema from '#db/schema';
 
 const migrationsDirectory = fileURLToPath(
   new URL('../../server/database/migrations', import.meta.url)
 );
 const temporaryRoots: string[] = [];
+const databases: Array<ReturnType<typeof createNodeSqliteDatabase>> = [];
 
 afterEach(async () => {
+  await Promise.all(databases.splice(0).map((database) => database.close()));
   await Promise.all(
     temporaryRoots.splice(0).map((root) =>
       fs.rm(root, {
@@ -59,16 +59,20 @@ async function createMigrationSubset(root: string, throughIndex: number) {
 }
 
 function openDatabase(databasePath: string) {
-  return createClient({ url: `file:${databasePath}` });
+  const database = createNodeSqliteDatabase(databasePath, schema);
+  databases.push(database);
+  return database;
 }
 
-async function runMigrations(client: Client, directory: string) {
-  await migrate(drizzle(client), { migrationsFolder: directory });
+type TestDatabase = ReturnType<typeof openDatabase>;
+
+async function runMigrations(client: TestDatabase, directory: string) {
+  await client.migrate({ migrationsFolder: directory });
 }
 
-async function seedRepresentativeData(client: Client) {
-  await client.batch(
-    [
+async function seedRepresentativeData(client: TestDatabase) {
+  await client.raw.transaction(async (transaction) => {
+    for (const statement of [
       {
         sql: `
           INSERT INTO users_table
@@ -133,12 +137,13 @@ async function seedRepresentativeData(client: Client) {
         sql: `UPDATE general_table SET setup_step = 0 WHERE id = 1`,
         args: [],
       },
-    ],
-    'write'
-  );
+    ]) {
+      await transaction.execute(statement);
+    }
+  });
 }
 
-async function readPreservationManifest(client: Client) {
+async function readPreservationManifest(client: TestDatabase) {
   const result = await client.execute({
     sql: `
       SELECT
@@ -200,7 +205,7 @@ describe('Phase 1 schema migration', () => {
       let client = openDatabase(databasePath);
       await runMigrations(client, subsetDirectory);
       await seedRepresentativeData(client);
-      client.close();
+      await client.close();
       await fs.copyFile(databasePath, backupPath);
 
       const awgMode = startingMigration === 6;
@@ -217,7 +222,7 @@ describe('Phase 1 schema migration', () => {
 
       client = openDatabase(databasePath);
       await runMigrations(client, migrationsDirectory);
-      const finalized = await finalizePhase1DataMigration(client, {
+      const finalized = await finalizePhase1DataMigration(client.raw, {
         configDirectory,
         legacyEnvironment: {},
       });
@@ -279,13 +284,13 @@ describe('Phase 1 schema migration', () => {
 
       await runMigrations(client, migrationsDirectory);
       await expect(
-        finalizePhase1DataMigration(client, {
+        finalizePhase1DataMigration(client.raw, {
           configDirectory,
           legacyEnvironment: {},
         })
       ).resolves.toEqual({ migrated: [], unresolved: [] });
       expect(await readPreservationManifest(client)).toEqual(manifest);
-      client.close();
+      await client.close();
 
       await fs.copyFile(backupPath, restoredPath);
       const restored = openDatabase(restoredPath);
@@ -305,7 +310,7 @@ describe('Phase 1 schema migration', () => {
         private_key: 'client-private-preserved',
         public_key: 'client-public-preserved',
       });
-      restored.close();
+      await restored.close();
     },
     30_000
   );
@@ -317,7 +322,7 @@ describe('Phase 1 schema migration', () => {
     await runMigrations(client, migrationsDirectory);
 
     await expect(
-      finalizePhase1DataMigration(client, {
+      finalizePhase1DataMigration(client.raw, {
         configDirectory: root,
         legacyEnvironment: {},
       })
@@ -339,7 +344,7 @@ describe('Phase 1 schema migration', () => {
       awg_parameters_enabled: 0,
       default_config_format: 'wireguard',
     });
-    client.close();
+    await client.close();
   });
 
   test('keeps ambiguous upgrades pending and retryable without guessing', async () => {
@@ -355,7 +360,7 @@ describe('Phase 1 schema migration', () => {
     await runMigrations(client, migrationsDirectory);
 
     await expect(
-      finalizePhase1DataMigration(client, {
+      finalizePhase1DataMigration(client.raw, {
         configDirectory: root,
         legacyEnvironment: {},
       })
@@ -373,7 +378,7 @@ describe('Phase 1 schema migration', () => {
     expect(pending.rows[0]?.default_config_format).toBe('migration_pending');
 
     await expect(
-      finalizePhase1DataMigration(client, {
+      finalizePhase1DataMigration(client.raw, {
         configDirectory: root,
         legacyEnvironment: { EXPERIMENTAL_AWG: 'false' },
       })
@@ -388,6 +393,6 @@ describe('Phase 1 schema migration', () => {
       ],
       unresolved: [],
     });
-    client.close();
+    await client.close();
   });
 });

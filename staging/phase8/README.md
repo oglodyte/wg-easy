@@ -17,10 +17,14 @@ because the selected disposable staging host is x86_64.
 
 Record the immutable manifest digest from the workflow artifact. Do not treat
 the tag alone as release evidence and never replace an existing phase tag.
-The production Dockerfile pins Node 22.22.0/Alpine 3.23 by its multi-platform
-digest, pnpm 11.15.1, and the separately copied libSQL package at the lockfile's
-exact 0.5.29 version. CI verifies those versions and runs native database churn
-with forced garbage collection on both target architectures.
+The production Dockerfile pins Node 24.19.0/Alpine 3.23 by its multi-platform
+digest and pnpm 11.15.1; the application also pins its previously resolved Vue
+3.5.40 release instead of re-resolving the moving `latest` tag. The server and
+CLI use Node's bundled SQLite runtime
+through a serialized async Drizzle adapter; no external libSQL native addon is
+copied into the image. CI verifies the Node version and runs bounded built-in
+SQLite transaction churn, forced garbage collection, and deterministic close
+on both target architectures.
 
 ## Local and CI gate
 

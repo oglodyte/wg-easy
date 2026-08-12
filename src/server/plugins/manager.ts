@@ -2,6 +2,7 @@ import { defineNitroPlugin } from 'nitropack/runtime';
 
 import WireGuard from '#server/utils/WireGuard';
 import { RELEASE } from '#server/utils/config';
+import { close as closeDatabase } from '#db/sqlite';
 
 export default defineNitroPlugin((nitroApp) => {
   console.log(`
@@ -17,5 +18,6 @@ export default defineNitroPlugin((nitroApp) => {
   nitroApp.hooks.hook('close', async () => {
     console.log('Shutting down');
     await WireGuard.Shutdown();
+    await closeDatabase();
   });
 });

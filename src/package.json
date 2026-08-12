@@ -25,7 +25,6 @@
   "dependencies": {
     "@eschricht/nuxt-color-mode": "^1.2.0",
     "@heroicons/vue": "^2.2.0",
-    "@libsql/client": "^0.17.4",
     "@nuxtjs/i18n": "^10.4.1",
     "@nuxtjs/tailwindcss": "^6.14.0",
     "@phc/format": "^1.0.0",
@@ -53,7 +52,7 @@
     "semver": "^7.8.5",
     "tailwindcss": "^3.4.19",
     "timeago.js": "^4.0.2",
-    "vue": "latest",
+    "vue": "3.5.40",
     "vue3-apexcharts": "^1.11.1",
     "zod": "^4.4.3"
   },

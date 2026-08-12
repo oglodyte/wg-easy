@@ -3,9 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
 import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -18,6 +15,7 @@ import { GeneralService } from '#db/repositories/general/service';
 import { InterfaceService } from '#db/repositories/interface/service';
 import { RoutingGroupService } from '#db/repositories/routingGroup/service';
 import type { RoutingGroupInput } from '#db/repositories/routingGroup/types';
+import { createNodeSqliteDatabase } from '#db/nodeSqlite';
 import * as schema from '#db/schema';
 import type { DBType } from '#db/sqlite';
 import { RoutingValidationError } from '#server/utils/routing';
@@ -35,9 +33,11 @@ const migrationsDirectory = fileURLToPath(
   new URL('../../server/database/migrations', import.meta.url)
 );
 const temporaryRoots: string[] = [];
+const databases: Array<ReturnType<typeof createNodeSqliteDatabase>> = [];
 
 afterEach(async () => {
   keyState.value = 0;
+  await Promise.all(databases.splice(0).map((database) => database.close()));
   await Promise.all(
     temporaryRoots
       .splice(0)
@@ -48,16 +48,18 @@ afterEach(async () => {
 async function createServices() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-easy-phase5-'));
   temporaryRoots.push(root);
-  const rawClient = createClient({ url: `file:${path.join(root, 'test.db')}` });
-  const db = drizzle({ client: rawClient, schema });
-  await migrate(db, { migrationsFolder: migrationsDirectory });
+  const database = createNodeSqliteDatabase(path.join(root, 'test.db'), schema);
+  databases.push(database);
+  await database.migrate({ migrationsFolder: migrationsDirectory });
+  const rawClient = database.raw;
+  const db = database.db;
   await rawClient.execute({
     sql: `INSERT INTO users_table
       (id, username, password, email, name, role, totp_key, totp_verified, enabled)
       VALUES (1, 'admin', 'hash', 'admin@example.test', 'Admin', 1, NULL, 0, 1)`,
     args: [],
   });
-  const typedDb = db as unknown as DBType;
+  const typedDb = db as DBType;
   return {
     rawClient,
     db: typedDb,

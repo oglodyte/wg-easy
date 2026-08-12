@@ -1,40 +1,50 @@
-import { createRequire } from "node:module";
 import { rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 
-const require = createRequire("/app/server/index.mjs");
-const {
-  version: libsqlVersion,
-} = require("/app/server/node_modules/libsql/package.json");
-const Database = require("/app/server/node_modules/libsql");
-const databasePath = `/tmp/wg-easy-libsql-smoke-${process.pid}.db`;
+const databasePath = `/tmp/wg-easy-node-sqlite-smoke-${process.pid}.db`;
 
-if (process.version !== "v22.22.0") {
+if (process.version !== "v24.19.0") {
   throw new Error(`Unexpected Node version ${process.version}`);
 }
-if (libsqlVersion !== "0.5.29") {
-  throw new Error(`Unexpected libSQL version ${libsqlVersion}`);
-}
 
-const database = new Database(databasePath);
+const database = new DatabaseSync(databasePath, {
+  enableForeignKeyConstraints: true,
+  timeout: 5_000,
+});
+const statements = new Map();
+
+function prepare(sql) {
+  const cached = statements.get(sql);
+  if (cached) {
+    return cached;
+  }
+  const statement = database.prepare(sql);
+  statements.set(sql, statement);
+  return statement;
+}
 
 try {
   database.exec(
     "CREATE TABLE smoke (id INTEGER PRIMARY KEY, value TEXT NOT NULL)",
   );
 
-  const transaction = database.transaction((round) => {
-    database
-      .prepare("INSERT INTO smoke (value) VALUES (?)")
-      .run(`value-${round}`);
-    return database
-      .prepare("SELECT value FROM smoke WHERE id = last_insert_rowid()")
-      .get().value;
-  });
-
   for (let round = 0; round < 100; round += 1) {
     const expected = `value-${round}`;
-    if (transaction(round) !== expected) {
-      throw new Error(`Unexpected libSQL value at round ${round}`);
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      prepare("INSERT INTO smoke (value) VALUES (?)").run(expected);
+      const actual = prepare(
+        "SELECT value FROM smoke WHERE id = last_insert_rowid()",
+      ).get().value;
+      if (actual !== expected) {
+        throw new Error(`Unexpected SQLite value at round ${round}`);
+      }
+      database.exec("COMMIT");
+    } catch (error) {
+      if (database.isTransaction) {
+        database.exec("ROLLBACK");
+      }
+      throw error;
     }
 
     if (round % 25 === 0) {
@@ -43,6 +53,7 @@ try {
     }
   }
 } finally {
+  statements.clear();
   database.close();
   for (let attempt = 0; attempt < 5; attempt += 1) {
     globalThis.gc?.();
@@ -52,7 +63,3 @@ try {
   rmSync(`${databasePath}-shm`, { force: true });
   rmSync(`${databasePath}-wal`, { force: true });
 }
-
-// libSQL can retain native bookkeeping after close. Finalizers have run above;
-// do not let that bookkeeping turn this bounded architecture smoke into a hang.
-process.exit(0);

@@ -1,6 +1,3 @@
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate as drizzleMigrate } from 'drizzle-orm/libsql/migrator';
-import { createClient } from '@libsql/client';
 import { createDebug } from 'obug';
 import { eq } from 'drizzle-orm';
 
@@ -14,13 +11,14 @@ import { ClientService } from '#db/repositories/client/service';
 import { RuntimeStateService } from '#db/repositories/runtime/service';
 import { RoutingGroupService } from '#db/repositories/routingGroup/service';
 import { finalizePhase1DataMigration } from '#db/phase1Migration';
+import { createNodeSqliteDatabase } from '#db/nodeSqlite';
 import * as schema from '#db/schema';
 import { WG_ENV, WG_INITIAL_ENV } from '#server/utils/config';
 
 const DB_DEBUG = createDebug('Database');
 
-const client = createClient({ url: 'file:/etc/wireguard/wg-easy.db' });
-const db = drizzle({ client, schema });
+const database = createNodeSqliteDatabase('/etc/wireguard/wg-easy.db', schema);
+const db = database.db;
 
 export async function connect() {
   await migrate();
@@ -68,10 +66,10 @@ export type DBServiceType = DBService;
 async function migrate() {
   try {
     DB_DEBUG('Migrating database...');
-    await drizzleMigrate(db, {
+    await database.migrate({
       migrationsFolder: './server/database/migrations',
     });
-    const phase1Migration = await finalizePhase1DataMigration(client, {
+    const phase1Migration = await finalizePhase1DataMigration(database.raw, {
       configDirectory: '/etc/wireguard',
       legacyEnvironment: {
         EXPERIMENTAL_AWG: process.env.EXPERIMENTAL_AWG,
@@ -90,6 +88,10 @@ async function migrate() {
     }
     throw e;
   }
+}
+
+export async function close() {
+  await database.close();
 }
 
 async function initialSetup(db: DBServiceType) {
