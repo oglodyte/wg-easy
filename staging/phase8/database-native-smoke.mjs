@@ -5,7 +5,7 @@ const require = createRequire("/app/server/index.mjs");
 const {
   version: libsqlVersion,
 } = require("/app/server/node_modules/libsql/package.json");
-const { Database } = require("/app/server/node_modules/libsql");
+const Database = require("/app/server/node_modules/libsql");
 const databasePath = `/tmp/wg-easy-libsql-smoke-${process.pid}.db`;
 
 if (process.version !== "v22.22.0") {

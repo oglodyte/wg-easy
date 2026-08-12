@@ -36,6 +36,8 @@ grep -Fq 'pnpm install --frozen-lockfile' "$DOCKERFILE"
 grep -Fq '"libsql@${LIBSQL_VERSION}"' "$DOCKERFILE"
 grep -Fq 'for (let round = 0; round < 100; round += 1)' \
   "$DATABASE_NATIVE_SMOKE"
+grep -Fq 'const Database = require("/app/server/node_modules/libsql")' \
+  "$DATABASE_NATIVE_SMOKE"
 grep -Fq 'process.exit(0)' "$DATABASE_NATIVE_SMOKE"
 if grep -Fq 'corepack@latest' "$DOCKERFILE"; then
   echo "The production image must not install a moving Corepack release." >&2
