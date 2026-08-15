@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Manage multiple AWG-backed tunnel interfaces, each with its own client
+  profiles, keys, CIDRs, ports, defaults, hooks, firewall setting, and runtime
+  status. Interfaces with AWG-only parameters disabled can export compatible
+  standard WireGuard configurations.
+- Add IPv4 common routing groups across interfaces with ordered exit failover,
+  NAT control, exit readiness/health status, and explicit all-exits-down
+  `block` (default) or `host` fallback policies.
+
+### Changed
+
+- Separate an interface's UDP listen port from the endpoint port written to
+  generated client configurations. Publishing UDP ports remains an operator
+  responsibility and saved configuration does not establish reachability.
+- Run every managed interface through the AWG backend. `AWG_FORCE_USERSPACE`
+  selects the bundled AWG userspace implementation when needed; it does not
+  select a WireGuard backend.
+- Preserve `wg0` and existing interface/client data during migration, with
+  backup, clone-rehearsal, and matching-image rollback guidance.
+
 ## [15.4.0] - 2026-08-14
 
 ### Added

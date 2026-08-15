@@ -7,6 +7,15 @@ title: Edit Client
 - **Name**: The name of the client.
 - **Enabled**: Whether the client can connect to the VPN.
 - **Expire Date**: The date the client will be disabled.
+- **Interface**: The managed interface this client profile belongs to. A profile
+  has its own keys and addresses; create a separate profile rather than moving
+  or reusing credentials across interfaces.
+
+Config, QR, and one-time-link exports use the assigned interface's endpoint and
+format compatibility. A standard WireGuard export is unavailable when that
+interface has AWG parameters enabled. See [Managed Interfaces and Common
+Routing](../advanced/multi-interface-routing.md) for interface and routing
+behavior.
 
 ## Address
 

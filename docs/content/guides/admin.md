@@ -4,6 +4,13 @@ title: Admin Panel
 
 ## Interface Settings
 
+Use **Admin Panel → Interfaces** to manage each tunnel interface. Connection,
+AWG parameters, client defaults, hooks, and firewall settings are
+interface-specific. A saved change may be pending or degraded; confirm observed
+runtime state before relying on it. See [Managed Interfaces and Common
+Routing](../advanced/multi-interface-routing.md) for ports, routing groups, and
+exit-gateway requirements.
+
 ### Per-Client Firewall
 
 Enable server-side firewall filtering to enforce network access restrictions per client.
@@ -37,7 +44,7 @@ Most Linux distributions include iptables by default. If you're running in a min
 
 **How it works:**
 
-1. Enable "Per-Client Firewall" in Admin Panel → Interface
+1. Enable "Per-Client Firewall" on the appropriate interface
 2. Edit any client to see the new "Firewall Allowed IPs" field
 3. Specify allowed destinations (IPs, subnets, ports) for that client
 4. Server enforces these rules automatically

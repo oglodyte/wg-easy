@@ -14,20 +14,23 @@ AmneziaWG adds multi-level transport-layer obfuscation by:
 
 These measures make it harder for third parties to analyze or identify your traffic, enhancing both privacy and security.
 
-## Activating AmneziaWG
+## Runtime and compatibility modes
 
-You must install the [AmneziaWG kernel module](https://github.com/amnezia-vpn/amneziawg-linux-kernel-module) on the host system.
+wg-easy runs every managed interface through the AmneziaWG (`awg`) backend.
+The kernel module is preferred, and the bundled `amneziawg-go` userspace
+implementation is the supported fallback. Mount `/dev/net/tun` for userspace
+operation. Set `AWG_FORCE_USERSPACE=true` if a present kernel module is
+incompatible or unstable; this still uses the AWG backend.
 
-Experimental support for AmneziaWG can be enabled by setting the `EXPERIMENTAL_AWG` environment variable to `true`. Starting from wg-easy version 16, this setting will be enabled by default. This feature is still under development and may change in future releases.
+There is no per-interface standard-WireGuard runtime backend. Instead, an
+interface is compatible with standard WireGuard clients when **AWG parameters**
+are disabled: wg-easy omits every AWG-only line from generated server and
+client configurations. When AWG parameters are enabled, use an
+AmneziaWG-compatible client and AmneziaWG export format; standard WireGuard
+export is rejected.
 
-When enabled, wg-easy will automatically detect whether the AmneziaWG kernel module is available. If it is not, the system will fall back to the standard WireGuard module.
-
-To override this automatic detection, set the `OVERRIDE_AUTO_AWG` environment variable. By default, this variable is unset.
-
-Possible values:
-
-- `awg` — Force use of AmneziaWG
-- `wg` — Force use of standard WireGuard
+For multi-interface operation, see [Managed Interfaces and Common
+Routing](../multi-interface-routing.md).
 
 ## AmneziaWG Parameters
 

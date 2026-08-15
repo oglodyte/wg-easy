@@ -9,6 +9,13 @@
 
 You have found the easiest way to install & manage WireGuard on any Linux host!
 
+> [!NOTE]
+> This repository is a fork of [upstream wg-easy](https://github.com/wg-easy/wg-easy).
+> It preserves the upstream project while adding multi-interface management,
+> AWG-backed WireGuard compatibility, and fail-closed common routing with
+> ordered exit failover. See [Managed Interfaces and Common Routing](https://wg-easy.github.io/wg-easy/latest/advanced/multi-interface-routing/)
+> for the operator model and deployment requirements.
+
 <p align="center">
   <img src="./assets/screenshot.png" width="802" alt="wg-easy Screenshot" />
 </p>
@@ -33,6 +40,10 @@ You have found the easiest way to install & manage WireGuard on any Linux host!
 - 2FA support
 - Per-client firewall filtering (requires iptables)
 - OIDC support (Google, GitHub, Authelia, Authentik, etc.)
+- Multiple managed interfaces with per-interface WireGuard-compatible or
+  AmneziaWG-only client profiles
+- IPv4 routing groups with ordered exit failover and explicit fail-closed or
+  host-fallback behavior
 
 > [!NOTE]
 > To better manage documentation for this project, it has its own site here: [https://wg-easy.github.io/wg-easy/latest](https://wg-easy.github.io/wg-easy/latest)
@@ -43,6 +54,7 @@ You have found the easiest way to install & manage WireGuard on any Linux host!
 - [Traefik](https://wg-easy.github.io/wg-easy/latest/examples/tutorials/traefik/)
 - [Podman](https://wg-easy.github.io/wg-easy/latest/examples/tutorials/podman-nft/)
 - [AdGuard Home](https://wg-easy.github.io/wg-easy/latest/examples/tutorials/adguard/)
+- [Managed Interfaces and Common Routing](https://wg-easy.github.io/wg-easy/latest/advanced/multi-interface-routing/)
 
 > [!NOTE]
 > If you want to migrate from the old version to the new version, you can find the migration guide here: [Migration Guide](https://wg-easy.github.io/wg-easy/latest/advanced/migrate/)
