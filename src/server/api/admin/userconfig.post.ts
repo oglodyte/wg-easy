@@ -14,8 +14,11 @@ export default definePermissionEventHandler(
       event,
       validateZod(UserConfigUpdateSchema, event)
     );
-    await Database.userConfigs.update(data);
-    await WireGuard.saveConfig();
-    return { success: true };
+    const defaultInterface = await Database.interfaces.getDefault();
+    await Database.userConfigs.update(defaultInterface.name, data);
+    return WireGuard.requestReconcile(
+      'update-default-interface-client-defaults',
+      [{ interfaceId: defaultInterface.name, action: 'none' }]
+    );
   }
 );

@@ -22,6 +22,10 @@ import {
   schemaForType,
   t,
 } from '#server/utils/types';
+import {
+  InterfaceNameSchema,
+  ServerAllowedIpsSchema,
+} from '#shared/utils/schemas';
 
 export type ClientType = InferSelectModel<typeof client>;
 
@@ -34,7 +38,12 @@ export type CreateClientType = Omit<
 
 export type UpdateClientType = Omit<
   CreateClientType,
-  'privateKey' | 'publicKey' | 'preSharedKey' | 'userId' | 'interfaceId'
+  | 'privateKey'
+  | 'publicKey'
+  | 'preSharedKey'
+  | 'userId'
+  | 'interfaceId'
+  | 'preferredConfigFormat'
 >;
 
 const name = z
@@ -64,13 +73,10 @@ const address6 = z
   .pipe(controlStringRefine)
   .refine((v) => isIPv6(v));
 
-const serverAllowedIps = z.array(AddressSchema, {
-  message: t('zod.client.serverAllowedIps'),
-});
-
 export const ClientCreateSchema = z.object({
   name: name,
   expiresAt: expiresAt,
+  interfaceId: InterfaceNameSchema.optional(),
 });
 
 export type ClientCreateType = z.infer<typeof ClientCreateSchema>;
@@ -82,6 +88,7 @@ const sort = z.enum(['asc', 'desc']);
 export const ClientQuerySchema = z.object({
   filter: filter.optional(),
   sort: sort.optional(),
+  interfaceId: InterfaceNameSchema.optional(),
 });
 
 export type ClientQueryType = z.infer<typeof ClientQuerySchema>;
@@ -98,7 +105,7 @@ export const ClientUpdateSchema = schemaForType<UpdateClientType>()(
     preDown: HookSchema,
     postDown: HookSchema,
     allowedIps: AllowedIpsSchema.nullable(),
-    serverAllowedIps: serverAllowedIps,
+    serverAllowedIps: ServerAllowedIpsSchema,
     firewallIps: FirewallIpsSchema.nullable(),
     mtu: MtuSchema,
     jC: JcSchema,
@@ -121,6 +128,13 @@ export const ClientGetSchema = z.object({
   clientId: clientId,
 });
 
+export const ClientDeleteQuerySchema = z.object({
+  removeRoutingMembership: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((value) => value === 'true'),
+});
+
 export type ClientCreateFromExistingType = Pick<
   ClientType,
   | 'name'
@@ -130,4 +144,4 @@ export type ClientCreateFromExistingType = Pick<
   | 'preSharedKey'
   | 'publicKey'
   | 'enabled'
->;
+> & { interfaceId: string };

@@ -1,10 +1,11 @@
-import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-
 import * as schema from '#server/database/schema';
+import { createNodeSqliteDatabase } from '#server/database/nodeSqlite';
 
-//const client = createClient({ url: 'file:../data/wg-easy.db' });
-const client = createClient({ url: 'file:/etc/wireguard/wg-easy.db' });
-export const db = drizzle({ client, schema });
+const database = createNodeSqliteDatabase('/etc/wireguard/wg-easy.db', schema);
+export const db = database.db;
+
+export async function closeDatabase() {
+  await database.close();
+}
 
 export { schema };

@@ -9,6 +9,7 @@ import packageJson from '../package.json';
 import clientsList from '#cli/clients/list';
 import clientsQr from '#cli/clients/qr';
 import dbAdminReset from '#cli/admin/reset';
+import { closeDatabase } from '#cli/db';
 
 const subCommands = [dbAdminReset, clientsList, clientsQr] as const;
 
@@ -44,4 +45,8 @@ const main = defineCommand({
   subCommands: subCommandsMap,
 });
 
-runMain(main);
+try {
+  await runMain(main);
+} finally {
+  await closeDatabase();
+}

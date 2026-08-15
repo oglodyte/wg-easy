@@ -56,17 +56,17 @@ const route = useRoute();
 
 const menuItems = computed(() => [
   { id: 'general', name: t('pages.admin.general') },
-  { id: 'config', name: t('pages.admin.config') },
-  { id: 'interface', name: t('pages.admin.interface') },
-  { id: 'hooks', name: t('pages.admin.hooks') },
+  { id: 'interfaces', name: t('pages.admin.interfaces') },
+  { id: 'routing', name: t('pages.admin.routing') },
 ]);
 
 const defaultItem = { id: '', name: t('pages.admin.panel') };
 
 const activeMenuItem = computed(() => {
   return (
-    menuItems.value.find((item) => route.path === `/admin/${item.id}`) ??
-    defaultItem
+    menuItems.value.find((item) =>
+      route.path.startsWith(`/admin/${item.id}`)
+    ) ?? defaultItem
   );
 });
 </script>

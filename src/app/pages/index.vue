@@ -7,6 +7,7 @@
         </PanelHeadTitle>
         <PanelHeadBoat>
           <ClientsSearch />
+          <ClientsInterfaceFilter />
           <div class="flex gap-2">
             <ClientsSort />
             <ClientsNew />

@@ -28,7 +28,11 @@
 </template>
 
 <script setup lang="ts">
-const props = defineProps<{ triggerClass?: string; clientId: number }>();
+const props = defineProps<{
+  triggerClass?: string;
+  clientId: number;
+  format?: 'auto' | 'wireguard' | 'amneziawg';
+}>();
 
 const toast = useToast();
 const { copied, copy, isSupported } = useClipboard({
@@ -40,11 +44,15 @@ const {
   data: config,
   status,
   refresh,
-} = useFetch(`/api/client/${props.clientId}/configuration`, {
-  responseType: 'text',
-  server: false,
-  immediate: false,
-});
+} = useFetch(
+  () =>
+    `/api/client/${props.clientId}/configuration?format=${props.format ?? 'auto'}`,
+  {
+    responseType: 'text',
+    server: false,
+    immediate: false,
+  }
+);
 
 async function loadOnOpen(open: boolean) {
   if (!open) return;

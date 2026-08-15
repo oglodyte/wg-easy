@@ -21,33 +21,28 @@ export default defineCommand({
       type: 'boolean',
       default: true,
     },
+    format: {
+      required: false,
+      type: 'string',
+      default: 'auto',
+      description: 'auto, wireguard, or amneziawg',
+    },
   },
   async run(ctx) {
     const clientId = Number(ctx.args.id);
     const enableIpv6 = ctx.args.ipv6;
+    const format = ctx.args.format;
 
     if (Number.isNaN(clientId)) {
       consola.error('Invalid client ID');
       return;
     }
+    if (!['auto', 'wireguard', 'amneziawg'].includes(format)) {
+      consola.error('Invalid config format');
+      return;
+    }
 
     consola.info('Generating QR code for client...');
-
-    const wgInterface = await db.query.wgInterface.findFirst({
-      where: eq(schema.wgInterface.name, 'wg0'),
-    });
-    if (!wgInterface) {
-      consola.error('WireGuard interface not found');
-      return;
-    }
-
-    const userConfig = await db.query.userConfig.findFirst({
-      where: eq(schema.userConfig.id, 'wg0'),
-    });
-    if (!userConfig) {
-      consola.error('User config not found');
-      return;
-    }
 
     const client = await db.query.client.findFirst({
       where: eq(schema.client.id, clientId),
@@ -57,12 +52,29 @@ export default defineCommand({
       return;
     }
 
+    const wgInterface = await db.query.wgInterface.findFirst({
+      where: eq(schema.wgInterface.name, client.interfaceId),
+    });
+    if (!wgInterface) {
+      consola.error(`Interface ${client.interfaceId} not found`);
+      return;
+    }
+
+    const userConfig = await db.query.userConfig.findFirst({
+      where: eq(schema.userConfig.id, client.interfaceId),
+    });
+    if (!userConfig) {
+      consola.error(`User config for ${client.interfaceId} not found`);
+      return;
+    }
+
     const clientConfig = wg.generateClientConfig(
       wgInterface,
       userConfig,
       client,
       {
         enableIpv6,
+        format: format as 'auto' | 'wireguard' | 'amneziawg',
       }
     );
 

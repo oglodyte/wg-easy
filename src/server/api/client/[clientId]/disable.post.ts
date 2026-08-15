@@ -19,7 +19,8 @@ export default definePermissionEventHandler(
     checkPermissions(client);
 
     await Database.clients.toggle(clientId, false);
-    await WireGuard.saveConfig();
-    return { success: true };
+    return WireGuard.requestReconcile('disable-client', [
+      { interfaceId: client!.interfaceId, action: 'sync' },
+    ]);
   }
 );

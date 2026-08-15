@@ -1,41 +1,58 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { exec } from '#server/utils/cmd';
+import { execFile } from '#server/utils/cmd';
 import { firewall, firewallTestExports } from '#server/utils/firewall';
 import { typesTestExports } from '#server/utils/types';
 
 vi.mock('#server/utils/cmd', () => ({
-  exec: vi.fn().mockResolvedValue(''),
+  execFile: vi.fn().mockResolvedValue(''),
 }));
 
-const execMock = vi.mocked(exec);
+const execFileMock = vi.mocked(execFile);
 
 describe('firewall', () => {
   beforeEach(() => {
-    execMock.mockClear();
+    execFileMock.mockClear();
   });
 
   describe('IPv4-only chain management', () => {
+    test('rejects an unsafe interface name before command execution', async () => {
+      await expect(firewall.initChain('wg0;touch', false)).rejects.toThrow();
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
     test('does not invoke ip6tables when initializing and flushing', async () => {
       await firewall.initChain('wg0', false);
       await firewall.flushChain(false);
 
-      expect(execMock).toHaveBeenCalledWith(
-        expect.stringContaining('iptables -C FORWARD -i wg0')
-      );
-      expect(execMock).not.toHaveBeenCalledWith(
-        expect.stringContaining('ip6tables')
+      expect(execFileMock).toHaveBeenCalledWith('iptables', [
+        '-C',
+        'FORWARD',
+        '-i',
+        'wg0',
+        '-j',
+        'WG_CLIENTS',
+      ]);
+      expect(execFileMock).not.toHaveBeenCalledWith(
+        'ip6tables',
+        expect.anything()
       );
     });
 
     test('does not invoke ip6tables when removing filtering', async () => {
       await firewall.removeFiltering('wg0', false);
 
-      expect(execMock).toHaveBeenCalledWith(
-        expect.stringContaining('iptables -D FORWARD -i wg0')
-      );
-      expect(execMock).not.toHaveBeenCalledWith(
-        expect.stringContaining('ip6tables')
+      expect(execFileMock).toHaveBeenCalledWith('iptables', [
+        '-D',
+        'FORWARD',
+        '-i',
+        'wg0',
+        '-j',
+        'WG_CLIENTS',
+      ]);
+      expect(execFileMock).not.toHaveBeenCalledWith(
+        'ip6tables',
+        expect.anything()
       );
     });
   });
@@ -295,7 +312,20 @@ describe('firewall', () => {
         'client 1: test'
       );
       expect(rules).toEqual([
-        '-A WG_CLIENTS -s 10.8.0.2 -d 10.0.0.1 -m comment --comment "client 1: test" -j ACCEPT',
+        [
+          '-A',
+          'WG_CLIENTS',
+          '-s',
+          '10.8.0.2',
+          '-d',
+          '10.0.0.1',
+          '-m',
+          'comment',
+          '--comment',
+          'client 1: test',
+          '-j',
+          'ACCEPT',
+        ],
       ]);
     });
     test('omits comment when not provided', () => {
@@ -305,7 +335,20 @@ describe('firewall', () => {
         proto: 'tcp',
       });
       expect(rulesTcp).toEqual([
-        '-A WG_CLIENTS -s 10.8.0.2 -d 10.0.0.1 -p tcp --dport 80 -j ACCEPT',
+        [
+          '-A',
+          'WG_CLIENTS',
+          '-s',
+          '10.8.0.2',
+          '-d',
+          '10.0.0.1',
+          '-p',
+          'tcp',
+          '--dport',
+          '80',
+          '-j',
+          'ACCEPT',
+        ],
       ]);
       const rulesUdp = firewallTestExports.generateRuleArgs('10.8.0.2', {
         ip: '10.0.0.1',
@@ -313,7 +356,20 @@ describe('firewall', () => {
         proto: 'udp',
       });
       expect(rulesUdp).toEqual([
-        '-A WG_CLIENTS -s 10.8.0.2 -d 10.0.0.1 -p udp --dport 80 -j ACCEPT',
+        [
+          '-A',
+          'WG_CLIENTS',
+          '-s',
+          '10.8.0.2',
+          '-d',
+          '10.0.0.1',
+          '-p',
+          'udp',
+          '--dport',
+          '80',
+          '-j',
+          'ACCEPT',
+        ],
       ]);
     });
     test('comment with port generates two rules for both proto', () => {
@@ -323,9 +379,94 @@ describe('firewall', () => {
         'client 2: phone'
       );
       expect(rules).toEqual([
-        '-A WG_CLIENTS -s 10.8.0.2 -d 10.0.0.1 -p tcp --dport 443 -m comment --comment "client 2: phone" -j ACCEPT',
-        '-A WG_CLIENTS -s 10.8.0.2 -d 10.0.0.1 -p udp --dport 443 -m comment --comment "client 2: phone" -j ACCEPT',
+        [
+          '-A',
+          'WG_CLIENTS',
+          '-s',
+          '10.8.0.2',
+          '-d',
+          '10.0.0.1',
+          '-p',
+          'tcp',
+          '--dport',
+          '443',
+          '-m',
+          'comment',
+          '--comment',
+          'client 2: phone',
+          '-j',
+          'ACCEPT',
+        ],
+        [
+          '-A',
+          'WG_CLIENTS',
+          '-s',
+          '10.8.0.2',
+          '-d',
+          '10.0.0.1',
+          '-p',
+          'udp',
+          '--dport',
+          '443',
+          '-m',
+          'comment',
+          '--comment',
+          'client 2: phone',
+          '-j',
+          'ACCEPT',
+        ],
       ]);
+    });
+  });
+
+  describe('atomic multi-interface restore planning', () => {
+    const activeState = {
+      wgInterface: {
+        name: 'wg0',
+        enabled: true,
+        firewallEnabled: true,
+      },
+      observedUp: true,
+      clients: [
+        {
+          id: 1,
+          name: 'phone',
+          ipv4Address: '10.8.0.2',
+          ipv6Address: 'fd00::2',
+          allowedIps: ['0.0.0.0/0'],
+          firewallIps: ['198.51.100.0/24:443/tcp'],
+          enabled: true,
+        },
+      ],
+      userConfig: { defaultAllowedIps: ['0.0.0.0/0'] },
+    };
+
+    test('renders a complete quoted chain and exact managed parent jump', () => {
+      const document = firewallTestExports.buildRestoreDocument({
+        family: 4,
+        states: [activeState] as never,
+        existingSave: ':WG_CLIENTS - [0:0]\n-A FORWARD -i wg0 -j WG_CLIENTS',
+      });
+
+      expect(document).toContain('-D FORWARD -i wg0 -j WG_CLIENTS');
+      expect(document).toContain(
+        '-I FORWARD 1 -i wg0 -m comment --comment "wg-easy client firewall" -j WG_CLIENTS'
+      );
+      expect(document).toContain('--comment "client 1: phone" -j ACCEPT');
+      expect(document).toContain(
+        '--comment "wg-easy client firewall default deny" -j DROP'
+      );
+    });
+
+    test('refuses a non-owned jump into the reserved client chain', () => {
+      expect(() =>
+        firewallTestExports.buildRestoreDocument({
+          family: 4,
+          states: [activeState] as never,
+          existingSave:
+            ':WG_CLIENTS - [0:0]\n-A FORWARD -i unmanaged0 -j WG_CLIENTS',
+        })
+      ).toThrow('non-owned FORWARD rule');
     });
   });
 });

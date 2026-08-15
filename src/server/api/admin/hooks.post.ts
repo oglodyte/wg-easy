@@ -14,8 +14,10 @@ export default definePermissionEventHandler(
       event,
       validateZod(HooksUpdateSchema, event)
     );
-    await Database.hooks.update(data);
-    await WireGuard.saveConfig();
-    return { success: true };
+    const defaultInterface = await Database.interfaces.getDefault();
+    await Database.hooks.update(defaultInterface.name, data);
+    return WireGuard.requestReconcile('update-default-interface-hooks', [
+      { interfaceId: defaultInterface.name, action: 'restart' },
+    ]);
   }
 );

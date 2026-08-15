@@ -1,9 +1,12 @@
+import { randomBytes } from 'node:crypto';
+
 import { eq, sql } from 'drizzle-orm';
-import CRC32 from 'crc-32';
 
 import { oneTimeLink } from './schema';
 
 import type { ID } from '#server/utils/types';
+import { resolveClientConfigFormat } from '#server/utils/wgHelper';
+import type { ConfigFormat } from '#shared/types/runtime';
 import type { DBType } from '#db/sqlite';
 
 function createPreparedStatement(db: DBType) {
@@ -18,11 +21,14 @@ function createPreparedStatement(db: DBType) {
         id: sql.placeholder('id'),
         oneTimeLink: sql.placeholder('oneTimeLink'),
         expiresAt: sql.placeholder('expiresAt'),
+        configFormat: sql.placeholder('configFormat'),
       })
       .onConflictDoUpdate({
         target: oneTimeLink.id,
         set: {
           expiresAt: sql.placeholder('expiresAt') as never as string,
+          configFormat: sql.placeholder('configFormat') as never as
+            'wireguard' | 'amneziawg',
         },
       })
       .prepare(),
@@ -40,9 +46,11 @@ function createPreparedStatement(db: DBType) {
 }
 
 export class OneTimeLinkService {
+  #db: DBType;
   #statements: ReturnType<typeof createPreparedStatement>;
 
   constructor(db: DBType) {
+    this.#db = db;
     this.#statements = createPreparedStatement(db);
   }
 
@@ -54,16 +62,33 @@ export class OneTimeLinkService {
     return this.#statements.findByOneTimeLink.execute({ oneTimeLink });
   }
 
-  generate(id: ID) {
-    // SECURITY
-    // This is known to be vulnerable to brute force attacks
-    // Mitigations: Small Window, One Time Use
-    // Making it longer defeats the whole purpose
-    const key = `${id}-${Math.floor(Math.random() * 1000)}`;
-    const oneTimeLink = Math.abs(CRC32.str(key)).toString(16);
+  async generate(id: ID, requestedFormat: ConfigFormat = 'auto') {
+    // The link is a bearer credential. Keep it independent from the client ID
+    // and use enough CSPRNG entropy that the short validity window is defense
+    // in depth rather than the primary protection against guessing.
+    const oneTimeLink = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    return this.#statements.create.execute({ id, oneTimeLink, expiresAt });
+    const client = await this.#db.query.client.findFirst({
+      where: (table, { eq }) => eq(table.id, id),
+      with: { interface: true },
+    });
+    if (!client) {
+      throw new Error('Client not found');
+    }
+
+    const configFormat = resolveClientConfigFormat(
+      client.interface,
+      client,
+      requestedFormat
+    );
+
+    return this.#statements.create.execute({
+      id,
+      oneTimeLink,
+      expiresAt,
+      configFormat,
+    });
   }
 
   erase(id: ID) {

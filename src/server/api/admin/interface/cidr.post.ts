@@ -1,10 +1,11 @@
-import { readValidatedBody } from 'h3';
+import { createError, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { InterfaceCidrUpdateSchema } from '#db/repositories/interface/types';
+import { InterfaceReservationConflictError } from '#db/repositories/interface/service';
 
 export default definePermissionEventHandler(
   'admin',
@@ -15,8 +16,17 @@ export default definePermissionEventHandler(
       validateZod(InterfaceCidrUpdateSchema, event)
     );
 
-    await Database.interfaces.updateCidr(data);
-    await WireGuard.saveConfig();
-    return { success: true };
+    const defaultInterface = await Database.interfaces.getDefault();
+    try {
+      await Database.interfaces.updateCidr(defaultInterface.name, data);
+    } catch (error) {
+      if (error instanceof InterfaceReservationConflictError) {
+        throw createError({ statusCode: 409, statusMessage: error.message });
+      }
+      throw error;
+    }
+    return WireGuard.requestReconcile('update-default-interface-cidr', [
+      { interfaceId: defaultInterface.name, action: 'restart' },
+    ]);
   }
 );

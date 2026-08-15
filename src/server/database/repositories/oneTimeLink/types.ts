@@ -10,6 +10,8 @@ export type OneTimeLinkType = InferSelectModel<typeof oneTimeLink>;
 const oneTimeLinkType = z
   .string({ message: t('zod.otl') })
   .min(1, t('zod.otl'))
+  .max(128, t('zod.otl'))
+  .regex(/^[A-Za-z0-9_-]+$/, t('zod.otl'))
   .pipe(safeStringRefine);
 
 export const OneTimeLinkGetSchema = z.object({

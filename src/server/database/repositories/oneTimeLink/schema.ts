@@ -13,6 +13,10 @@ export const oneTimeLink = sqliteTable('one_time_links_table', {
     }),
   oneTimeLink: text('one_time_link').notNull().unique(),
   expiresAt: text('expires_at').notNull(),
+  configFormat: text('config_format')
+    .$type<'wireguard' | 'amneziawg' | 'migration_pending'>()
+    .notNull()
+    .default('wireguard'),
   createdAt: text('created_at')
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),

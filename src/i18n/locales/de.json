@@ -183,8 +183,6 @@
       "cidrSuccess": "CIDR wurde geändert",
       "device": "Gerät",
       "deviceDesc": "Ethernet-Gerät, durch das der WireGuard-Datenverkehr geleitet werden soll",
-      "routingTable": "Routingtabelle",
-      "routingTableDesc": "Routingtabelle für WireGuard-Routen. Zulässig sind „auto“, „off“ oder eine Tabellennummer.",
       "mtuDesc": "MTU, die WireGuard verwendet",
       "portDesc": "UDP-Port, auf dem WireGuard lauscht (Sie sollten wahrscheinlich auch den Port unter „Konfiguration“ ändern)",
       "changeCidr": "CIDR ändern",
@@ -244,8 +242,7 @@
     "interface": {
       "cidr": "CIDR",
       "device": "Gerät",
-      "cidrValid": "CIDR muss gültig sein",
-      "routingTable": "Die Routingtabelle muss „auto“, „off“ oder eine Tabellennummer sein"
+      "cidrValid": "CIDR muss gültig sein"
     },
     "otl": "Einmal-Link",
     "stringMalformed": "Zeichenkette ist fehlerhaft",

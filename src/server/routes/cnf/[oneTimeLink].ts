@@ -8,6 +8,7 @@ import {
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { validateZod } from '#server/utils/types';
+import { ConfigFormatUnavailableError } from '#server/utils/wgHelper';
 import { OneTimeLinkGetSchema } from '#db/repositories/oneTimeLink/types';
 
 export default defineEventHandler(async (event) => {
@@ -30,6 +31,12 @@ export default defineEventHandler(async (event) => {
       statusMessage: 'One Time Link has expired',
     });
   }
+  if (otl.configFormat === 'migration_pending') {
+    throw createError({
+      statusCode: 409,
+      statusMessage: 'Interface compatibility migration is unresolved',
+    });
+  }
 
   const client = await Database.clients.get(otl.id);
   if (!client) {
@@ -39,9 +46,18 @@ export default defineEventHandler(async (event) => {
     });
   }
 
-  const config = await WireGuard.getClientConfiguration({
-    clientId: client.id,
-  });
+  let config: string;
+  try {
+    config = await WireGuard.getClientConfiguration({
+      clientId: client.id,
+      format: otl.configFormat,
+    });
+  } catch (error) {
+    if (error instanceof ConfigFormatUnavailableError) {
+      throw createError({ statusCode: 409, statusMessage: error.message });
+    }
+    throw error;
+  }
   await Database.oneTimeLinks.erase(otl.id);
 
   setHeader(

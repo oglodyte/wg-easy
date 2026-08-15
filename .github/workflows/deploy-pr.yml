@@ -12,7 +12,6 @@ jobs:
   docker:
     name: Build Docker
     runs-on: ${{ matrix.arch.os }}
-    if: github.repository_owner == 'wg-easy'
     strategy:
       fail-fast: false
       matrix:
@@ -27,9 +26,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Prepare
+        id: prepare
         run: |
           platform=${{ matrix.arch.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${owner}/wg-easy" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
@@ -50,6 +52,6 @@ jobs:
           context: .
           push: false
           platforms: ${{ matrix.arch.platform }}
-          tags: ghcr.io/wg-easy/wg-easy:pr
+          tags: ${{ steps.prepare.outputs.image }}:pr
           cache-from: type=gha
           cache-to: type=gha,mode=min,scope=build-${{ env.PLATFORM_PAIR }}

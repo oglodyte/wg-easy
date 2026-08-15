@@ -1,0 +1,280 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { afterEach, describe, expect, test, vi } from 'vitest';
+
+import { ClientService } from '#db/repositories/client/service';
+import {
+  InterfaceReservationConflictError,
+  InterfaceService,
+} from '#db/repositories/interface/service';
+import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
+import { OneTimeLinkGetSchema } from '#db/repositories/oneTimeLink/types';
+import { UserConfigService } from '#db/repositories/userConfig/service';
+import { createNodeSqliteDatabase } from '#db/nodeSqlite';
+import * as schema from '#db/schema';
+import type { DBType } from '#db/sqlite';
+
+vi.mock('#server/utils/wgHelper', () => ({
+  resolveClientConfigFormat: (
+    _wgInterface: unknown,
+    _client: unknown,
+    requestedFormat: 'auto' | 'wireguard' | 'amneziawg'
+  ) => (requestedFormat === 'auto' ? 'wireguard' : requestedFormat),
+  wg: {
+    generatePrivateKey: vi.fn(async () => 'generated-private-key'),
+    getPublicKey: vi.fn(async () => 'generated-public-key'),
+    generatePreSharedKey: vi.fn(async () => 'generated-pre-shared-key'),
+  },
+}));
+
+const migrationsDirectory = fileURLToPath(
+  new URL('../../server/database/migrations', import.meta.url)
+);
+const temporaryRoots: string[] = [];
+const databases: Array<ReturnType<typeof createNodeSqliteDatabase>> = [];
+
+afterEach(async () => {
+  await Promise.all(databases.splice(0).map((database) => database.close()));
+  await Promise.all(
+    temporaryRoots
+      .splice(0)
+      .map((root) => fs.rm(root, { recursive: true, force: true }))
+  );
+});
+
+async function createServices() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wg-easy-phase2-'));
+  temporaryRoots.push(root);
+  const database = createNodeSqliteDatabase(path.join(root, 'test.db'), schema);
+  databases.push(database);
+  await database.migrate({ migrationsFolder: migrationsDirectory });
+  const client = database.raw;
+  const db = database.db;
+  await client.execute({
+    sql: `INSERT INTO users_table
+      (id, username, password, email, name, role, totp_key, totp_verified, enabled)
+      VALUES (1, 'admin', 'hash', 'admin@example.test', 'Admin', 1, NULL, 0, 1)`,
+    args: [],
+  });
+  await client.execute({
+    sql: `UPDATE interfaces_table
+      SET private_key = 'wg0-private', public_key = 'wg0-public',
+          ipv4_cidr = '10.251.0.0/24', ipv6_cidr = 'fd42:251::/64'
+      WHERE name = 'wg0'`,
+    args: [],
+  });
+  const typedDb = db as DBType;
+  return {
+    client,
+    clients: new ClientService(typedDb),
+    interfaces: new InterfaceService(typedDb),
+    oneTimeLinks: new OneTimeLinkService(typedDb),
+    userConfigs: new UserConfigService(typedDb),
+  };
+}
+
+describe('Phase 2 interface-scoped repositories', () => {
+  test('creates a disabled cloned interface with independent port and endpoint', async () => {
+    const { client, interfaces, userConfigs } = await createServices();
+    const created = await interfaces.create({
+      name: 'awg1',
+      device: 'eth0',
+      port: 51821,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+    });
+
+    expect(created).toMatchObject({
+      name: 'awg1',
+      enabled: false,
+      privateKey: 'generated-private-key',
+      publicKey: 'generated-public-key',
+    });
+
+    await userConfigs.updateHostPort('awg1', 'vpn.example.test', 51830);
+    const endpoint = await userConfigs.get('awg1');
+    const listenPort = await client.execute({
+      sql: `SELECT port FROM interfaces_table WHERE name = 'awg1'`,
+      args: [],
+    });
+    expect(endpoint).toMatchObject({ host: 'vpn.example.test', port: 51830 });
+    expect(listenPort.rows[0]?.port).toBe(51821);
+    const globalRuntime = await client.execute({
+      sql: `SELECT desired_revision FROM runtime_reconciliation_state_table WHERE id = 1`,
+      args: [],
+    });
+    const interfaceRuntime = await client.execute({
+      sql: `SELECT desired_revision FROM interface_runtime_state_table WHERE interface_id = 'awg1'`,
+      args: [],
+    });
+    // Interface creation and endpoint mutation each advance desired state in
+    // the same repository transactions that persist those changes.
+    expect(globalRuntime.rows[0]?.desired_revision).toBe(3);
+    expect(interfaceRuntime.rows[0]?.desired_revision).toBe(3);
+  });
+
+  test('allows a non-pending managed interface to become the default', async () => {
+    const { interfaces } = await createServices();
+    await interfaces.create({
+      name: 'awg1',
+      device: 'eth0',
+      port: 51821,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+    });
+
+    await interfaces.setDefault('awg1');
+    await expect(interfaces.getDefault()).resolves.toMatchObject({
+      name: 'awg1',
+    });
+  });
+
+  test('rejects CIDR and listen-port collisions', async () => {
+    const { interfaces } = await createServices();
+    await interfaces.create({
+      name: 'awg1',
+      device: 'eth0',
+      port: 51821,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+    });
+
+    const overlappingCidr = interfaces.create({
+      name: 'awg2',
+      device: 'eth1',
+      port: 51822,
+      ipv4Cidr: '10.252.0.7/24',
+      ipv6Cidr: 'fd42:253::/64',
+    });
+    await expect(overlappingCidr).rejects.toBeInstanceOf(
+      InterfaceReservationConflictError
+    );
+    await expect(overlappingCidr).rejects.toThrow(
+      'IPv4 CIDR overlaps with interface awg1'
+    );
+
+    const duplicatePort = interfaces.create({
+      name: 'awg2',
+      device: 'eth1',
+      port: 51821,
+      ipv4Cidr: '10.253.0.0/24',
+      ipv6Cidr: 'fd42:253::/64',
+    });
+    await expect(duplicatePort).rejects.toBeInstanceOf(
+      InterfaceReservationConflictError
+    );
+    await expect(duplicatePort).rejects.toThrow(
+      'Listen port is already used by interface awg1'
+    );
+  });
+
+  test('allocates, filters, and validates clients against their assigned interface', async () => {
+    const { clients, interfaces } = await createServices();
+    await interfaces.create({
+      name: 'awg1',
+      device: 'eth0',
+      port: 51821,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+    });
+
+    const created = await clients.create({
+      name: 'on-awg1',
+      expiresAt: null,
+      interfaceId: 'awg1',
+    });
+    const clientId = created[0]!.clientId;
+    const assigned = await clients.get(clientId);
+    expect(assigned).toMatchObject({
+      interfaceId: 'awg1',
+      ipv4Address: '10.252.0.2',
+      ipv6Address: 'fd42:252::2',
+    });
+    expect(await clients.getAllPublic({ interfaceId: 'awg1' })).toHaveLength(1);
+    await expect(
+      clients.update(clientId, {
+        ...(assigned as NonNullable<typeof assigned>),
+        ipv4Address: '10.251.0.2',
+      })
+    ).rejects.toThrow('IPv4 address is not within the CIDR range');
+  });
+
+  test('stages deletion only after default and client dependencies are clear', async () => {
+    const { clients, interfaces } = await createServices();
+    await expect(interfaces.stageDelete('wg0')).rejects.toThrow(
+      'The default interface cannot be deleted'
+    );
+    await interfaces.create({
+      name: 'awg1',
+      device: 'eth0',
+      port: 51821,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+    });
+    const created = await clients.create({
+      name: 'dependency',
+      expiresAt: null,
+      interfaceId: 'awg1',
+    });
+    await expect(interfaces.stageDelete('awg1')).rejects.toThrow(
+      'Interface deletion is blocked while clients exist'
+    );
+
+    await clients.delete(created[0]!.clientId);
+    await interfaces.stageDelete('awg1');
+    await expect(interfaces.getByName('awg1')).resolves.toMatchObject({
+      enabled: false,
+      pendingDelete: true,
+    });
+    await expect(
+      clients.create({
+        name: 'too-late',
+        expiresAt: null,
+        interfaceId: 'awg1',
+      })
+    ).rejects.toThrow('WireGuard interface is pending deletion');
+  });
+
+  test('creates unguessable one-time-link bearer tokens with a concrete format', async () => {
+    const { client, clients, oneTimeLinks } = await createServices();
+    const created = await clients.create({
+      name: 'one-time-link-client',
+      expiresAt: null,
+      interfaceId: 'wg0',
+    });
+    const clientId = created[0]!.clientId;
+
+    await oneTimeLinks.generate(clientId, 'wireguard');
+    const first = await client.execute({
+      sql: `SELECT one_time_link, config_format FROM one_time_links_table WHERE id = ?`,
+      args: [clientId],
+    });
+    const firstToken = String(first.rows[0]?.one_time_link);
+
+    await oneTimeLinks.delete(clientId);
+    await oneTimeLinks.generate(clientId, 'wireguard');
+    const second = await client.execute({
+      sql: `SELECT one_time_link, config_format FROM one_time_links_table WHERE id = ?`,
+      args: [clientId],
+    });
+    const secondToken = String(second.rows[0]?.one_time_link);
+
+    expect(firstToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(secondToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(secondToken).not.toBe(firstToken);
+    expect(first.rows[0]?.config_format).toBe('wireguard');
+    expect(second.rows[0]?.config_format).toBe('wireguard');
+    expect(
+      OneTimeLinkGetSchema.parse({ oneTimeLink: 'preserved-legacy-abc123' })
+    ).toEqual({ oneTimeLink: 'preserved-legacy-abc123' });
+    expect(() =>
+      OneTimeLinkGetSchema.parse({ oneTimeLink: '../unexpected/path' })
+    ).toThrow();
+    expect(() =>
+      OneTimeLinkGetSchema.parse({ oneTimeLink: 'a'.repeat(129) })
+    ).toThrow();
+  });
+});

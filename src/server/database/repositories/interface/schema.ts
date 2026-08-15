@@ -14,7 +14,6 @@ export const wgInterface = sqliteTable('interfaces_table', {
   ipv4Cidr: text('ipv4_cidr').notNull(),
   ipv6Cidr: text('ipv6_cidr').notNull(),
   mtu: int().notNull(),
-  routingTable: text('routing_table').notNull().default('auto'),
   jC: int('j_c').default(7),
   jMin: int('j_min').default(10),
   jMax: int('j_max').default(1000),
@@ -35,6 +34,16 @@ export const wgInterface = sqliteTable('interfaces_table', {
   enabled: int({ mode: 'boolean' }).notNull(),
   // Enable per-client firewall filtering via iptables
   firewallEnabled: int('firewall_enabled', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  awgParametersEnabled: int('awg_parameters_enabled', { mode: 'boolean' })
+    .notNull()
+    .default(false),
+  defaultConfigFormat: text('default_config_format')
+    .$type<'wireguard' | 'amneziawg' | 'migration_pending'>()
+    .notNull()
+    .default('wireguard'),
+  pendingDelete: int('pending_delete', { mode: 'boolean' })
     .notNull()
     .default(false),
   createdAt: text('created_at')

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6d5a5bde-368b-45cb-b73a-9f4324210d73",
+  "id": "21754e0f-7f93-420a-a631-923fba86c2fa",
   "prevId": "8a38844d-02cb-4fce-8692-db05920c91a5",
   "tables": {
     "clients_table": {
@@ -214,6 +214,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "preferred_config_format": {
+          "name": "preferred_config_format",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'auto'"
+        },
         "enabled": {
           "name": "enabled",
           "type": "integer",
@@ -286,7 +294,7 @@
           "columnsTo": [
             "name"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "cascade"
         }
       },
@@ -347,6 +355,46 @@
           "notNull": false,
           "autoincrement": false
         },
+        "default_interface_id": {
+          "name": "default_interface_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'wg0'"
+        },
+        "routing_exit_health_check_interval_seconds": {
+          "name": "routing_exit_health_check_interval_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 60
+        },
+        "routing_exit_health_timeout_seconds": {
+          "name": "routing_exit_health_timeout_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 180
+        },
+        "routing_exit_min_hold_seconds": {
+          "name": "routing_exit_min_hold_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 60
+        },
+        "routing_exit_failback_delay_seconds": {
+          "name": "routing_exit_failback_delay_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 180
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -365,7 +413,21 @@
         }
       },
       "indexes": {},
-      "foreignKeys": {},
+      "foreignKeys": {
+        "general_table_default_interface_id_interfaces_table_name_fk": {
+          "name": "general_table_default_interface_id_interfaces_table_name_fk",
+          "tableFrom": "general_table",
+          "tableTo": "interfaces_table",
+          "columnsFrom": [
+            "default_interface_id"
+          ],
+          "columnsTo": [
+            "name"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "cascade"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -504,14 +566,6 @@
           "notNull": true,
           "autoincrement": false
         },
-        "routing_table": {
-          "name": "routing_table",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'auto'"
-        },
         "j_c": {
           "name": "j_c",
           "type": "integer",
@@ -644,6 +698,30 @@
           "autoincrement": false,
           "default": false
         },
+        "awg_parameters_enabled": {
+          "name": "awg_parameters_enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "default_config_format": {
+          "name": "default_config_format",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'wireguard'"
+        },
+        "pending_delete": {
+          "name": "pending_delete",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -699,6 +777,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "config_format": {
+          "name": "config_format",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'wireguard'"
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -740,6 +826,650 @@
           "onUpdate": "cascade"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "routing_groups_table": {
+      "name": "routing_groups_table",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "routing_slot": {
+          "name": "routing_slot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "nat_enabled": {
+          "name": "nat_enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "all_exits_down_policy": {
+          "name": "all_exits_down_policy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'block'"
+        },
+        "routed_ipv4_prefixes": {
+          "name": "routed_ipv4_prefixes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[\"0.0.0.0/0\"]'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {
+        "routing_groups_table_routing_slot_unique": {
+          "name": "routing_groups_table_routing_slot_unique",
+          "columns": [
+            "routing_slot"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "routing_group_exits_table": {
+      "name": "routing_group_exits_table",
+      "columns": {
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {
+        "routing_group_exits_priority_unique": {
+          "name": "routing_group_exits_priority_unique",
+          "columns": [
+            "group_id",
+            "priority"
+          ],
+          "isUnique": true
+        },
+        "routing_group_exits_client_idx": {
+          "name": "routing_group_exits_client_idx",
+          "columns": [
+            "client_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "routing_group_exits_table_group_id_routing_groups_table_id_fk": {
+          "name": "routing_group_exits_table_group_id_routing_groups_table_id_fk",
+          "tableFrom": "routing_group_exits_table",
+          "tableTo": "routing_groups_table",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        },
+        "routing_group_exits_table_client_id_clients_table_id_fk": {
+          "name": "routing_group_exits_table_client_id_clients_table_id_fk",
+          "tableFrom": "routing_group_exits_table",
+          "tableTo": "clients_table",
+          "columnsFrom": [
+            "client_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {
+        "routing_group_exits_table_group_id_client_id_pk": {
+          "columns": [
+            "group_id",
+            "client_id"
+          ],
+          "name": "routing_group_exits_table_group_id_client_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "routing_group_members_table": {
+      "name": "routing_group_members_table",
+      "columns": {
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {
+        "routing_group_members_client_unique": {
+          "name": "routing_group_members_client_unique",
+          "columns": [
+            "client_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "routing_group_members_table_group_id_routing_groups_table_id_fk": {
+          "name": "routing_group_members_table_group_id_routing_groups_table_id_fk",
+          "tableFrom": "routing_group_members_table",
+          "tableTo": "routing_groups_table",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        },
+        "routing_group_members_table_client_id_clients_table_id_fk": {
+          "name": "routing_group_members_table_client_id_clients_table_id_fk",
+          "tableFrom": "routing_group_members_table",
+          "tableTo": "clients_table",
+          "columnsFrom": [
+            "client_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {
+        "routing_group_members_table_group_id_client_id_pk": {
+          "columns": [
+            "group_id",
+            "client_id"
+          ],
+          "name": "routing_group_members_table_group_id_client_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "routing_group_runtime_state_table": {
+      "name": "routing_group_runtime_state_table",
+      "columns": {
+        "group_id": {
+          "name": "group_id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "selected_exit_client_id": {
+          "name": "selected_exit_client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "applied_exit_client_id": {
+          "name": "applied_exit_client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "evaluated_revision": {
+          "name": "evaluated_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "applied_revision": {
+          "name": "applied_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "selected_since": {
+          "name": "selected_since",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "applied_since": {
+          "name": "applied_since",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_evaluated_at": {
+          "name": "last_evaluated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_failover_at": {
+          "name": "last_failover_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {
+        "routing_group_runtime_selected_exit_idx": {
+          "name": "routing_group_runtime_selected_exit_idx",
+          "columns": [
+            "selected_exit_client_id"
+          ],
+          "isUnique": false
+        },
+        "routing_group_runtime_applied_exit_idx": {
+          "name": "routing_group_runtime_applied_exit_idx",
+          "columns": [
+            "applied_exit_client_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "routing_group_runtime_state_table_group_id_routing_groups_table_id_fk": {
+          "name": "routing_group_runtime_state_table_group_id_routing_groups_table_id_fk",
+          "tableFrom": "routing_group_runtime_state_table",
+          "tableTo": "routing_groups_table",
+          "columnsFrom": [
+            "group_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        },
+        "routing_group_runtime_state_table_selected_exit_client_id_clients_table_id_fk": {
+          "name": "routing_group_runtime_state_table_selected_exit_client_id_clients_table_id_fk",
+          "tableFrom": "routing_group_runtime_state_table",
+          "tableTo": "clients_table",
+          "columnsFrom": [
+            "selected_exit_client_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "cascade"
+        },
+        "routing_group_runtime_state_table_applied_exit_client_id_clients_table_id_fk": {
+          "name": "routing_group_runtime_state_table_applied_exit_client_id_clients_table_id_fk",
+          "tableFrom": "routing_group_runtime_state_table",
+          "tableTo": "clients_table",
+          "columnsFrom": [
+            "applied_exit_client_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "routing_slot_tombstones_table": {
+      "name": "routing_slot_tombstones_table",
+      "columns": {
+        "routing_slot": {
+          "name": "routing_slot",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "released_after_revision": {
+          "name": "released_after_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "interface_runtime_state_table": {
+      "name": "interface_runtime_state_table",
+      "columns": {
+        "interface_id": {
+          "name": "interface_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "desired_revision": {
+          "name": "desired_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "applied_revision": {
+          "name": "applied_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "observed_up": {
+          "name": "observed_up",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "restart_required": {
+          "name": "restart_required",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "last_started_at": {
+          "name": "last_started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_stopped_at": {
+          "name": "last_stopped_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_applied_at": {
+          "name": "last_applied_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "interface_runtime_state_table_interface_id_interfaces_table_name_fk": {
+          "name": "interface_runtime_state_table_interface_id_interfaces_table_name_fk",
+          "tableFrom": "interface_runtime_state_table",
+          "tableTo": "interfaces_table",
+          "columnsFrom": [
+            "interface_id"
+          ],
+          "columnsTo": [
+            "name"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "runtime_reconciliation_state_table": {
+      "name": "runtime_reconciliation_state_table",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "desired_revision": {
+          "name": "desired_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "applied_revision": {
+          "name": "applied_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'pending'"
+        },
+        "last_started_at": {
+          "name": "last_started_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_succeeded_at": {
+          "name": "last_succeeded_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(CURRENT_TIMESTAMP)"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

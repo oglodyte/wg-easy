@@ -7,7 +7,10 @@ export default defineMetricsHandler('json', async () => {
 });
 
 async function getMetricsJSON() {
-  const clients = await WireGuard.getAllClients();
+  const [clients, runtime] = await Promise.all([
+    WireGuard.getAllClients(),
+    WireGuard.getRuntimeSnapshot(),
+  ]);
   let wireguardPeerCount = 0;
   let wireguardEnabledPeersCount = 0;
   let wireguardConnectedPeersCount = 0;
@@ -24,8 +27,11 @@ async function getMetricsJSON() {
     wireguard_configured_peers: wireguardPeerCount,
     wireguard_enabled_peers: wireguardEnabledPeersCount,
     wireguard_connected_peers: wireguardConnectedPeersCount,
+    runtime,
     clients: clients.map((client) => ({
+      id: client.id,
       name: client.name,
+      interfaceId: client.interfaceId,
       enabled: client.enabled,
       ipv4Address: client.ipv4Address,
       ipv6Address: client.ipv6Address,

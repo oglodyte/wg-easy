@@ -26,11 +26,26 @@ export default definePermissionEventHandler(
     }
 
     // data can be undefined if the client is disabled
-    const data = await WireGuard.dumpByPublicKey(result.publicKey);
+    const [wgInterface, userConfig] = await Promise.all([
+      Database.interfaces.getByName(result.interfaceId),
+      Database.userConfigs.get(result.interfaceId),
+    ]);
+    const data = await WireGuard.dumpClient(
+      result.interfaceId,
+      result.publicKey
+    );
 
     return {
       ...result,
       endpoint: data?.endpoint,
+      interface: {
+        name: wgInterface.name,
+        enabled: wgInterface.enabled,
+        awgParametersEnabled: wgInterface.awgParametersEnabled,
+        defaultConfigFormat: wgInterface.defaultConfigFormat,
+        endpointHost: userConfig.host,
+        endpointPort: userConfig.port,
+      },
     };
   }
 );

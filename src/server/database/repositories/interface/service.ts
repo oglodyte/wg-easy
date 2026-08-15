@@ -1,12 +1,28 @@
-import { eq, sql } from 'drizzle-orm';
-import { parseCidr } from 'cidr-tools';
+import { eq, ne, sql } from 'drizzle-orm';
+import { containsCidr, parseCidr } from 'cidr-tools';
 
 import { wgInterface } from './schema';
-import type { InterfaceCidrUpdateType, InterfaceUpdateType } from './types';
+import type {
+  InterfaceCidrUpdateType,
+  InterfaceCreateInput,
+  InterfaceUpdateType,
+} from './types';
 
 import { nextIPFromUsedAddresses } from '#server/utils/ip';
-import { client as clientSchema } from '#db/schema';
+import { wg } from '#server/utils/wgHelper';
+import { bumpDesiredRevision } from '#db/repositories/runtime/service';
+import {
+  client as clientSchema,
+  general,
+  hooks,
+  interfaceRuntimeState,
+  userConfig,
+} from '#db/schema';
 import type { DBType } from '#db/sqlite';
+
+export class InterfaceDeletionBlockedError extends Error {}
+
+export class InterfaceReservationConflictError extends Error {}
 
 function createPreparedStatement(db: DBType) {
   return {
@@ -18,13 +34,6 @@ function createPreparedStatement(db: DBType) {
       .set({
         privateKey: sql.placeholder('privateKey') as never as string,
         publicKey: sql.placeholder('publicKey') as never as string,
-      })
-      .where(eq(wgInterface.name, sql.placeholder('interface')))
-      .prepare(),
-    setFirewallEnabled: db
-      .update(wgInterface)
-      .set({
-        firewallEnabled: sql.placeholder('firewallEnabled') as never as boolean,
       })
       .where(eq(wgInterface.name, sql.placeholder('interface')))
       .prepare(),
@@ -40,9 +49,9 @@ export class InterfaceService {
     this.#statements = createPreparedStatement(db);
   }
 
-  async get() {
+  async getByName(interfaceId: string) {
     const wgInterface = await this.#statements.get.execute({
-      interface: 'wg0',
+      interface: interfaceId,
     });
     if (!wgInterface) {
       throw new Error('Interface not found');
@@ -50,34 +59,193 @@ export class InterfaceService {
     return wgInterface;
   }
 
-  updateKeyPair(privateKey: string, publicKey: string) {
+  async getAll() {
+    return this.#db.query.wgInterface
+      .findMany({ orderBy: (table, { asc }) => asc(table.name) })
+      .execute();
+  }
+
+  async getDefault() {
+    const config = await this.#db.query.general
+      .findFirst({
+        columns: { defaultInterfaceId: true },
+      })
+      .execute();
+    if (!config) throw new Error('General Config not found');
+    return this.getByName(config.defaultInterfaceId);
+  }
+
+  async setDefault(interfaceId: string) {
+    const wgInterface = await this.getByName(interfaceId);
+    if (wgInterface.pendingDelete) {
+      throw new Error('A pending-delete interface cannot be the default');
+    }
+    await this.#db
+      .update(general)
+      .set({ defaultInterfaceId: interfaceId })
+      .execute();
+    return wgInterface;
+  }
+
+  // Compatibility boundary for existing single-interface callers.
+  get() {
+    return this.getDefault();
+  }
+
+  updateKeyPair(interfaceId: string, privateKey: string, publicKey: string) {
     return this.#statements.updateKeyPair.execute({
-      interface: 'wg0',
+      interface: interfaceId,
       privateKey,
       publicKey,
     });
   }
 
-  update(data: InterfaceUpdateType) {
+  updateAwgHeaders(
+    interfaceId: string,
+    headers: { h1: string; h2: string; h3: string; h4: string }
+  ) {
     return this.#db
       .update(wgInterface)
-      .set(data)
-      .where(eq(wgInterface.name, 'wg0'))
+      .set(headers)
+      .where(eq(wgInterface.name, interfaceId))
       .execute();
   }
 
-  setFirewallEnabled(firewallEnabled: boolean) {
-    return this.#statements.setFirewallEnabled.execute({
-      interface: 'wg0',
-      firewallEnabled,
+  async update(interfaceId: string, data: InterfaceUpdateType) {
+    await this.assertCidrAndPortAvailable(data, interfaceId);
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(wgInterface)
+        .set(data)
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
     });
   }
 
-  updateCidr(data: InterfaceCidrUpdateType) {
+  setFirewallEnabled(interfaceId: string, firewallEnabled: boolean) {
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(wgInterface)
+        .set({ firewallEnabled })
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
+    });
+  }
+
+  async assertCidrAndPortAvailable(
+    data: Pick<InterfaceCidrUpdateType, 'ipv4Cidr' | 'ipv6Cidr'> & {
+      port?: number;
+    },
+    exceptInterfaceId?: string
+  ) {
+    const interfaces = await this.#db.query.wgInterface
+      .findMany({
+        where: exceptInterfaceId
+          ? ne(wgInterface.name, exceptInterfaceId)
+          : undefined,
+      })
+      .execute();
+    for (const existing of interfaces) {
+      if (
+        containsCidr(existing.ipv4Cidr, data.ipv4Cidr) ||
+        containsCidr(data.ipv4Cidr, existing.ipv4Cidr)
+      ) {
+        throw new InterfaceReservationConflictError(
+          `IPv4 CIDR overlaps with interface ${existing.name}`
+        );
+      }
+      if (
+        containsCidr(existing.ipv6Cidr, data.ipv6Cidr) ||
+        containsCidr(data.ipv6Cidr, existing.ipv6Cidr)
+      ) {
+        throw new InterfaceReservationConflictError(
+          `IPv6 CIDR overlaps with interface ${existing.name}`
+        );
+      }
+      if (data.port !== undefined && existing.port === data.port) {
+        throw new InterfaceReservationConflictError(
+          `Listen port is already used by interface ${existing.name}`
+        );
+      }
+    }
+  }
+
+  async create(data: InterfaceCreateInput) {
+    await this.assertCidrAndPortAvailable(data);
+    const source = await this.getByName(
+      data.cloneFromInterfaceId ?? (await this.getDefault()).name
+    );
+    const sourceHooks = await this.#db.query.hooks
+      .findFirst({
+        where: eq(hooks.id, source.name),
+      })
+      .execute();
+    const sourceUserConfig = await this.#db.query.userConfig
+      .findFirst({
+        where: eq(userConfig.id, source.name),
+      })
+      .execute();
+    if (!sourceHooks || !sourceUserConfig) {
+      throw new Error('Source interface defaults are incomplete');
+    }
+    const privateKey = await wg.generatePrivateKey();
+    const publicKey = await wg.getPublicKey(privateKey);
+
+    await this.#db.transaction(async (tx) => {
+      await tx
+        .insert(wgInterface)
+        .values({
+          ...source,
+          name: data.name,
+          device: data.device,
+          port: data.port,
+          ipv4Cidr: data.ipv4Cidr,
+          ipv6Cidr: data.ipv6Cidr,
+          privateKey,
+          publicKey,
+          enabled: false,
+          pendingDelete: false,
+        })
+        .execute();
+      await tx
+        .insert(hooks)
+        .values({
+          ...sourceHooks,
+          id: data.name,
+        })
+        .execute();
+      await tx
+        .insert(userConfig)
+        .values({
+          ...sourceUserConfig,
+          id: data.name,
+        })
+        .execute();
+      await tx
+        .insert(interfaceRuntimeState)
+        .values({
+          interfaceId: data.name,
+          status: 'disabled',
+          observedUp: false,
+          restartRequired: false,
+        })
+        .execute();
+      await bumpDesiredRevision(tx, [data.name]);
+    });
+
+    return this.getByName(data.name);
+  }
+
+  async updateCidr(interfaceId: string, data: InterfaceCidrUpdateType) {
+    await this.assertCidrAndPortAvailable(data, interfaceId);
     return this.#db.transaction(async (tx) => {
       const oldCidr = await tx.query.wgInterface
         .findFirst({
-          where: eq(wgInterface.name, 'wg0'),
+          where: eq(wgInterface.name, interfaceId),
           columns: { ipv4Cidr: true, ipv6Cidr: true },
         })
         .execute();
@@ -89,10 +257,14 @@ export class InterfaceService {
       await tx
         .update(wgInterface)
         .set(data)
-        .where(eq(wgInterface.name, 'wg0'))
+        .where(eq(wgInterface.name, interfaceId))
         .execute();
 
-      const clients = await tx.query.client.findMany().execute();
+      const clients = await tx.query.client
+        .findMany({
+          where: eq(clientSchema.interfaceId, interfaceId),
+        })
+        .execute();
       const ipv4Addresses = new Set(
         clients.map((client) => client.ipv4Address)
       );
@@ -134,6 +306,78 @@ export class InterfaceService {
           .where(eq(clientSchema.id, client.id))
           .execute();
       }
+      await bumpDesiredRevision(tx, [interfaceId]);
     });
+  }
+
+  async assertCanDelete(interfaceId: string) {
+    const [generalConfig, existingClient] = await Promise.all([
+      this.#db.query.general
+        .findFirst({ columns: { defaultInterfaceId: true } })
+        .execute(),
+      this.#db.query.client
+        .findFirst({
+          where: eq(clientSchema.interfaceId, interfaceId),
+          columns: { id: true },
+        })
+        .execute(),
+    ]);
+    if (!generalConfig) throw new Error('General Config not found');
+    if (generalConfig.defaultInterfaceId === interfaceId) {
+      throw new InterfaceDeletionBlockedError(
+        'The default interface cannot be deleted'
+      );
+    }
+    if (existingClient) {
+      throw new InterfaceDeletionBlockedError(
+        'Interface deletion is blocked while clients exist'
+      );
+    }
+    return this.getByName(interfaceId);
+  }
+
+  async stageDelete(interfaceId: string) {
+    return this.#db.transaction(async (tx) => {
+      const [generalConfig, existingInterface, existingClient] =
+        await Promise.all([
+          tx.query.general
+            .findFirst({ columns: { defaultInterfaceId: true } })
+            .execute(),
+          tx.query.wgInterface
+            .findFirst({ where: eq(wgInterface.name, interfaceId) })
+            .execute(),
+          tx.query.client
+            .findFirst({
+              where: eq(clientSchema.interfaceId, interfaceId),
+              columns: { id: true },
+            })
+            .execute(),
+        ]);
+      if (!generalConfig) throw new Error('General Config not found');
+      if (!existingInterface) throw new Error('Interface not found');
+      if (generalConfig.defaultInterfaceId === interfaceId) {
+        throw new InterfaceDeletionBlockedError(
+          'The default interface cannot be deleted'
+        );
+      }
+      if (existingClient) {
+        throw new InterfaceDeletionBlockedError(
+          'Interface deletion is blocked while clients exist'
+        );
+      }
+      await tx
+        .update(wgInterface)
+        .set({ enabled: false, pendingDelete: true })
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+    });
+  }
+
+  finalizeDelete(interfaceId: string) {
+    return this.#db
+      .delete(wgInterface)
+      .where(eq(wgInterface.name, interfaceId))
+      .execute();
   }
 }
