@@ -72,7 +72,7 @@ FROM ${ALPINE_IMAGE} AS traffic-sink
 
 RUN apk add --no-cache \
     iproute2=6.15.0-r0 \
-    python3=3.12.13-r0
+    python3=3.12.14-r0
 
 COPY sink-entrypoint.sh /usr/local/bin/sink-entrypoint
 COPY sink.py /usr/local/lib/wg-easy-lab/sink.py
