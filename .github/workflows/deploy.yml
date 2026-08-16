@@ -122,7 +122,10 @@ jobs:
         id: prepare
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
+          version="${GITHUB_REF_NAME#v}"
+          docker_version="${version//+/-}"
           echo "image=ghcr.io/${owner}/wg-easy" >> "$GITHUB_OUTPUT"
+          echo "docker_version=${docker_version}" >> "$GITHUB_OUTPUT"
 
       - name: Docker meta
         id: meta
@@ -134,9 +137,9 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.prepare.outputs.docker_version }},priority=1000
+            type=semver,pattern={{major}},priority=800
+            type=semver,pattern={{major}}.{{minor}},priority=850
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
