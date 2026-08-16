@@ -13,11 +13,14 @@ RUN corepack enable pnpm && corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
 # Copy Web UI
 COPY src/package.json src/pnpm-lock.yaml src/pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+# The full source tree is intentionally copied after this cacheable dependency
+# layer. Defer Nuxt's postinstall preparation until then; on arm64 it must not
+# run against this incomplete source tree.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Build UI
 COPY src ./
-RUN pnpm build
+RUN pnpm exec nuxt prepare && pnpm build
 
 # Build amneziawg-tools
 COPY staging/phase0/client-lab/patch-awg-quick.sh /tmp/patch-awg-quick.sh
