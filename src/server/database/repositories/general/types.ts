@@ -4,7 +4,7 @@ import z from 'zod';
 import type { general } from './schema';
 
 import { safeStringRefine, t } from '#server/utils/types';
-import { RoutingHealthSettingsSchema } from '#shared/utils/schemas';
+import type { RoutingHealthSettingsSchema } from '#shared/utils/schemas';
 
 export type GeneralType = InferSelectModel<typeof general>;
 
@@ -23,13 +23,6 @@ export const GeneralUpdateSchema = z.object({
   metricsPrometheus: metricsEnabled,
   metricsJson: metricsEnabled,
   metricsPassword: metricsPassword,
-  routingExitHealthCheckIntervalSeconds:
-    RoutingHealthSettingsSchema.shape.healthCheckIntervalSeconds,
-  routingExitHealthTimeoutSeconds:
-    RoutingHealthSettingsSchema.shape.healthTimeoutSeconds,
-  routingExitMinHoldSeconds: RoutingHealthSettingsSchema.shape.minHoldSeconds,
-  routingExitFailbackDelaySeconds:
-    RoutingHealthSettingsSchema.shape.failbackDelaySeconds,
 });
 
 export type GeneralUpdateType = z.infer<typeof GeneralUpdateSchema>;
