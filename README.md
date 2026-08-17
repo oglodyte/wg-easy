@@ -13,7 +13,7 @@ You have found the easiest way to install & manage WireGuard on any Linux host!
 > This repository is a fork of [upstream wg-easy](https://github.com/wg-easy/wg-easy).
 > It preserves the upstream project while adding multi-interface management,
 > AWG-backed WireGuard compatibility, and fail-closed common routing with
-> ordered exit failover. See [Managed Interfaces and Common Routing](https://wg-easy.github.io/wg-easy/latest/advanced/multi-interface-routing/)
+> ordered exit failover. See [Managed Interfaces and Common Routing](docs/content/advanced/multi-interface-routing.md)
 > for the operator model and deployment requirements.
 
 <p align="center">
@@ -54,7 +54,7 @@ You have found the easiest way to install & manage WireGuard on any Linux host!
 - [Traefik](https://wg-easy.github.io/wg-easy/latest/examples/tutorials/traefik/)
 - [Podman](https://wg-easy.github.io/wg-easy/latest/examples/tutorials/podman-nft/)
 - [AdGuard Home](https://wg-easy.github.io/wg-easy/latest/examples/tutorials/adguard/)
-- [Managed Interfaces and Common Routing](https://wg-easy.github.io/wg-easy/latest/advanced/multi-interface-routing/)
+- [Managed Interfaces and Common Routing](docs/content/advanced/multi-interface-routing.md)
 
 > [!NOTE]
 > If you want to migrate from the old version to the new version, you can find the migration guide here: [Migration Guide](https://wg-easy.github.io/wg-easy/latest/advanced/migrate/)
