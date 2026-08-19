@@ -135,11 +135,12 @@ jobs:
             ${{ steps.prepare.outputs.image }}
             name=codeberg.org/wg-easy/wg-easy,enable=${{ github.repository_owner == 'wg-easy' }}
           flavor: |
-            latest=auto
+            latest=false
           tags: |
             type=raw,value=${{ steps.prepare.outputs.docker_version }},priority=1000
             type=semver,pattern={{major}},priority=800
             type=semver,pattern={{major}}.{{minor}},priority=850
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }},priority=700
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests
