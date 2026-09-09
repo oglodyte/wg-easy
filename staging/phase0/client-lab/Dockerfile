@@ -42,7 +42,7 @@ RUN apk add --no-cache \
     curl=8.14.1-r3 \
     iproute2=6.15.0-r0 \
     iptables=1.8.11-r1 \
-    jq=1.8.1-r0 \
+    jq=1.8.2-r0 \
     wireguard-tools=1.0.20250521-r0
 
 COPY vpn-entrypoint.sh /usr/local/bin/vpn-entrypoint

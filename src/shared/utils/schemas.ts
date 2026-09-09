@@ -13,8 +13,13 @@ const ROUTING_GROUP_RULE_LIMIT = 4096;
 const ROUTING_GLOBAL_RULE_LIMIT = 20000;
 
 function hasUsableServerAndClientAddresses(value: string) {
-  const parsed = parseCidr(value);
-  return parsed.end - parsed.start >= 3n;
+  try {
+    const parsed = parseCidr(value);
+    return parsed.end - parsed.start >= 3n;
+  } catch {
+    // Zod runs sibling refinements even when the CIDR syntax check fails.
+    return false;
+  }
 }
 
 function isCidrVersion(value: string, version: 4 | 6) {

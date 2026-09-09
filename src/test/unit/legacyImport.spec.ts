@@ -253,7 +253,14 @@ describe('legacy interface import', () => {
   );
   test('incomplete preview returns safe prefills', async () => {
     const { importer } = await service();
-    const result = await importer.preview(JSON.stringify(fixture(true)), {});
+    // The actual upload form sends empty fields, not an empty settings object.
+    const result = await importer.preview(JSON.stringify(fixture(true)), {
+      ...settings(),
+      name: '',
+      ipv6Cidr: '',
+      endpointHost: '',
+      hooksReviewed: false,
+    });
     expect(result.detectedMode).toBe('amneziawg');
     expect(result.awg.jc).toBe(7);
     expect(result.blockers.length).toBeGreaterThan(0);
