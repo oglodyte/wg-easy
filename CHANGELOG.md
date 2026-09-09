@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Import wg-easy v14 and w0rng legacy JSON backups through interface creation,
+  preserving client keys and IPv4 addresses in a new disabled interface, with
+  conflict preview and atomic creation.
+- Preserve absent legacy preshared keys and omit them from generated profiles.
+
 ## [15.4.0+mir.2] - 2026-08-18
 
 ### Fixed

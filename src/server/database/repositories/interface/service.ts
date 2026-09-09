@@ -114,6 +114,7 @@ export class InterfaceService {
   async update(interfaceId: string, data: InterfaceUpdateType) {
     await this.assertCidrAndPortAvailable(data, interfaceId);
     return this.#db.transaction(async (tx) => {
+      await this.assertCidrAndPortAvailable(data, interfaceId, tx);
       const result = await tx
         .update(wgInterface)
         .set(data)
@@ -140,9 +141,10 @@ export class InterfaceService {
     data: Pick<InterfaceCidrUpdateType, 'ipv4Cidr' | 'ipv6Cidr'> & {
       port?: number;
     },
-    exceptInterfaceId?: string
+    exceptInterfaceId?: string,
+    database: Pick<DBType, 'query'> = this.#db
   ) {
-    const interfaces = await this.#db.query.wgInterface
+    const interfaces = await database.query.wgInterface
       .findMany({
         where: exceptInterfaceId
           ? ne(wgInterface.name, exceptInterfaceId)
@@ -196,6 +198,7 @@ export class InterfaceService {
     const publicKey = await wg.getPublicKey(privateKey);
 
     await this.#db.transaction(async (tx) => {
+      await this.assertCidrAndPortAvailable(data, undefined, tx);
       await tx
         .insert(wgInterface)
         .values({
@@ -243,6 +246,7 @@ export class InterfaceService {
   async updateCidr(interfaceId: string, data: InterfaceCidrUpdateType) {
     await this.assertCidrAndPortAvailable(data, interfaceId);
     return this.#db.transaction(async (tx) => {
+      await this.assertCidrAndPortAvailable(data, interfaceId, tx);
       const oldCidr = await tx.query.wgInterface
         .findFirst({
           where: eq(wgInterface.name, interfaceId),

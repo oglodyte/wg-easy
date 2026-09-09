@@ -1,5 +1,12 @@
 <template>
   <main v-if="interfaceData && defaults && hooks">
+    <p
+      v-if="route.query.legacyImport"
+      class="mb-4 rounded bg-yellow-50 p-3 text-yellow-900 dark:bg-yellow-900 dark:text-yellow-100"
+    >
+      {{ $t('admin.legacyImport.saved') }}
+      {{ $t('admin.legacyImport.cutover') }}
+    </p>
     <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
       <div>
         <h2 class="text-lg font-semibold">{{ interfaceData.name }}</h2>

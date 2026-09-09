@@ -21,6 +21,7 @@ on:
           - p6
           - p7
           - p8
+          - import
 
 permissions:
   contents: read

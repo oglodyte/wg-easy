@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { GeneralService } from '#db/repositories/general/service';
 import { UserService } from '#db/repositories/user/service';
 import { UserConfigService } from '#db/repositories/userConfig/service';
+import { LegacyInterfaceImportService } from '#db/repositories/interface/importService';
 import { InterfaceService } from '#db/repositories/interface/service';
 import { HooksService } from '#db/repositories/hooks/service';
 import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
@@ -42,6 +43,7 @@ class DBService {
   users: UserService;
   userConfigs: UserConfigService;
   interfaces: InterfaceService;
+  legacyImport: LegacyInterfaceImportService;
   hooks: HooksService;
   oneTimeLinks: OneTimeLinkService;
   runtime: RuntimeStateService;
@@ -53,6 +55,7 @@ class DBService {
     this.users = new UserService(db);
     this.userConfigs = new UserConfigService(db);
     this.interfaces = new InterfaceService(db);
+    this.legacyImport = new LegacyInterfaceImportService(db);
     this.hooks = new HooksService(db);
     this.oneTimeLinks = new OneTimeLinkService(db);
     this.runtime = new RuntimeStateService(db);

@@ -10,9 +10,11 @@ type SubmitOpts<T> = {
 
 type Body = Record<string, unknown> | null | undefined;
 
-export function useSubmit<T>(
-  fetcher: (data: Body) => Promise<T>,
-  opts: SubmitOpts<T>
+// Infer the concrete callback before unwrapping its result. Contextual Promise
+// inference expands Nitro route unions beyond TypeScript's recursion limit.
+export function useSubmit<Fetcher extends (data: Body) => unknown>(
+  fetcher: Fetcher,
+  opts: SubmitOpts<Awaited<ReturnType<Fetcher>>>
 ) {
   const toast = useToast();
 
@@ -27,8 +29,7 @@ export function useSubmit<T>(
         });
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await opts.revert(true, res as any);
+      await opts.revert(true, res as Awaited<ReturnType<Fetcher>>);
     } catch (e) {
       if (e instanceof FetchError) {
         toast.showToast({

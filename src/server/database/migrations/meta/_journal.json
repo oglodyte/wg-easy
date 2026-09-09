@@ -57,6 +57,13 @@
       "when": 1785732603635,
       "tag": "0007_phase1_contracts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788831356994,
+      "tag": "0008_legacy_import_psk",
+      "breakpoints": true
     }
   ]
 }

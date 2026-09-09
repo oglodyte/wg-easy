@@ -15,6 +15,12 @@
         <template #title>{{ $t('admin.interfaces.add') }}</template>
         <template #description>
           <div class="grid gap-3">
+            <NuxtLink
+              to="/admin/interfaces/import"
+              class="font-medium underline"
+              >{{ $t('admin.legacyImport.title') }}</NuxtLink
+            >
+            <p>{{ $t('admin.legacyImport.blank') }}</p>
             <FormTextField
               id="name"
               v-model="newInterface.name"

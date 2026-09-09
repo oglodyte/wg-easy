@@ -132,6 +132,40 @@ Saved group configuration is not necessarily applied. Treat `active` as the
 verified state; investigate `selected_pending`, `blocked`, `host_fallback`, or
 `degraded` status before relying on the policy.
 
+## Import a legacy interface
+
+Under **Interfaces → Add interface → Import legacy interface**, select a
+wg-easy v14-style or `w0rng/amnezia-wg-easy` `wg0.json` backup. This creates
+one new disabled interface and all of its clients in one transaction. It does
+not replace or merge into an existing interface. v15 SQLite backups and raw
+configuration files are not supported by this importer.
+
+Enter the missing endpoint, listen port, IPv6 CIDR, client defaults, and hooks.
+Review the detected compatibility mode and any incomplete AmneziaWG parameters.
+The source server must use the first usable IPv4 address of its legacy `/24`.
+Every client needs its private/public key pair and a unique usable address in
+that subnet. Source IDs and one-time links are not imported. Clients are owned
+by the importing administrator. Missing preshared keys remain absent.
+
+Validate the preview after editing any setting. Name, listen-port, subnet, or
+credential conflicts block creation; overlapping subnets cannot be overridden.
+An egress device such as `eth0` can be shared by multiple managed interfaces.
+The target allocates new IPv6 addresses, which do not modify profiles already
+installed on clients. Generated replacements use the defaults entered in the
+form, so verify those values before distributing any replacement profiles.
+
+Back up both systems. Create the disabled interface, then stop or unpublish the
+source before redirecting its existing endpoint to the new listen port and
+enabling the target. Keep the original client profile for a fresh handshake and
+traffic test. The importer does not publish ports, alter DNS, or configure host
+routing. If cutover fails, disable/unpublish the target before restoring the
+source endpoint. Do not run both servers with the same keys simultaneously.
+
+An uncertain create response may mean the transaction succeeded. Check the
+interface list before retrying; existing reservations prevent duplicate imports.
+Keep backups outside Git, logs, and chat. The nullable-preshared-key schema
+migration requires the same snapshot and matching-image rollback procedure below.
+
 ## Upgrade, backup, and rollback
 
 Before an upgrade that may migrate the database:

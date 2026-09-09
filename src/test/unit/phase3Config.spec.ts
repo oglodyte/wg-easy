@@ -60,6 +60,24 @@ const compatibilityInterface = {
 } as unknown as InterfaceType;
 
 describe('Phase 3 assigned-interface config generation', () => {
+  test('omits absent legacy PSKs from both shared configuration paths', () => {
+    const legacyClient = { ...client, preSharedKey: null };
+    expect(wg.generateServerPeer(legacyClient).includes('PresharedKey')).toBe(
+      false
+    );
+    for (const format of ['wireguard', 'amneziawg'] as const) {
+      expect(
+        wg
+          .generateClientConfig(
+            compatibilityInterface,
+            userConfig,
+            legacyClient,
+            { format }
+          )
+          .includes('PresharedKey')
+      ).toBe(false);
+    }
+  });
   test('keeps managed server routing tables disabled', () => {
     const serverInterface = {
       ...compatibilityInterface,
