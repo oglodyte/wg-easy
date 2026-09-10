@@ -88,15 +88,84 @@ jobs:
         working-directory: src
         run: sudo env "PATH=$PATH" WG_EASY_RUN_PRIVILEGED_TESTS=1 node node_modules/vitest/vitest.mjs run --project integration
 
-  build:
-    name: Build immutable images
+  server-build:
+    name: Build server (${{ matrix.architecture }})
     needs:
       - verify
       - privileged-routing
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-latest
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Derive server repository
+        id: names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "server=ghcr.io/${owner}/wg-easy" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Build and push native server image
+        id: server
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          platforms: linux/${{ matrix.architecture }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          tags: ${{ steps.names.outputs.server }}
+          cache-from: type=gha,scope=phase-server-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=phase-server-${{ matrix.architecture }}
+
+      - name: Verify native server binaries and database
+        env:
+          SERVER_IMAGE: ${{ steps.names.outputs.server }}
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+        run: |
+          docker run --rm --platform "linux/${{ matrix.architecture }}" \
+            --volume "${PWD}/staging/phase8/database-native-smoke.mjs:/tmp/database-native-smoke.mjs:ro" \
+            "${SERVER_IMAGE}@${SERVER_DIGEST}" \
+            sh -ec 'timeout 30s node --expose-gc /tmp/database-native-smoke.mjs; awg --version; ip -Version; test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick; grep -F "WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1" /usr/bin/awg-quick'
+
+      - name: Record verified server digest
+        env:
+          SERVER_IMAGE: ${{ steps.names.outputs.server }}
+          SERVER_DIGEST: ${{ steps.server.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/server-digests"
+          printf '%s@%s\n' "$SERVER_IMAGE" "$SERVER_DIGEST" > "${RUNNER_TEMP}/server-digests/${{ matrix.architecture }}.txt"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: phase-server-${{ matrix.architecture }}
+          path: ${{ runner.temp }}/server-digests/${{ matrix.architecture }}.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  build:
+    name: Build immutable images
+    needs:
+      - server-build
     runs-on: ubuntu-latest
     outputs:
       phase_tag: ${{ steps.names.outputs.phase_tag }}
-      server_image: ${{ steps.server.outputs.imageid }}
+      server_image: ${{ steps.names.outputs.server }}@${{ steps.server.outputs.digest }}
       server_digest: ${{ steps.server.outputs.digest }}
       wg_digest: ${{ steps.wg.outputs.digest }}
       awg_digest: ${{ steps.awg.outputs.digest }}
@@ -132,25 +201,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
-
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - name: Build and push server image
-        id: server
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: mode=max
-          sbom: true
-          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          tags: ${{ steps.names.outputs.server }}:${{ steps.names.outputs.phase_tag }}
-          cache-from: type=gha,scope=phase-server-multiarch
-          cache-to: type=gha,mode=max,scope=phase-server-multiarch
+          pattern: phase-server-*
+          path: ${{ runner.temp }}/server-digests
+          merge-multiple: true
 
-      - name: Verify server manifest and architecture binaries
+      - name: Publish verified multiarchitecture server manifest
+        id: server
+        env:
+          SERVER_IMAGE: ${{ steps.names.outputs.server }}
+          PHASE_TAG: ${{ steps.names.outputs.phase_tag }}
+        run: |
+          refs=()
+          for architecture in amd64 arm64; do
+            ref=$(cat "${RUNNER_TEMP}/server-digests/${architecture}.txt")
+            [[ "$ref" == "${SERVER_IMAGE}@sha256:"* ]]
+            [[ "${ref##*@sha256:}" =~ ^[a-f0-9]{64}$ ]]
+            refs+=("$ref")
+          done
+          docker buildx imagetools create --tag "${SERVER_IMAGE}:${PHASE_TAG}" "${refs[@]}"
+          digest=$(docker buildx imagetools inspect "${SERVER_IMAGE}:${PHASE_TAG}" --format '{{.Manifest.Digest}}')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify server platform manifests
         env:
           SERVER_IMAGE: ${{ steps.names.outputs.server }}
           SERVER_DIGEST: ${{ steps.server.outputs.digest }}
@@ -158,7 +235,6 @@ jobs:
           docker buildx imagetools inspect "${SERVER_IMAGE}@${SERVER_DIGEST}"
           manifest=$(docker buildx imagetools inspect --raw "${SERVER_IMAGE}@${SERVER_DIGEST}")
           for architecture in amd64 arm64; do
-            platform="linux/${architecture}"
             image_digest=$(
               jq -er --arg architecture "${architecture}" '
                 [.manifests[]
@@ -172,10 +248,7 @@ jobs:
                   end
               ' <<<"${manifest}"
             )
-            docker run --rm --platform "${platform}" \
-              --volume "${PWD}/staging/phase8/database-native-smoke.mjs:/tmp/database-native-smoke.mjs:ro" \
-              "${SERVER_IMAGE}@${image_digest}" \
-              sh -ec 'timeout 30s node --expose-gc /tmp/database-native-smoke.mjs; awg --version; ip -Version; test -x /usr/bin/amneziawg-go; grep -F "AWG_FORCE_USERSPACE:-false" /usr/bin/awg-quick; grep -F "WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1" /usr/bin/awg-quick'
+            docker buildx imagetools inspect "${SERVER_IMAGE}@${image_digest}"
           done
 
       - name: Build and push generic WireGuard lab image

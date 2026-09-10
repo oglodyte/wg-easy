@@ -25,9 +25,12 @@ done < <(find "$PHASE8_DIR" -type f -name '*.sh' -print | sort)
 
 grep -q 'privileged-routing:' "$WORKFLOW"
 grep -q 'WG_EASY_RUN_PRIVILEGED_TESTS=1 node node_modules/vitest/vitest.mjs run --project integration' "$WORKFLOW"
-grep -Fq 'docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4' \
-  "$WORKFLOW"
-grep -q 'platforms: linux/amd64,linux/arm64' "$WORKFLOW"
+grep -Fq 'runs-on: ${{ matrix.runner }}' "$WORKFLOW"
+grep -Fq 'runner: ubuntu-latest' "$WORKFLOW"
+grep -Fq 'runner: ubuntu-24.04-arm' "$WORKFLOW"
+grep -Fq 'platforms: linux/${{ matrix.architecture }}' "$WORKFLOW"
+grep -Fq 'Verify native server binaries and database' "$WORKFLOW"
+grep -Fq 'Publish verified multiarchitecture server manifest' "$WORKFLOW"
 grep -q 'for architecture in amd64 arm64' "$WORKFLOW"
 grep -q 'expected exactly one platform manifest' "$WORKFLOW"
 grep -Fq 'node-version: "24.19.0"' "$WORKFLOW"
