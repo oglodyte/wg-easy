@@ -441,6 +441,39 @@ describe('firewall', () => {
       userConfig: { defaultAllowedIps: ['0.0.0.0/0'] },
     };
 
+    test('omits IPv4-only interfaces from IPv6 filtering while retaining dual-stack peers', () => {
+      const ipv4Only = {
+        ...activeState,
+        wgInterface: {
+          ...activeState.wgInterface,
+          name: 'v4only',
+          ipv6Cidr: null,
+        },
+        clients: [
+          {
+            ...activeState.clients[0],
+            ipv6Address: null,
+            firewallIps: ['::/0'],
+          },
+        ],
+      };
+      const dualStack = {
+        ...activeState,
+        wgInterface: { ...activeState.wgInterface, ipv6Cidr: 'fd00::/64' },
+        clients: [{ ...activeState.clients[0], firewallIps: ['::/0'] }],
+      };
+      const document = firewallTestExports.buildRestoreDocument({
+        family: 6,
+        states: [ipv4Only, dualStack] as never,
+        existingSave: ':WG_CLIENTS - [0:0]\n-A FORWARD -i v4only -j WG_CLIENTS',
+      });
+      expect(document).toContain('-D FORWARD -i v4only -j WG_CLIENTS');
+      expect(document).not.toContain('-I FORWARD 1 -i v4only');
+      expect(document).toContain('-I FORWARD 1 -i wg0');
+      expect(document).toContain('-s fd00::2');
+      expect(document).not.toContain('-s null');
+    });
+
     test('renders a complete quoted chain and exact managed parent jump', () => {
       const document = firewallTestExports.buildRestoreDocument({
         family: 4,

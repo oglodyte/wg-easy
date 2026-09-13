@@ -660,6 +660,16 @@ class WireGuard {
 
     const clients = await Database.clients.getAll();
     const clientById = new Map(clients.map((client) => [client.id, client]));
+    // Alternate profiles can represent the same runtime peer. Verify its
+    // prefixes against the enabled version when switching between client IDs.
+    const enabledByPeer = new Map(
+      clients
+        .filter((client) => client.enabled)
+        .map((client) => [
+          `${client.interfaceId}\u0000${client.publicKey}`,
+          client,
+        ])
+    );
     const relevantPrefixes = new Set([
       ...targetPrefixes.values().flatMap((prefixes) => prefixes),
       ...previousPrefixes.values().flatMap((prefixes) => prefixes),
@@ -687,6 +697,14 @@ class WireGuard {
           throw new Error(`Routing exit client ${clientId} no longer exists`);
         }
         continue;
+      }
+      const enabledVersion = enabledByPeer.get(
+        `${client.interfaceId}\u0000${client.publicKey}`
+      );
+      if (enabledVersion && enabledVersion.id !== client.id) {
+        for (const prefix of targetPrefixes.get(enabledVersion.id) ?? []) {
+          expected.add(prefix);
+        }
       }
       const peer = dumpByInterface
         .get(client.interfaceId)

@@ -56,8 +56,9 @@
             />
             <FormTextField
               id="ipv6Address"
-              v-model="data.ipv6Address"
+              :model-value="data.ipv6Address ?? ''"
               label="IPv6"
+              @update:model-value="data.ipv6Address = $event || null"
             />
             <FormInfoField
               id="endpoint"

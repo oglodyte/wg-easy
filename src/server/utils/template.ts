@@ -34,7 +34,9 @@ export function iptablesTemplate(templ: string, wgInterface: InterfaceType) {
   return template(removeNewlines(templ), {
     name: InterfaceNameSchema.parse(wgInterface.name),
     ipv4Cidr: Ipv4CidrSchema.parse(wgInterface.ipv4Cidr),
-    ipv6Cidr: Ipv6CidrSchema.parse(wgInterface.ipv6Cidr),
+    ipv6Cidr: wgInterface.ipv6Cidr
+      ? Ipv6CidrSchema.parse(wgInterface.ipv6Cidr)
+      : '',
     device: NetworkDeviceSchema.parse(wgInterface.device),
     port: PortSchema.parse(wgInterface.port).toString(),
     uiPort: PortSchema.parse(Number(WG_ENV.PORT)).toString(),

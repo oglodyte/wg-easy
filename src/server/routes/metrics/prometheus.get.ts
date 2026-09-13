@@ -115,7 +115,7 @@ export async function getPrometheusResponse() {
       client_name: client.name,
       enabled: client.enabled,
       ipv4Address: client.ipv4Address,
-      ipv6Address: client.ipv6Address,
+      ipv6Address: client.ipv6Address ?? '',
       name: client.name,
     });
     sent.push(`wireguard_sent_bytes{${labels}} ${client.transferTx ?? 0}`);
@@ -139,7 +139,7 @@ export async function getPrometheusResponse() {
         client_id: client.id,
         client_name: client.name,
         ipv4_address: client.ipv4Address,
-        ipv6_address: client.ipv6Address,
+        ipv6_address: client.ipv6Address ?? '',
       })}} 1`
     );
     if (client.latestHandshakeAt) {

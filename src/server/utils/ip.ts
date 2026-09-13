@@ -24,7 +24,7 @@ export function nextIP(
 export function nextIPFromUsedAddresses(
   version: 4 | 6,
   cidr: ParsedCidr,
-  usedAddresses: Set<string>
+  usedAddresses: Set<string | null>
 ) {
   let address;
   for (let i = cidr.start + 2n; i <= cidr.end - 1n; i++) {

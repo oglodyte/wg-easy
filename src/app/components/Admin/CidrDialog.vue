@@ -26,16 +26,16 @@ defineEmits(['change']);
 const props = defineProps<{
   triggerClass?: string;
   ipv4Cidr: string;
-  ipv6Cidr: string;
+  ipv6Cidr: string | null;
 }>();
 
 const ipv4Cidr = ref(props.ipv4Cidr);
-const ipv6Cidr = ref(props.ipv6Cidr);
+const ipv6Cidr = ref(props.ipv6Cidr ?? '');
 
 function resetOnOpen(open: boolean) {
   if (!open) return;
 
   ipv4Cidr.value = props.ipv4Cidr;
-  ipv6Cidr.value = props.ipv6Cidr;
+  ipv6Cidr.value = props.ipv6Cidr ?? '';
 }
 </script>

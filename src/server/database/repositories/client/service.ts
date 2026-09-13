@@ -29,6 +29,7 @@ import {
 } from '#db/schema';
 
 export class InterfaceUnavailableForClientCreationError extends Error {}
+export class ClientConflictError extends Error {}
 
 export class ClientRoutingReferenceError extends Error {
   readonly kind: 'exit' | 'member';
@@ -43,6 +44,43 @@ export class ClientRoutingReferenceError extends Error {
 }
 
 type ClientTransaction = Parameters<Parameters<DBType['transaction']>[0]>[0];
+
+async function assertEnabledIdentityAvailable(
+  tx: ClientTransaction,
+  id: ID,
+  candidate: {
+    enabled: boolean;
+    publicKey: string;
+    interfaceId: string;
+    ipv4Address: string;
+    ipv6Address: string | null;
+  }
+) {
+  if (!candidate.enabled) return;
+  const conflicts = await tx.query.client
+    .findMany({
+      columns: { id: true },
+      where: and(
+        eq(client.enabled, true),
+        sql`${client.id} <> ${id}`,
+        or(
+          and(
+            eq(client.interfaceId, candidate.interfaceId),
+            eq(client.publicKey, candidate.publicKey)
+          ),
+          eq(client.ipv4Address, candidate.ipv4Address),
+          candidate.ipv6Address
+            ? eq(client.ipv6Address, candidate.ipv6Address)
+            : undefined
+        )
+      ),
+    })
+    .execute();
+  if (conflicts.length)
+    throw new ClientConflictError(
+      'An enabled client already uses this tunnel address or VPN identity'
+    );
+}
 
 async function validateServerAllowedIpsUpdate(
   tx: ClientTransaction,
@@ -305,8 +343,9 @@ export class ClientService {
 
       const ipv4Cidr = parseCidr(clientInterface.ipv4Cidr);
       const ipv4Address = nextIP(4, ipv4Cidr, clients);
-      const ipv6Cidr = parseCidr(clientInterface.ipv6Cidr);
-      const ipv6Address = nextIP(6, ipv6Cidr, clients);
+      const ipv6Address = clientInterface.ipv6Cidr
+        ? nextIP(6, parseCidr(clientInterface.ipv6Cidr), clients)
+        : null;
 
       const result = await tx
         .insert(client)
@@ -347,6 +386,7 @@ export class ClientService {
         .findFirst({ where: eq(client.id, id) })
         .execute();
       if (!existing) throw new Error('Client not found');
+      await assertEnabledIdentityAvailable(tx, id, { ...existing, enabled });
       await tx
         .update(client)
         .set({ enabled })
@@ -437,7 +477,12 @@ export class ClientService {
         throw new Error('IPv4 address is not within the CIDR range');
       }
 
-      if (!containsCidr(clientInterface.ipv6Cidr, data.ipv6Address)) {
+      if (
+        clientInterface.ipv6Cidr
+          ? !data.ipv6Address ||
+            !containsCidr(clientInterface.ipv6Cidr, data.ipv6Address)
+          : data.ipv6Address !== null
+      ) {
         throw new Error('IPv6 address is not within the CIDR range');
       }
 
@@ -447,6 +492,10 @@ export class ClientService {
         data.serverAllowedIps,
         data.persistentKeepalive
       );
+      await assertEnabledIdentityAvailable(tx, id, {
+        ...existingClient,
+        ...data,
+      });
       await tx
         .update(client)
         .set({ ...data, serverAllowedIps })

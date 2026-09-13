@@ -11,6 +11,22 @@
         @change="selectFile"
       />
     </label>
+    <label
+      v-if="result?.serverAddressCorrectionRequired"
+      class="flex items-start gap-2"
+    >
+      <input
+        id="import-server-address-confirmed"
+        v-model="settings.serverAddressConfirmed"
+        type="checkbox"
+      />
+      {{
+        t('admin.legacyImport.serverAddressConfirmation', {
+          recorded: result.recordedServerAddress,
+          target: result.serverAddress,
+        })
+      }}
+    </label>
     <div v-if="file" class="grid gap-4 sm:grid-cols-2">
       <FormTextField
         v-for="field in textFields"
@@ -149,6 +165,7 @@
   </form>
 </template>
 <script setup lang="ts">
+import { legacyImportHooks } from '#shared/utils/importHooks';
 const { t } = useI18n();
 const file = ref('');
 const busy = ref(false);
@@ -163,8 +180,9 @@ const settings = reactive({
   mtu: 1420,
   persistentKeepalive: 25,
   mode: 'wireguard-compatible',
-  hooks: { preUp: '', postUp: '', preDown: '', postDown: '' },
+  hooks: legacyImportHooks(false),
   hooksReviewed: false,
+  serverAddressConfirmed: false,
 });
 const dns = ref('');
 const allowedIps = ref('0.0.0.0/0');
@@ -180,6 +198,25 @@ const awgKeys = [
   'h4',
 ] as const;
 const hookKeys = ['preUp', 'postUp', 'preDown', 'postDown'] as const;
+watch(
+  () => !!settings.ipv6Cidr.trim(),
+  (enabled, previous) => {
+    const oldDefaults = legacyImportHooks(previous);
+    const newDefaults = legacyImportHooks(enabled);
+    for (const key of hookKeys) {
+      if (settings.hooks[key] === oldDefaults[key])
+        settings.hooks[key] = newDefaults[key];
+    }
+    settings.hooksReviewed = false;
+  }
+);
+watch(
+  () => ({ ...settings.hooks }),
+  () => {
+    settings.hooksReviewed = false;
+  },
+  { flush: 'sync' }
+);
 const awg = reactive<Record<(typeof awgKeys)[number], string>>({
   jc: '',
   jmin: '',
@@ -206,6 +243,9 @@ const numberFields = [
 type Issue = { code: string; field?: string; client?: number };
 type Preview = {
   ipv4Cidr: string;
+  recordedServerAddress: string;
+  serverAddress: string;
+  serverAddressCorrectionRequired: boolean;
   detectedMode: string;
   awg: Record<string, unknown>;
   count: number;
@@ -271,6 +311,7 @@ function safeError(value: unknown) {
 async function selectFile(event: Event) {
   const input = event.target as HTMLInputElement;
   const selected = input.files?.[0];
+  settings.serverAddressConfirmed = false;
   file.value = '';
   result.value = undefined;
   error.value = '';

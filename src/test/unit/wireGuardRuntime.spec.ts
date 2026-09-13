@@ -504,6 +504,35 @@ describe('interface-scoped WireGuard runtime', () => {
     expect(applyRouting).toHaveBeenCalledTimes(2);
   });
 
+  test('switches routing exits between alternate versions of one runtime peer', async () => {
+    const { WireGuard, Database, routingGroupRuntime } = await loadRuntime(
+      undefined,
+      undefined,
+      true
+    );
+    const peers = await Database.clients.getAllForInterface('awg1');
+    const original = peers[0]!;
+    const alternate = { ...original, id: 3, name: 'alternate', enabled: false };
+    peers.push(alternate);
+    const snapshot =
+      Database.routingGroups.getPlannerSnapshot.getMockImplementation()!;
+    Database.routingGroups.getPlannerSnapshot.mockImplementation(async () => {
+      const state = await snapshot();
+      state.groups[0]!.exits.push({ clientId: 3, priority: 20, enabled: true });
+      return state;
+    });
+    expect(
+      (await WireGuard.requestReconcile('initial-routing')).runtime.status
+    ).toBe('applied');
+    expect(routingGroupRuntime.appliedExitClientId).toBe(2);
+    original.enabled = false;
+    alternate.enabled = true;
+    expect(
+      (await WireGuard.requestReconcile('switch-version')).runtime.status
+    ).toBe('applied');
+    expect(routingGroupRuntime.appliedExitClientId).toBe(3);
+  });
+
   test('retains the bootstrap plan when exit peer prefixes cannot be verified', async () => {
     const { WireGuard, wg, applyRouting, routingGroupRuntime } =
       await loadRuntime(undefined, undefined, true);

@@ -161,8 +161,10 @@ export class InterfaceService {
         );
       }
       if (
-        containsCidr(existing.ipv6Cidr, data.ipv6Cidr) ||
-        containsCidr(data.ipv6Cidr, existing.ipv6Cidr)
+        existing.ipv6Cidr &&
+        data.ipv6Cidr &&
+        (containsCidr(existing.ipv6Cidr, data.ipv6Cidr) ||
+          containsCidr(data.ipv6Cidr, existing.ipv6Cidr))
       ) {
         throw new InterfaceReservationConflictError(
           `IPv6 CIDR overlaps with interface ${existing.name}`
@@ -292,11 +294,13 @@ export class InterfaceService {
 
         let nextIpv6 = client.ipv6Address;
         if (data.ipv6Cidr !== oldCidr.ipv6Cidr) {
-          nextIpv6 = nextIPFromUsedAddresses(
-            6,
-            parseCidr(data.ipv6Cidr),
-            ipv6Addresses
-          );
+          nextIpv6 = data.ipv6Cidr
+            ? nextIPFromUsedAddresses(
+                6,
+                parseCidr(data.ipv6Cidr),
+                ipv6Addresses
+              )
+            : null;
           ipv6Addresses.add(nextIpv6);
           ipv6Addresses.delete(client.ipv6Address);
         }

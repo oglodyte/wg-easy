@@ -64,6 +64,27 @@
       "when": 1788831356994,
       "tag": "0008_legacy_import_psk",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1789101310613,
+      "tag": "0009_optional_ipv6",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1789179868759,
+      "tag": "0010_enabled_client_addresses",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1789227800777,
+      "tag": "0011_enabled_client_credentials",
+      "breakpoints": true
     }
   ]
 }

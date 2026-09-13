@@ -12,7 +12,7 @@ export const wgInterface = sqliteTable('interfaces_table', {
   privateKey: text('private_key').notNull(),
   publicKey: text('public_key').notNull(),
   ipv4Cidr: text('ipv4_cidr').notNull(),
-  ipv6Cidr: text('ipv6_cidr').notNull(),
+  ipv6Cidr: text('ipv6_cidr'),
   mtu: int().notNull(),
   jC: int('j_c').default(7),
   jMin: int('j_min').default(10),

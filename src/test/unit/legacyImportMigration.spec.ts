@@ -12,8 +12,8 @@ import * as schema from '#db/schema';
 const migrationsFolder = fileURLToPath(
   new URL('../../server/database/migrations', import.meta.url)
 );
-describe('nullable legacy PSK migration', () => {
-  test.each([0, 1, 2, 3, 4, 5, 6, 7])(
+describe('nullable legacy PSK and IPv6 migrations', () => {
+  test.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])(
     'preserves schema %s, foreign keys, rerun and snapshot rollback',
     async (index) => {
       const root = await fs.mkdtemp(
@@ -65,9 +65,12 @@ describe('nullable legacy PSK migration', () => {
           await db.raw.execute(
             "INSERT INTO one_time_links_table (id,one_time_link,expires_at) VALUES (42,'nonsecret-test-link','2099-01-01T00:00:00Z')"
           );
+          const beforeInterface = (
+            await db.raw.execute('SELECT * FROM interfaces_table')
+          ).rows[0]!;
           const before = (await db.raw.execute('SELECT * FROM clients_table'))
             .rows[0]!;
-          if (index === 7) {
+          if (index >= 7) {
             await db.raw.execute(
               "INSERT INTO routing_groups_table (id,routing_slot,name) VALUES (1,1,'preserved')"
             );
@@ -81,7 +84,64 @@ describe('nullable legacy PSK migration', () => {
           await db.close();
           await fs.copyFile(filename, path.join(root, 'backup.db'));
           db = createNodeSqliteDatabase(filename, schema);
+          if (index === 8) {
+            const fullJournal = JSON.parse(
+              await fs.readFile(
+                path.join(migrationsFolder, 'meta/_journal.json'),
+                'utf8'
+              )
+            );
+            fullJournal.entries = fullJournal.entries.filter(
+              (entry: { idx: number }) => entry.idx <= 9
+            );
+            const latest = fullJournal.entries.at(-1);
+            const sql = await fs.readFile(
+              path.join(migrationsFolder, `${latest.tag}.sql`),
+              'utf8'
+            );
+            await fs.writeFile(
+              path.join(subset, `${latest.tag}.sql`),
+              sql.replace(
+                'CREATE TABLE `__new_interfaces_table`',
+                'SELECT * FROM injected_missing_table;--> statement-breakpoint\nCREATE TABLE `__new_interfaces_table`'
+              )
+            );
+            await fs.writeFile(
+              path.join(subset, 'meta/_journal.json'),
+              JSON.stringify(fullJournal)
+            );
+            expect(
+              await db.migrate({ migrationsFolder: subset }).then(
+                () => false,
+                () => true
+              )
+            ).toBe(true);
+            expect(
+              (
+                await db.raw.execute('PRAGMA table_info(clients_table)')
+              ).rows.find((c) => c.name === 'ipv6_address')?.notnull
+            ).toBe(1);
+            expect(
+              (await db.raw.execute('PRAGMA foreign_key_check')).rows
+            ).toEqual([]);
+            await fs.writeFile(
+              path.join(subset, 'meta/_journal.json'),
+              JSON.stringify(journal)
+            );
+          }
           await db.migrate({ migrationsFolder });
+          const afterInterface = (
+            await db.raw.execute('SELECT * FROM interfaces_table')
+          ).rows[0]!;
+          expect(
+            Object.entries(beforeInterface).every(
+              ([k, v]) =>
+                afterInterface[k] ===
+                (index === 2 && /^h[1-4]$/.test(k) && v !== null
+                  ? String(v)
+                  : v)
+            )
+          ).toBe(true);
           const after = (await db.raw.execute('SELECT * FROM clients_table'))
             .rows[0]!;
           expect(Object.entries(before).every(([k, v]) => after[k] === v)).toBe(
@@ -90,7 +150,7 @@ describe('nullable legacy PSK migration', () => {
           expect(
             (await db.raw.execute('SELECT id FROM one_time_links_table')).rows
           ).toEqual([{ id: 42 }]);
-          if (index === 7) {
+          if (index >= 7) {
             expect(
               (
                 await db.raw.execute(
@@ -145,9 +205,18 @@ describe('nullable legacy PSK migration', () => {
             (await db.raw.execute('SELECT * FROM clients_table')).rows
           ) === beforeRerun
         ).toBe(true);
+        expect((await db.raw.execute('PRAGMA integrity_check')).rows).toEqual([
+          { integrity_check: 'ok' },
+        ]);
+        expect(
+          (
+            await db.raw.execute('PRAGMA table_info(interfaces_table)')
+          ).rows.find((c) => c.name === 'ipv6_cidr')?.notnull
+        ).toBe(0);
         const columns = (
           await db.raw.execute('PRAGMA table_info(clients_table)')
         ).rows;
+        expect(columns.find((c) => c.name === 'ipv6_address')?.notnull).toBe(0);
         expect(columns.find((c) => c.name === 'pre_shared_key')?.notnull).toBe(
           0
         );

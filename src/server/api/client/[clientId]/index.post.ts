@@ -1,3 +1,5 @@
+import { useTranslation } from '@intlify/h3';
+import { ClientConflictError } from '#db/repositories/client/service';
 import { createError, getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
@@ -30,6 +32,14 @@ export default definePermissionEventHandler(
     try {
       await Database.clients.update(clientId, data);
     } catch (error) {
+      if (error instanceof ClientConflictError) {
+        const t = await useTranslation(event);
+        throw createError({
+          statusCode: 409,
+          message: t('client.enabledConflict'),
+        });
+      }
+
       if (error instanceof RoutingValidationError) {
         throw createError({
           statusCode: 409,

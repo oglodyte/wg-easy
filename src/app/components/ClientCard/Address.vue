@@ -1,6 +1,6 @@
 <template>
   <span class="inline-block">
-    {{ client.ipv4Address }}, {{ client.ipv6Address }}
+    {{ [client.ipv4Address, client.ipv6Address].filter(Boolean).join(', ') }}
   </span>
 </template>
 

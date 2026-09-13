@@ -30,10 +30,9 @@ export default definePermissionEventHandler(
       Database.interfaces.getByName(result.interfaceId),
       Database.userConfigs.get(result.interfaceId),
     ]);
-    const data = await WireGuard.dumpClient(
-      result.interfaceId,
-      result.publicKey
-    );
+    const data = result.enabled
+      ? await WireGuard.dumpClient(result.interfaceId, result.publicKey)
+      : undefined;
 
     return {
       ...result,

@@ -7,15 +7,16 @@ type StatusFields = {
   transferTx: number | null;
 };
 
-export function mergeClientStatuses<T extends StatusFields>(
-  clients: T[],
-  statuses: readonly StatusFields[]
-): T[] {
+export function mergeClientStatuses<
+  T extends StatusFields & { enabled?: boolean },
+>(clients: T[], statuses: readonly StatusFields[]): T[] {
   const clientsByPublicKey = new Map(
-    clients.map((client) => [
-      `${client.interfaceId}\u0000${client.publicKey}`,
-      client,
-    ])
+    clients
+      .filter((client) => client.enabled !== false)
+      .map((client) => [
+        `${client.interfaceId}\u0000${client.publicKey}`,
+        client,
+      ])
   );
 
   for (const status of statuses) {

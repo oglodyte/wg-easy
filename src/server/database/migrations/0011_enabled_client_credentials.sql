@@ -1,0 +1,2 @@
+DROP INDEX `public_key_interface_unique`;--> statement-breakpoint
+CREATE UNIQUE INDEX `enabled_client_public_key_interface_unique` ON `clients_table` (`public_key`,`interface_id`) WHERE "clients_table"."enabled" = 1;

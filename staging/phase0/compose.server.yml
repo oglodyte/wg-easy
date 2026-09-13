@@ -23,6 +23,9 @@ services:
       - 51820:51820/udp
       # Publish the configured awg-p2 endpoint; TCP 51821 remains the UI/API.
       - 51821:51821/udp
+      # Reserved for operator-tested legacy interface imports.
+      - 51823:51823/udp
+      - 51824:51824/udp
     restart: unless-stopped
     cap_add:
       - NET_ADMIN

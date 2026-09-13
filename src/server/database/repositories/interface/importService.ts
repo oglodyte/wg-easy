@@ -162,7 +162,12 @@ export class LegacyInterfaceImportService {
       .execute();
     const clients = await db.query.client
       .findMany({
-        columns: { publicKey: true, ipv4Address: true, ipv6Address: true },
+        columns: {
+          publicKey: true,
+          ipv4Address: true,
+          ipv6Address: true,
+          enabled: true,
+        },
       })
       .execute();
     return { interfaces, clients };

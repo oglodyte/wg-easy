@@ -8,7 +8,7 @@ import z from 'zod';
 import {
   InterfaceNameSchema,
   NetworkDeviceSchema,
-  Ipv6CidrSchema,
+  OptionalIpv6CidrSchema,
 } from '#shared/utils/schemas';
 import {
   MtuSchema,
@@ -62,7 +62,7 @@ const awgFields = {
 const legacyClient = z.strictObject({
   id: text.optional(),
   name: text.min(1),
-  address: z.ipv4(),
+  address: text.min(1),
   privateKey: key,
   publicKey: key,
   preSharedKey: z.union([key, z.literal(''), z.null()]).optional(),
@@ -100,7 +100,7 @@ export const LegacyImportSettingsSchema = z.strictObject({
   name: InterfaceNameSchema,
   device: NetworkDeviceSchema,
   listenPort: PortSchema.int(),
-  ipv6Cidr: Ipv6CidrSchema,
+  ipv6Cidr: OptionalIpv6CidrSchema.default(null),
   endpointHost: host.transform((v) => (isIP(v) === 6 ? `[${v}]` : v)),
   endpointPort: PortSchema.int(),
   dns: z.array(host).max(16),
@@ -114,6 +114,7 @@ export const LegacyImportSettingsSchema = z.strictObject({
     postDown: z.string().max(8192).pipe(HookSchema),
   }),
   hooksReviewed: z.literal(true),
+  serverAddressConfirmed: z.boolean().default(false),
   mode: z.enum(['wireguard-compatible', 'amneziawg']),
   awg: z.strictObject(awgFields).optional(),
 });
@@ -124,10 +125,15 @@ export type ImportTargetState = {
     name: string;
     port: number;
     ipv4Cidr: string;
-    ipv6Cidr: string;
+    ipv6Cidr: string | null;
     publicKey: string;
   }[];
-  clients: { publicKey: string; ipv4Address: string; ipv6Address: string }[];
+  clients: {
+    publicKey: string;
+    ipv4Address: string;
+    ipv6Address: string | null;
+    enabled: boolean;
+  }[];
 };
 
 // No reviver, recursive traversal, or value-bearing parser errors.
@@ -190,28 +196,52 @@ export function inspectLegacyBackup(file: string) {
   const clients = Object.values(backup.clients);
   const cidr = parseCidr(`${backup.server.address}/24`);
   const ipv4Cidr = `${stringifyIp({ number: cidr.start, version: 4 })}/24`;
-  if (
-    backup.server.address !==
-    stringifyIp({ number: cidr.start + 1n, version: 4 })
-  )
-    fail('server_address');
-  const identities = new Set<string>();
+  const serverAddress = stringifyIp({ number: cidr.start + 1n, version: 4 });
+  const serverAddressCorrectionRequired =
+    backup.server.address !== serverAddress;
   for (const [index, identity] of [backup.server, ...clients].entries()) {
     if (deriveImportPublicKey(identity.privateKey) !== identity.publicKey)
       fail('key_mismatch', undefined, index || undefined);
-    if (identities.has(identity.publicKey))
-      fail('credential_conflict', undefined, index || undefined);
-    identities.add(identity.publicKey);
   }
+  const enabledIdentities = new Set<string>();
+  clients.forEach((client, index) => {
+    if (
+      client.publicKey === backup.server.publicKey ||
+      (client.enabled && enabledIdentities.has(client.publicKey))
+    )
+      fail('credential_conflict', undefined, index + 1);
+    if (client.enabled) enabledIdentities.add(client.publicKey);
+  });
   const addresses = new Set<string>();
   const warnings: ImportIssue[] = [];
   clients.forEach((client, index) => {
+    const entries = client.address.split(',').map((value) => value.trim());
+    if (
+      entries.length > 64 ||
+      entries.some((value) => {
+        const [ip, mask, extra] = value.split('/');
+        return (
+          !z.ipv4().safeParse(ip).success ||
+          extra !== undefined ||
+          (mask !== undefined && !/^(?:[0-9]|[12][0-9]|3[0-2])$/.test(mask))
+        );
+      })
+    )
+      fail('client_address', undefined, index + 1);
+    const hosts = entries
+      .filter((value) => !value.includes('/') || value.endsWith('/32'))
+      .map((value) => value.split('/')[0]!)
+      .filter((value) => containsCidr(ipv4Cidr, value));
+    if (hosts.length !== 1) fail('client_address', undefined, index + 1);
+    client.address = hosts[0]!;
+    if (entries.length > 1)
+      warnings.push({ code: 'routes_omitted', client: index + 1 });
     const number = parseCidr(`${client.address}/32`).start;
     if (number <= cidr.start + 1n || number >= cidr.end)
       fail('client_address', undefined, index + 1);
-    if (addresses.has(client.address))
+    if (client.enabled && addresses.has(client.address))
       fail('address_conflict', undefined, index + 1);
-    addresses.add(client.address);
+    if (client.enabled) addresses.add(client.address);
     if (client.expiredAt && !timestamp(client.expiredAt))
       fail('invalid_expiry', undefined, index + 1);
     if (!timestamp(client.createdAt) || !timestamp(client.updatedAt))
@@ -226,6 +256,8 @@ export function inspectLegacyBackup(file: string) {
     backup,
     clients,
     ipv4Cidr,
+    serverAddress,
+    serverAddressCorrectionRequired,
     warnings,
     detectedMode: Object.keys(awg).length
       ? ('amneziawg' as const)
@@ -237,6 +269,9 @@ export type InspectedImport = ReturnType<typeof inspectLegacyBackup>;
 export function importSummary(source: InspectedImport) {
   return {
     ipv4Cidr: source.ipv4Cidr,
+    recordedServerAddress: source.backup.server.address,
+    serverAddress: source.serverAddress,
+    serverAddressCorrectionRequired: source.serverAddressCorrectionRequired,
     detectedMode: source.detectedMode,
     awg: source.awg,
     count: source.clients.length,
@@ -270,6 +305,11 @@ export function prepareLegacyImport(source: InspectedImport, input: unknown) {
     );
   }
   const settings = parsed.data;
+  if (
+    source.serverAddressCorrectionRequired &&
+    !settings.serverAddressConfirmed
+  )
+    fail('server_address', 'serverAddressConfirmed');
   const awg = { ...source.awg, ...settings.awg };
   const parameters = {
     jC: null,
@@ -343,8 +383,8 @@ export function prepareLegacyImport(source: InspectedImport, input: unknown) {
       h4: a.h4,
     });
   }
-  const cidr6 = parseCidr(settings.ipv6Cidr);
-  if (BigInt(source.clients.length) > cidr6.end - cidr6.start - 2n)
+  const cidr6 = settings.ipv6Cidr ? parseCidr(settings.ipv6Cidr) : null;
+  if (cidr6 && BigInt(source.clients.length) > cidr6.end - cidr6.start - 2n)
     fail('ipv6_capacity', 'ipv6Cidr');
   const now = new Date().toISOString();
   return {
@@ -358,10 +398,12 @@ export function prepareLegacyImport(source: InspectedImport, input: unknown) {
       publicKey: c.publicKey,
       preSharedKey: c.preSharedKey || null,
       ipv4Address: c.address,
-      ipv6Address: stringifyIp({
-        number: cidr6.start + 2n + BigInt(i),
-        version: 6,
-      }),
+      ipv6Address: cidr6
+        ? stringifyIp({
+            number: cidr6.start + 2n + BigInt(i),
+            version: 6,
+          })
+        : null,
       expiresAt: timestamp(c.expiredAt),
       createdAt: timestamp(c.createdAt) ?? now,
       updatedAt: timestamp(c.updatedAt) ?? now,
@@ -382,7 +424,7 @@ export function validateImportReservations(
       [existing.ipv4Cidr, source.ipv4Cidr, 'ipv4Cidr'],
       [existing.ipv6Cidr, settings.ipv6Cidr, 'ipv6Cidr'],
     ] as const) {
-      if (containsCidr(a, b) || containsCidr(b, a))
+      if (a && b && (containsCidr(a, b) || containsCidr(b, a)))
         fail('cidr_conflict', field);
     }
   }
@@ -394,11 +436,16 @@ export function validateImportReservations(
   )
     fail('credential_conflict');
   const addresses = new Set(
-    state.clients.flatMap((c) => [c.ipv4Address, c.ipv6Address])
+    state.clients
+      .filter((c) => c.enabled)
+      .flatMap((c) => [c.ipv4Address, c.ipv6Address])
   );
   if (
     plan.clients.some(
-      (c) => addresses.has(c.ipv4Address) || addresses.has(c.ipv6Address)
+      (c) =>
+        c.enabled &&
+        (addresses.has(c.ipv4Address) ||
+          (c.ipv6Address !== null && addresses.has(c.ipv6Address)))
     )
   )
     fail('address_conflict');

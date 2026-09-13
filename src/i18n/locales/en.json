@@ -90,6 +90,7 @@
     "loginExpired": "Login expired. Try again"
   },
   "client": {
+    "enabledConflict": "An enabled client already uses this tunnel address or VPN identity. Disable that client before enabling this version.",
     "empty": "There are no clients yet.",
     "newShort": "New",
     "sort": "Sort",
@@ -297,7 +298,7 @@
       "allowedIps": "Client AllowedIPs (comma-separated)",
       "mode": "Interface compatibility mode",
       "modeHelp": "Match the source mode and AWG parameters to keep installed profiles working. Changing these settings may require new client profiles.",
-      "ipv6Cidr": "New IPv6 CIDR",
+      "ipv6Cidr": "IPv6 CIDR (optional; blank disables IPv6)",
       "endpointHost": "Existing endpoint host (no URL scheme)",
       "endpointPort": "Client endpoint UDP port",
       "mtu": "MTU",
@@ -306,6 +307,7 @@
       "postUp": "Post-up hook",
       "preDown": "Pre-down hook",
       "postDown": "Post-down hook",
+      "serverAddressConfirmation": "The backup records server address {recorded}. I confirm the running server actually uses {target}, which will be used for this import. Client addresses will remain unchanged.",
       "hooksReviewed": "I reviewed the hooks, forwarding/NAT requirements, and all missing settings. Hooks run privileged shell commands when the interface is later enabled.",
       "clientCount": "Clients: {count}",
       "expiry": "Expiry",
@@ -315,9 +317,10 @@
       "cutover": "Publish or forward the existing client endpoint to the new listen port yourself. Stop or unpublish the old source before enabling this interface. Saved settings do not prove reachability. Keep the source and target backups for rollback.",
       "errors": {
         "too_large": "The import request exceeds 10 MiB.",
+        "routes_omitted": "Additional legacy routes were omitted. Recreate routing policies after import.",
         "invalid_file": "Unsupported or malformed legacy backup. Check its fields and key format.",
         "too_many_clients": "The backup exceeds the client limit.",
-        "server_address": "The legacy server must use the first usable address of its /24 subnet.",
+        "server_address": "Confirm the generated server address matches your running server before correcting the backup metadata.",
         "key_mismatch": "A public key does not match its private key.",
         "credential_conflict": "A server or client identity is duplicated or already exists.",
         "client_address": "A client address is outside the usable legacy subnet or reserved for the server.",

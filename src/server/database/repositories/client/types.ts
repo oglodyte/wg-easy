@@ -99,7 +99,9 @@ export const ClientUpdateSchema = schemaForType<UpdateClientType>()(
     enabled: EnabledSchema,
     expiresAt: expiresAt,
     ipv4Address: address4,
-    ipv6Address: address6,
+    ipv6Address: z
+      .union([address6, z.literal(''), z.null()])
+      .transform((v) => v || null),
     preUp: HookSchema,
     postUp: HookSchema,
     preDown: HookSchema,

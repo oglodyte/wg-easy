@@ -24,8 +24,8 @@ export const client = sqliteTable(
         onUpdate: 'cascade',
       }),
     name: text().notNull(),
-    ipv4Address: text('ipv4_address').notNull().unique(),
-    ipv6Address: text('ipv6_address').notNull().unique(),
+    ipv4Address: text('ipv4_address').notNull(),
+    ipv6Address: text('ipv6_address'),
     preUp: text('pre_up').default('').notNull(),
     postUp: text('post_up').default('').notNull(),
     preDown: text('pre_down').default('').notNull(),
@@ -68,10 +68,15 @@ export const client = sqliteTable(
       .$onUpdate(() => sql`(CURRENT_TIMESTAMP)`),
   },
   (table) => [
-    uniqueIndex('public_key_interface_unique').on(
-      table.publicKey,
-      table.interfaceId
-    ),
+    uniqueIndex('enabled_client_ipv4_unique')
+      .on(table.ipv4Address)
+      .where(sql`${table.enabled} = 1`),
+    uniqueIndex('enabled_client_ipv6_unique')
+      .on(table.ipv6Address)
+      .where(sql`${table.enabled} = 1`),
+    uniqueIndex('enabled_client_public_key_interface_unique')
+      .on(table.publicKey, table.interfaceId)
+      .where(sql`${table.enabled} = 1`),
   ]
 );
 

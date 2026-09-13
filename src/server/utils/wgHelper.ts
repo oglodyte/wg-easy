@@ -59,7 +59,9 @@ export const wg = {
     const allowedIps = [
       ...new Set([
         `${client.ipv4Address}/32`,
-        ...(enableIpv6 ? [`${client.ipv6Address}/128`] : []),
+        ...(enableIpv6 && client.ipv6Address
+          ? [`${client.ipv6Address}/128`]
+          : []),
         ...(client.serverAllowedIps ?? []),
         ...additionalAllowedIps,
       ]),
@@ -85,13 +87,18 @@ AllowedIPs = ${allowedIps.join(', ')}${extraLines.length ? `\n${extraLines.join(
     const { enableIpv6 = true } = options;
 
     const cidr4 = parseCidr(wgInterface.ipv4Cidr);
-    const cidr6 = parseCidr(wgInterface.ipv6Cidr);
+    const cidr6 =
+      enableIpv6 && wgInterface.ipv6Cidr
+        ? parseCidr(wgInterface.ipv6Cidr)
+        : null;
     const ipv4Addr = stringifyIp({ number: cidr4.start + 1n, version: 4 });
-    const ipv6Addr = stringifyIp({ number: cidr6.start + 1n, version: 6 });
+    const ipv6Addr = cidr6
+      ? stringifyIp({ number: cidr6.start + 1n, version: 6 })
+      : null;
 
     const address =
       `${ipv4Addr}/${cidr4.prefix}` +
-      (enableIpv6 ? `, ${ipv6Addr}/${cidr6.prefix}` : '');
+      (cidr6 ? `, ${ipv6Addr}/${cidr6.prefix}` : '');
 
     const awgLines = generateAwgParameterLines(
       wgInterface.awgParametersEnabled,
@@ -150,7 +157,9 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
 
     const address =
       `${client.ipv4Address}/32` +
-      (enableIpv6 ? `, ${client.ipv6Address}/128` : '');
+      (enableIpv6 && wgInterface.ipv6Cidr && client.ipv6Address
+        ? `, ${client.ipv6Address}/128`
+        : '');
 
     const hookLines = [
       client.preUp ? `PreUp = ${removeNewlines(client.preUp)}` : null,
@@ -159,7 +168,9 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
       client.postDown ? `PostDown = ${removeNewlines(client.postDown)}` : null,
     ];
 
-    const dnsServers = client.dns ?? userConfig.defaultDns;
+    const dnsServers = (client.dns ?? userConfig.defaultDns).filter(
+      (value) => wgInterface.ipv6Cidr !== null || !value.includes(':')
+    );
     const dnsLine =
       dnsServers.length > 0 ? `DNS = ${dnsServers.join(', ')}` : null;
 
@@ -198,7 +209,7 @@ ${extraLines.length ? `${extraLines.join('\n')}\n` : ''}
 [Peer]
 PublicKey = ${wgInterface.publicKey}
 ${client.preSharedKey ? `PresharedKey = ${client.preSharedKey}` : ''}
-AllowedIPs = ${(client.allowedIps ?? userConfig.defaultAllowedIps).join(', ')}
+AllowedIPs = ${(client.allowedIps ?? userConfig.defaultAllowedIps).filter((value) => wgInterface.ipv6Cidr !== null || !value.includes(':')).join(', ')}
 PersistentKeepalive = ${client.persistentKeepalive}
 Endpoint = ${userConfig.host}:${userConfig.port}`;
   },

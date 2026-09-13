@@ -17,7 +17,7 @@ import {
 } from '#server/utils/types';
 import {
   Ipv4CidrSchema,
-  Ipv6CidrSchema,
+  OptionalIpv6CidrSchema,
   InterfaceNameSchema,
   NetworkDeviceSchema,
 } from '#shared/utils/schemas';
@@ -34,7 +34,7 @@ export const InterfaceCreateSchema = z.object({
   device: NetworkDeviceSchema,
   port: PortSchema,
   ipv4Cidr: Ipv4CidrSchema,
-  ipv6Cidr: Ipv6CidrSchema,
+  ipv6Cidr: OptionalIpv6CidrSchema.default(null),
   cloneFromInterfaceId: InterfaceNameSchema.optional(),
 });
 
@@ -59,7 +59,7 @@ const device = NetworkDeviceSchema;
 export const InterfaceUpdateSchema = schemaForType<InterfaceUpdateType>()(
   z.object({
     ipv4Cidr: Ipv4CidrSchema,
-    ipv6Cidr: Ipv6CidrSchema,
+    ipv6Cidr: OptionalIpv6CidrSchema,
     mtu: MtuSchema,
     jC: JcSchema,
     jMin: JminSchema,
@@ -97,13 +97,13 @@ export const InterfaceUpdateSchema = schemaForType<InterfaceUpdateType>()(
 
 export type InterfaceCidrUpdateType = {
   ipv4Cidr: string;
-  ipv6Cidr: string;
+  ipv6Cidr: string | null;
 };
 
 export const InterfaceCidrUpdateSchema =
   schemaForType<InterfaceCidrUpdateType>()(
     z.object({
       ipv4Cidr: Ipv4CidrSchema,
-      ipv6Cidr: Ipv6CidrSchema,
+      ipv6Cidr: OptionalIpv6CidrSchema,
     })
   );

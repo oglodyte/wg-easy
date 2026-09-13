@@ -63,6 +63,9 @@ function cidrSchema(version: 4 | 6) {
 
 export const Ipv4CidrSchema = cidrSchema(4);
 export const Ipv6CidrSchema = cidrSchema(6);
+export const OptionalIpv6CidrSchema = z
+  .union([Ipv6CidrSchema, z.literal(''), z.null()])
+  .transform((value) => value || null);
 export const RoutingGroupPrefixSchema = z
   .string()
   .refine((value) => isCidrVersion(value, 4), 'Expected an IPv4 CIDR')

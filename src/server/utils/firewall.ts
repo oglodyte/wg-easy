@@ -204,7 +204,10 @@ function buildRestoreDocument({
 }) {
   const active = states.filter(
     ({ wgInterface, observedUp }) =>
-      observedUp && wgInterface.enabled && wgInterface.firewallEnabled
+      observedUp &&
+      wgInterface.enabled &&
+      wgInterface.firewallEnabled &&
+      (family === 4 || !!wgInterface.ipv6Cidr)
   );
   const managedInterfaces = new Set(
     states.map(({ wgInterface }) => InterfaceNameSchema.parse(wgInterface.name))
@@ -212,7 +215,7 @@ function buildRestoreDocument({
   const rules: string[][] = [];
   for (const { clients, userConfig } of active) {
     for (const client of clients) {
-      if (!client.enabled) continue;
+      if (!client.enabled || (family === 6 && !client.ipv6Address)) continue;
       const effectiveIps =
         client.firewallIps && client.firewallIps.length > 0
           ? client.firewallIps
@@ -223,7 +226,7 @@ function buildRestoreDocument({
         if ((family === 6) !== isIPv6(baseIp)) continue;
         rules.push(
           ...generateRuleArgs(
-            family === 6 ? client.ipv6Address : client.ipv4Address,
+            family === 6 ? client.ipv6Address! : client.ipv4Address,
             entry,
             comment
           )
@@ -402,7 +405,7 @@ export const firewall = {
       const destIsIpv6 = isIPv6(baseIp);
 
       if (destIsIpv6) {
-        if (enableIpv6) {
+        if (enableIpv6 && client.ipv6Address) {
           const rules = generateRuleArgs(client.ipv6Address, parsed, comment);
           for (const rule of rules) {
             await execFile('ip6tables', rule);

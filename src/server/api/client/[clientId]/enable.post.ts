@@ -1,3 +1,5 @@
+import { useTranslation } from '@intlify/h3';
+import { ClientConflictError } from '#db/repositories/client/service';
 import { createError, getValidatedRouterParams } from 'h3';
 
 import Database from '#server/utils/Database';
@@ -31,7 +33,18 @@ export default definePermissionEventHandler(
       });
     }
 
-    await Database.clients.toggle(clientId, true);
+    try {
+      await Database.clients.toggle(clientId, true);
+    } catch (error) {
+      if (error instanceof ClientConflictError) {
+        const t = await useTranslation(event);
+        throw createError({
+          statusCode: 409,
+          message: t('client.enabledConflict'),
+        });
+      }
+      throw error;
+    }
     return WireGuard.requestReconcile('enable-client', [
       { interfaceId: client!.interfaceId, action: 'sync' },
     ]);
