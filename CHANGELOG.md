@@ -7,12 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [15.4.0+mir.3] - 2026-09-15
+
 ### Added
 
 - Import wg-easy v14 and w0rng legacy JSON backups through interface creation,
   preserving client keys and IPv4 addresses in a new disabled interface, with
   conflict preview and atomic creation.
 - Preserve absent legacy preshared keys and omit them from generated profiles.
+
+### Fixed
+
+- Allow IPv4-only interfaces and imports when no IPv6 CIDR is supplied.
+- Prefill editable standard import hooks, adding IPv6 rules only when selected.
+- Parse legacy comma-separated client addresses, preserving the tunnel address
+  and warning about routed prefixes that must be recreated separately.
+- Retain disabled alternate client versions with overlapping addresses or VPN
+  credentials, while preventing conflicting enabled versions.
+- Require explicit confirmation when correcting stale legacy server addresses
+  to the first usable address of the imported subnet.
+- Attribute peer status to the enabled client version and verify routing
+  correctly when switching between versions of the same peer.
 
 ## [15.4.0+mir.2] - 2026-08-18
 
