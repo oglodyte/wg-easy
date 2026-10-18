@@ -21,6 +21,7 @@ FROM ${ALPINE_IMAGE} AS awg-tools-build
 ARG AMNEZIAWG_TOOLS_COMMIT=d09ecc38425082e472368dd2bf8c4c42d10cae03
 
 COPY patch-awg-quick.sh /tmp/patch-awg-quick.sh
+COPY patch-quick-sysctl.sh /tmp/patch-quick-sysctl.sh
 
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
@@ -32,6 +33,7 @@ RUN apk add --no-cache \
 RUN git clone https://github.com/amnezia-vpn/amneziawg-tools.git /src/amneziawg-tools && \
     git -C /src/amneziawg-tools checkout --detach "${AMNEZIAWG_TOOLS_COMMIT}" && \
     sh /tmp/patch-awg-quick.sh /src/amneziawg-tools/src/wg-quick/linux.bash && \
+    sh /tmp/patch-quick-sysctl.sh /src/amneziawg-tools/src/wg-quick/linux.bash && \
     make -C /src/amneziawg-tools/src
 
 FROM ${ALPINE_IMAGE} AS vpn-base
@@ -44,6 +46,10 @@ RUN apk add --no-cache \
     iptables=1.8.11-r1 \
     jq=1.8.2-r0 \
     wireguard-tools=1.0.20250521-r0
+
+COPY patch-quick-sysctl.sh /tmp/patch-quick-sysctl.sh
+RUN sh /tmp/patch-quick-sysctl.sh /usr/bin/wg-quick && \
+    rm /tmp/patch-quick-sysctl.sh
 
 COPY vpn-entrypoint.sh /usr/local/bin/vpn-entrypoint
 RUN chmod 0755 /usr/local/bin/vpn-entrypoint

@@ -76,9 +76,11 @@ address solely for deterministic container testing; physical devices resolve
 the staging hostname normally and use the host-published UDP endpoint.
 The traffic sink is not attached to the underlay. The client-lab test also
 brings the generic member tunnel down and proves the sink becomes unreachable.
-The four disposable VPN clients run privileged because `wg-quick` must write
-namespaced sysctls; their root filesystems and individual configuration mounts
-remain read-only. The traffic sink is not privileged.
+The four disposable VPN clients use `NET_ADMIN` and `/dev/net/tun`. Docker sets
+`net.ipv4.conf.all.src_valid_mark=1` before startup; the pinned quick launchers
+skip the write when that value is already correct, so read-only `/proc/sys`
+works without privileged mode. Root filesystems and individual configuration
+mounts remain read-only.
 
 ## Staging sequence
 

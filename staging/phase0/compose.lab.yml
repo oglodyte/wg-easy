@@ -2,7 +2,6 @@ name: wg-easy-phase0-lab
 
 x-vpn-common: &vpn-common
   restart: "no"
-  privileged: true
   cap_add:
     - NET_ADMIN
   devices:

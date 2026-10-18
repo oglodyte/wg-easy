@@ -61,7 +61,10 @@ if grep -q '127.0.0.1:51821:51821/tcp' "${PHASE0_DIR}/compose.server.yml"; then
 fi
 grep -q 'net.ipv4.conf.all.src_valid_mark: 1' "${PHASE0_DIR}/compose.lab.yml"
 grep -q 'wg-easy-stage.lan:172.30.110.2' "${PHASE0_DIR}/compose.lab.yml"
-grep -q 'privileged: true' "${PHASE0_DIR}/compose.lab.yml"
+if grep -q 'privileged: true' "${PHASE0_DIR}/compose.lab.yml"; then
+  echo "Client lab must use NET_ADMIN without privileged mode." >&2
+  exit 1
+fi
 [ "$(grep -c 'AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}' \
   "${PHASE0_DIR}/compose.lab.yml")" -eq 3 ]
 grep -q 'AWG_FORCE_USERSPACE must be true or false' \
