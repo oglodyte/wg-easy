@@ -533,6 +533,54 @@ describe('interface-scoped WireGuard runtime', () => {
     expect(routingGroupRuntime.appliedExitClientId).toBe(3);
   });
 
+  test('withdraws a group while retaining the same exit legacy site route without a restart', async () => {
+    const {
+      WireGuard,
+      Database,
+      wg,
+      runtime,
+      routingGroupRuntime,
+      applyRouting,
+    } = await loadRuntime(undefined, undefined, true);
+    const exit = (await Database.clients.getAllForInterface('awg1'))[0]!;
+    exit.serverAllowedIps = ['203.0.113.0/24'];
+    let enabled = true;
+    const snapshot =
+      Database.routingGroups.getPlannerSnapshot.getMockImplementation()!;
+    Database.routingGroups.getPlannerSnapshot.mockImplementation(async () => {
+      const state = await snapshot();
+      state.groups[0]!.enabled = enabled;
+      return state;
+    });
+
+    expect(
+      (await WireGuard.requestReconcile('enable-site-group')).runtime.status
+    ).toBe('applied');
+    enabled = false;
+    expect(
+      (await WireGuard.requestReconcile('restore-disabled-group')).runtime
+        .status
+    ).toBe('applied');
+    expect(runtime.markGlobalFailed).not.toHaveBeenCalled();
+    expect(wg.down).not.toHaveBeenCalled();
+    expect(routingGroupRuntime).toMatchObject({
+      status: 'disabled',
+      appliedExitClientId: null,
+      appliedRevision: 2,
+    });
+    expect(applyRouting.mock.lastCall?.[0].routes).toContainEqual(
+      expect.objectContaining({
+        table: 51999,
+        prefix: '203.0.113.0/24',
+        device: 'awg1',
+      })
+    );
+    expect(wg.generateServerPeer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 2, serverAllowedIps: ['203.0.113.0/24'] }),
+      expect.objectContaining({ additionalAllowedIps: [] })
+    );
+  });
+
   test('retains the bootstrap plan when exit peer prefixes cannot be verified', async () => {
     const { WireGuard, wg, applyRouting, routingGroupRuntime } =
       await loadRuntime(undefined, undefined, true);

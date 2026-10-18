@@ -84,6 +84,27 @@ export type ServerAllowedIpClient = {
   serverAllowedIps: readonly string[];
 };
 
+/** Group withdrawal must preserve prefixes still owned by the legacy peer. */
+export function routingPeerPrefixesMatch({
+  observedPrefixes,
+  expectedRoutingPrefixes,
+  relevantRoutingPrefixes,
+  preservedPrefixes,
+}: {
+  observedPrefixes: ReadonlySet<string>;
+  expectedRoutingPrefixes: ReadonlySet<string>;
+  relevantRoutingPrefixes: ReadonlySet<string>;
+  preservedPrefixes: readonly string[];
+}) {
+  const expected = new Set([...expectedRoutingPrefixes, ...preservedPrefixes]);
+  return (
+    [...expected].every((prefix) => observedPrefixes.has(prefix)) &&
+    [...relevantRoutingPrefixes].every(
+      (prefix) => expected.has(prefix) || !observedPrefixes.has(prefix)
+    )
+  );
+}
+
 export function findServerAllowedIpConflicts(
   clients: readonly ServerAllowedIpClient[]
 ): RoutingValidationIssue[] {

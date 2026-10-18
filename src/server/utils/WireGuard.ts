@@ -16,6 +16,7 @@ import {
   buildRoutingPlan,
   buildSafetyRoutingPlan,
   evaluateExitReadiness,
+  routingPeerPrefixesMatch,
   selectActiveExit,
   SITE_TO_SITE_PRIORITY,
   SITE_TO_SITE_TABLE_ID,
@@ -724,10 +725,12 @@ class WireGuard {
           .filter(Boolean)
       );
       if (
-        [...expected].some((prefix) => !observed.has(prefix)) ||
-        [...relevantPrefixes].some(
-          (prefix) => !expected.has(prefix) && observed.has(prefix)
-        )
+        !routingPeerPrefixesMatch({
+          observedPrefixes: observed,
+          expectedRoutingPrefixes: expected,
+          relevantRoutingPrefixes: relevantPrefixes,
+          preservedPrefixes: enabledVersion?.serverAllowedIps ?? [],
+        })
       ) {
         throw new Error(
           `Routing peer prefixes were not verified for client ${clientId} on interface ${client.interfaceId}`

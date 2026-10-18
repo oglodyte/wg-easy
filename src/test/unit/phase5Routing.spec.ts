@@ -10,6 +10,7 @@ import {
   findServerAllowedIpConflicts,
   formatMark,
   preflightRoutingOwnership,
+  routingPeerPrefixesMatch,
   routingMarkForSlot,
   selectActiveExit,
 } from '#server/utils/routing';
@@ -45,6 +46,44 @@ const clients = [
     serverAllowedIps: [],
   },
 ];
+
+describe('routing peer verification across group withdrawal', () => {
+  const site = '172.30.111.100/32';
+  const internet = '0.0.0.0/0';
+  const matches = (
+    observed: string[],
+    routing: string[],
+    legacy: string[],
+    relevant = [site, internet]
+  ) =>
+    routingPeerPrefixesMatch({
+      observedPrefixes: new Set(observed),
+      expectedRoutingPrefixes: new Set(routing),
+      relevantRoutingPrefixes: new Set(relevant),
+      preservedPrefixes: legacy,
+    });
+
+  test('retains a withdrawn group prefix still declared as a legacy site route', () => {
+    expect(matches(['10.8.0.2/32', site], [], [site])).toBe(true);
+    expect(matches(['10.8.0.2/32', site], [site], [site])).toBe(true);
+  });
+
+  test('still rejects missing group or preserved legacy ownership', () => {
+    expect(matches([site], [internet], [site])).toBe(false);
+    expect(matches([internet], [internet], [site])).toBe(false);
+  });
+
+  test('rejects stale group prefixes without an active legacy declaration', () => {
+    expect(matches([site], [], [])).toBe(false);
+    expect(matches([site, internet], [], [site])).toBe(false);
+    expect(matches(['10.8.0.2/32'], [], [])).toBe(true);
+  });
+
+  test('preserves only the enabled alternative declaration passed by the caller', () => {
+    expect(matches([site], [], ['192.0.2.0/24'])).toBe(false);
+    expect(matches(['192.0.2.0/24'], [], ['192.0.2.0/24'])).toBe(true);
+  });
+});
 
 function group(
   overrides: Partial<
