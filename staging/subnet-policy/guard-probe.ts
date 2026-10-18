@@ -97,6 +97,7 @@ function start(namespace: string, code: string) {
   return {
     child,
     events,
+    diagnostics: () => ({ exitCode: child.exitCode, stderr: failure }),
     ready: async () => {
       await until(
         () => events.some((e) => e.ready === true) || child.exitCode !== null,
@@ -106,8 +107,8 @@ function start(namespace: string, code: string) {
     },
   };
 }
-const httpCode = `const http=require('node:http'),net=require('node:net'),dgram=require('node:dgram');let ready=0;const done=()=>{if(++ready===3)console.log(JSON.stringify({ready:true}));};http.createServer((req,res)=>{const result={source:req.socket.remoteAddress,path:req.url};console.log(JSON.stringify(result));res.end(JSON.stringify(result));}).listen(8080,'0.0.0.0',done);net.createServer(socket=>socket.on('data',data=>socket.write(data))).listen(8081,'0.0.0.0',done);const udp=dgram.createSocket('udp4');udp.on('message',(data,remote)=>{const result={source:remote.address,udp:true};console.log(JSON.stringify(result));udp.send(JSON.stringify(result),remote.port,remote.address);});udp.bind(8082,'0.0.0.0',done);`;
-const streamCode = `const net=require('node:net'),readline=require('node:readline');let received=0;const socket=net.connect(8081,'172.31.200.2',()=>{console.log(JSON.stringify({ready:true}));setInterval(()=>socket.write('guard-probe'),40);});socket.on('data',d=>received+=d.length);socket.on('error',()=>{});readline.createInterface({input:process.stdin}).on('line',()=>console.log(JSON.stringify({received})));`;
+const httpCode = `const http=require('node:http'),net=require('node:net'),dgram=require('node:dgram');let ready=0;const done=()=>{if(++ready===3)console.log(JSON.stringify({ready:true}));};http.createServer((req,res)=>{const result={source:req.socket.remoteAddress,path:req.url};console.log(JSON.stringify(result));res.end(JSON.stringify(result));}).listen(8080,'0.0.0.0',done);net.createServer(socket=>{socket.on('error',error=>{if(!['ECONNRESET','EPIPE'].includes(error.code))throw error;});socket.on('data',data=>socket.write(data));}).listen(8081,'0.0.0.0',done);const udp=dgram.createSocket('udp4');udp.on('message',(data,remote)=>{const result={source:remote.address,udp:true};console.log(JSON.stringify(result));udp.send(JSON.stringify(result),remote.port,remote.address);});udp.bind(8082,'0.0.0.0',done);`;
+const streamCode = `const net=require('node:net'),readline=require('node:readline');let received=0,timer;const socket=net.connect(8081,'172.31.200.2',()=>{console.log(JSON.stringify({ready:true}));timer=setInterval(()=>socket.write('guard-probe'),40);});socket.on('data',d=>received+=d.length);socket.on('error',()=>{});readline.createInterface({input:process.stdin}).on('line',line=>{if(line==='close'){clearInterval(timer);socket.resetAndDestroy();setTimeout(()=>process.exit(0),25);}else console.log(JSON.stringify({received}));});`;
 const fetchCode = `fetch('http://172.31.200.2:8080/probe',{signal:AbortSignal.timeout(800)}).then(r=>r.text()).then(t=>console.log(t)).catch(error=>{console.error(error.name+': '+error.message);process.exit(7);});`;
 const fetchFrom = async (namespace = ns.member, address = "172.31.200.2") => {
   try {
@@ -412,7 +413,13 @@ try {
   checkpoint("full-guard-remove");
   await guard.remove(full);
   assert.equal((await fetchFrom()).source, "10.240.1.2");
-  stream.child.kill("SIGTERM");
+  // Force the intentional test-stream reset; the independent sink must survive.
+  stream.child.stdin.write("close\n");
+  await until(
+    () => stream.child.exitCode !== null,
+    "stream reset did not finish",
+  );
+  assert.equal(sink.child.exitCode, null, JSON.stringify(sink.diagnostics()));
   // Tracked SNAT replies are reverse-translated before the FORWARD filter hook.
   for (const nat of [false, true]) {
     checkpoint(`udp-return-nat-${nat}`);
@@ -433,6 +440,7 @@ try {
         "--to-source",
         "10.240.2.1",
       ]);
+    checkpoint(`udp-return-nat-${nat}-baseline`);
     const observed = await udpFrom();
     sources.push(observed.source);
     assert.equal(observed.source, nat ? "10.240.2.1" : "10.240.1.2");
@@ -447,6 +455,7 @@ try {
       ],
       { protectedPaths },
     );
+    checkpoint(`udp-return-nat-${nat}-guarded`);
     await guard.install(reply);
     const before = sink.events.length;
     await assert.rejects(udpFrom());
@@ -455,6 +464,7 @@ try {
       "outbound request did not reach sink",
     );
     assert.equal(sink.events.at(-1)!.source, nat ? "10.240.2.1" : "10.240.1.2");
+    checkpoint(`udp-return-nat-${nat}-restore`);
     await guard.remove(reply);
     assert.equal((await udpFrom()).source, nat ? "10.240.2.1" : "10.240.1.2");
     if (nat)
