@@ -93,11 +93,40 @@ export type CompiledPolicy = {
   counts: PolicyCounts;
 };
 
+/** Last verified runtime state only; never persist the static candidate proof. */
+export type AppliedRoutingPolicyPlan = {
+  version: 2;
+  bypassPrefixes: string[];
+  programs: {
+    sources: PolicySource[];
+    branches: {
+      prefix: string;
+      groupId: number;
+      action: 'exit' | 'block' | 'host';
+    }[];
+  }[];
+  groups: {
+    id: number;
+    routingSlot: number;
+    natEnabled: boolean;
+    selectedExitClientId: number | null;
+    exitInterfaceId: string | null;
+    serverIpv4Address: string | null;
+    effectivePrefixes: string[];
+  }[];
+  peers: {
+    clientId: number;
+    interfaceId: string;
+    peerId: string;
+    prefixes: string[];
+  }[];
+};
+
 /** Recovery stores no credentials, hooks, configs, or independent revision counter. */
 export type RoutingPolicyJournal = {
   revision: number;
   fingerprint: string;
-  plan: CompiledPolicy;
+  plan: AppliedRoutingPolicyPlan;
 };
 export type PendingPolicyTransition = RoutingPolicyJournal & {
   stage:

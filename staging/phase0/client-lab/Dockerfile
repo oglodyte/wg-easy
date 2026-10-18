@@ -8,7 +8,7 @@ ARG AMNEZIAWG_GO_COMMIT=9f5d948bc72cc554791cfe0fb91527e4acfb6b79
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
     build-base=0.5-r3 \
-    ca-certificates=20260611-r0 \
+    ca-certificates=20260909-r0 \
     git=2.49.1-r0 \
     linux-headers=6.14.2-r0
 
@@ -25,7 +25,7 @@ COPY patch-awg-quick.sh /tmp/patch-awg-quick.sh
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
     build-base=0.5-r3 \
-    ca-certificates=20260611-r0 \
+    ca-certificates=20260909-r0 \
     git=2.49.1-r0 \
     linux-headers=6.14.2-r0
 
@@ -38,7 +38,7 @@ FROM ${ALPINE_IMAGE} AS vpn-base
 
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
-    ca-certificates=20260611-r0 \
+    ca-certificates=20260909-r0 \
     curl=8.14.1-r3 \
     iproute2=6.15.0-r0 \
     iptables=1.8.11-r1 \
@@ -72,7 +72,7 @@ FROM ${ALPINE_IMAGE} AS traffic-sink
 
 RUN apk add --no-cache \
     iproute2=6.15.0-r0 \
-    python3=3.12.14-r0
+    python3=3.12.15-r0
 
 COPY sink-entrypoint.sh /usr/local/bin/sink-entrypoint
 COPY sink.py /usr/local/lib/wg-easy-lab/sink.py
