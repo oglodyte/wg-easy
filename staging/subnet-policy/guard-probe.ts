@@ -24,6 +24,11 @@ const ns = Object.fromEntries(
     `g2${i}${suffix}`,
   ]),
 ) as Record<"server" | "member" | "exit" | "sink" | "management", string>;
+let stage = "setup";
+function checkpoint(name: string) {
+  stage = name;
+  console.log(JSON.stringify({ guardProbeStage: name }));
+}
 const created: string[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
 type Options = { input?: string; log?: boolean | string };
@@ -103,16 +108,22 @@ function start(namespace: string, code: string) {
 }
 const httpCode = `const http=require('node:http'),net=require('node:net'),dgram=require('node:dgram');let ready=0;const done=()=>{if(++ready===3)console.log(JSON.stringify({ready:true}));};http.createServer((req,res)=>{const result={source:req.socket.remoteAddress,path:req.url};console.log(JSON.stringify(result));res.end(JSON.stringify(result));}).listen(8080,'0.0.0.0',done);net.createServer(socket=>socket.on('data',data=>socket.write(data))).listen(8081,'0.0.0.0',done);const udp=dgram.createSocket('udp4');udp.on('message',(data,remote)=>{const result={source:remote.address,udp:true};console.log(JSON.stringify(result));udp.send(JSON.stringify(result),remote.port,remote.address);});udp.bind(8082,'0.0.0.0',done);`;
 const streamCode = `const net=require('node:net'),readline=require('node:readline');let received=0;const socket=net.connect(8081,'172.31.200.2',()=>{console.log(JSON.stringify({ready:true}));setInterval(()=>socket.write('guard-probe'),40);});socket.on('data',d=>received+=d.length);socket.on('error',()=>{});readline.createInterface({input:process.stdin}).on('line',()=>console.log(JSON.stringify({received})));`;
-const fetchCode = `fetch('http://172.31.200.2:8080/probe',{signal:AbortSignal.timeout(800)}).then(r=>r.text()).then(t=>console.log(t)).catch(()=>process.exit(7));`;
-const fetchFrom = async (namespace = ns.member, address = "172.31.200.2") =>
-  JSON.parse(
-    await inside(namespace, "node", [
-      "-e",
-      fetchCode.replace("172.31.200.2", address),
-    ]),
-  ) as {
-    source: string;
-  };
+const fetchCode = `fetch('http://172.31.200.2:8080/probe',{signal:AbortSignal.timeout(800)}).then(r=>r.text()).then(t=>console.log(t)).catch(error=>{console.error(error.name+': '+error.message);process.exit(7);});`;
+const fetchFrom = async (namespace = ns.member, address = "172.31.200.2") => {
+  try {
+    return JSON.parse(
+      await inside(namespace, "node", [
+        "-e",
+        fetchCode.replace("172.31.200.2", address),
+      ]),
+    ) as { source: string };
+  } catch (cause) {
+    throw new Error(
+      `Guard HTTP probe failed during ${stage} from ${namespace} to ${address}`,
+      { cause },
+    );
+  }
+};
 const udpCode = `const dgram=require('node:dgram'),socket=dgram.createSocket('udp4');const timer=setTimeout(()=>process.exit(7),800);socket.on('message',data=>{clearTimeout(timer);console.log(data.toString());socket.close();});socket.send('probe',8082,'172.31.200.2');`;
 const udpFrom = async () =>
   JSON.parse(await inside(ns.member, "node", ["-e", udpCode])) as {
@@ -184,6 +195,7 @@ const sources: string[] = [];
 let establishedFrozen = false,
   blockedRequests = 0;
 try {
+  checkpoint("topology");
   const existing = (await run("ip", ["netns", "list"]))
     .split("\n")
     .map((line) => line.split(" ")[0]);
@@ -303,6 +315,7 @@ try {
     .filter((line) => line.startsWith("-A "));
   const sink = start(ns.sink, httpCode);
   await sink.ready();
+  checkpoint("baseline");
   sources.push((await fetchFrom()).source);
   assert.equal(sources.at(-1), "10.240.1.2");
   assert.equal((await fetchFrom(ns.server)).source, "10.240.2.1");
@@ -318,6 +331,7 @@ try {
   const initial = await snapshot();
   await pause(200);
   assert((await snapshot()) > initial, "established stream baseline");
+  checkpoint("full-guard");
   await guard.install(full);
   await guard.verify(full);
   const sinkCount = sink.events.length;
@@ -342,6 +356,7 @@ try {
   await pause(600);
   assert.equal(await snapshot(), frozen, "established ACCEPT bypassed guard");
   establishedFrozen = true;
+  checkpoint("client-firewall-rebuild");
   const document = firewallTestExports.buildRestoreDocument({
     family: 4,
     existingSave: await guard.observe(),
@@ -394,11 +409,13 @@ try {
           /\bDROP\b/.test(line) && Number(line.trim().split(/\s+/)[0]) > 0,
       ),
   );
+  checkpoint("full-guard-remove");
   await guard.remove(full);
   assert.equal((await fetchFrom()).source, "10.240.1.2");
   stream.child.kill("SIGTERM");
   // Tracked SNAT replies are reverse-translated before the FORWARD filter hook.
   for (const nat of [false, true]) {
+    checkpoint(`udp-return-nat-${nat}`);
     if (nat)
       await server("iptables", [
         "-t",
@@ -458,6 +475,7 @@ try {
         "10.240.2.1",
       ]);
   }
+  checkpoint("local-input-return");
   const localReply = buildRoutingGuard(
     [
       {
