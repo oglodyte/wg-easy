@@ -64,6 +64,7 @@ jobs:
       - name: Verify staging launchers and scripts
         run: |
           bash staging/subnet-policy/test-quick-sysctl.sh
+          bash staging/subnet-policy/test-lab-compose.sh
           bash staging/phase0/tests/test-phase0.sh
           bash staging/phase1/tests/test-phase1.sh
 
