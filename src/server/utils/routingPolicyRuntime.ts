@@ -13,6 +13,28 @@ import type {
   PolicySnapshot,
 } from '#shared/types/routingPolicy';
 
+/** Object member order is not part of the persisted runtime fingerprint. */
+export function routingPolicyRuntimeFingerprint(
+  plan: AppliedRoutingPolicyPlan
+) {
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value && typeof value === 'object')
+      return Object.fromEntries(
+        Object.keys(value)
+          .sort()
+          .map((key) => [
+            key,
+            canonical((value as Record<string, unknown>)[key]),
+          ])
+      );
+    return value;
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(canonical(plan)))
+    .digest('hex');
+}
+
 /** Normalize a complete desired snapshot; health selects actions, never rank. */
 export function specializeRoutingPolicy(
   snapshot: PolicySnapshot,
@@ -152,9 +174,7 @@ export function specializeRoutingPolicy(
   return {
     compiled,
     plan,
-    fingerprint: createHash('sha256')
-      .update(JSON.stringify(plan))
-      .digest('hex'),
+    fingerprint: routingPolicyRuntimeFingerprint(plan),
   };
 }
 

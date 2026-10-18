@@ -5,6 +5,7 @@ import { normalizeCidr, parseCidr } from 'cidr-tools';
 import { execFile } from '#server/utils/cmd';
 import { POLICY_LIMITS } from '#server/utils/routingPolicy';
 import { InterfaceNameSchema } from '#shared/utils/schemas';
+import type { RoutingPolicyGuardScope } from '#shared/types/routingPolicy';
 
 export const ROUTING_GUARD_CHAIN = 'WG_ROUTE_GUARD';
 const OWNER = 'wg-easy routing guard';
@@ -12,13 +13,7 @@ const HOOKS = ['INPUT', 'FORWARD', 'OUTPUT'] as const;
 type Hook = (typeof HOOKS)[number];
 
 /** Matches are on the directional hook, never on a shared directionless body. */
-export type RoutingGuardScope = {
-  direction: 'input' | 'forward' | 'output';
-  inputInterface?: string;
-  outputInterface?: string;
-  source: string;
-  destination: string;
-};
+export type RoutingGuardScope = RoutingPolicyGuardScope;
 export type RoutingGuardPlan = {
   fingerprint: string;
   scopes: RoutingGuardScope[];

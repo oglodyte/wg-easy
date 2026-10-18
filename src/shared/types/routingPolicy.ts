@@ -132,15 +132,17 @@ export type RoutingPolicyJournal = {
   fingerprint: string;
   plan: AppliedRoutingPolicyPlan;
 };
+export type RoutingPolicyGuardScope = {
+  direction: 'input' | 'forward' | 'output';
+  inputInterface?: string;
+  outputInterface?: string;
+  source: string;
+  destination: string;
+};
 export type PendingPolicyTransition = RoutingPolicyJournal & {
   stage:
     'prepared' | 'guarded' | 'peers' | 'classified' | 'verified' | 'restoring';
-  guardScopes: {
-    interfaceId: string;
-    source?: string;
-    destination: string;
-    direction: 'input' | 'output' | 'forward';
-  }[];
+  guardScopes: RoutingPolicyGuardScope[];
   backupBasenames: string[];
   errorCode: string | null;
 };

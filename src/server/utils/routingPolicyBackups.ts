@@ -9,6 +9,9 @@ import { InterfaceNameSchema } from '#shared/utils/schemas';
 const OWNER = 'wg-easy routing policy config backup v1';
 const BASENAME =
   /^policy-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/;
+export function isRoutingPolicyBackupReference(value: string) {
+  return BASENAME.test(value) && path.basename(value) === value;
+}
 type SavedConfigurations = {
   owner: typeof OWNER;
   interfaces: { interfaceId: string; config: string | null }[];
@@ -85,7 +88,7 @@ export class RoutingPolicyBackups {
     this.directory = path.join(configDirectory, '.routing-policy-backups');
   }
   private reference(basename: string) {
-    if (!BASENAME.test(basename) || path.basename(basename) !== basename)
+    if (!isRoutingPolicyBackupReference(basename))
       throw new RoutingPolicyBackupError('invalid_reference');
     return path.join(this.directory, basename);
   }
