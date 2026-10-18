@@ -266,6 +266,22 @@ try {
       "172.31.200.1",
     ]);
   await server("ip", ["route", "add", lan, "via", "10.240.2.2", "dev", "awg1"]);
+  await inside(ns.management, "ip", ["route", "add", lan, "via", "192.0.2.1"]);
+  await inside(ns.exit, "ip", [
+    "route",
+    "add",
+    "192.0.2.0/30",
+    "via",
+    "10.240.2.1",
+  ]);
+  await inside(ns.sink, "ip", [
+    "route",
+    "add",
+    "192.0.2.0/30",
+    "via",
+    "172.31.200.1",
+  ]);
+
   await inside(ns.exit, "ip", [
     "addr",
     "add",
@@ -502,6 +518,28 @@ try {
   await ping(ns.management, "192.0.2.1");
   await guard.remove(localReply);
   assert.equal((await fetchFrom(ns.server)).source, "10.240.2.1");
+  checkpoint("legacy-prefix-only-guard");
+  assert.equal((await fetchFrom(ns.management)).source, "192.0.2.2");
+  const legacy = buildRoutingGuard(
+    [
+      { direction: "forward", source: "0.0.0.0/0", destination: lan },
+      { direction: "output", source: "0.0.0.0/0", destination: lan },
+      { direction: "forward", source: lan, destination: "0.0.0.0/0" },
+      { direction: "input", source: lan, destination: "0.0.0.0/0" },
+    ],
+    { protectedPaths },
+  );
+  await guard.install(legacy);
+  await denied(ns.management);
+  await denied(ns.server);
+  await ping(ns.management, "192.0.2.1");
+  assert.equal(
+    (await fetchFrom(ns.member, "172.31.201.2")).source,
+    "10.240.1.2",
+  );
+  await guard.remove(legacy);
+  assert.equal((await fetchFrom(ns.management)).source, "192.0.2.2");
+  assert.equal((await fetchFrom(ns.server)).source, "10.240.2.1");
   const after = (await server("iptables-save", ["-t", "filter"]))
     .split("\n")
     .filter((line) => foreign.includes(line));
@@ -520,6 +558,8 @@ try {
       managementAndLocalBaseReachable: true,
       foreignRulesOrderPreserved: true,
       unrelatedForwarding: true,
+      legacyPrefixGuard: true,
+      unmarkedForwarding: true,
       scopeCount: full.scopes.length,
     }),
   );

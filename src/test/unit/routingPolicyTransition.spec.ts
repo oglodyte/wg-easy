@@ -1,0 +1,239 @@
+import { parseCidr } from 'cidr-tools';
+import { describe, expect, test } from 'vitest';
+
+import { buildRoutingPolicyTransition } from '#server/utils/routingPolicyTransition';
+import type { AppliedRoutingPolicyPlan } from '#shared/types/routingPolicy';
+
+function fixture(): AppliedRoutingPolicyPlan {
+  return {
+    version: 2,
+    interfaces: [
+      { interfaceId: 'wg0', ipv4Cidr: '10.8.0.0/24', enabled: true },
+      { interfaceId: 'awg1', ipv4Cidr: '10.9.0.0/24', enabled: true },
+      { interfaceId: 'awg2', ipv4Cidr: '10.10.0.0/24', enabled: true },
+    ],
+    siteRoutes: [],
+    bypassPrefixes: ['10.8.0.0/24', '10.9.0.0/24', '10.10.0.0/24'],
+    programs: [
+      {
+        sources: [{ clientId: 1, interfaceId: 'wg0', ipv4Address: '10.8.0.2' }],
+        branches: [
+          { prefix: '203.0.113.0/24', groupId: 1, action: 'exit' },
+          { prefix: '192.168.0.0/16', groupId: 2, action: 'exit' },
+        ],
+      },
+    ],
+    groups: [
+      {
+        id: 1,
+        routingSlot: 1,
+        enabled: true,
+        natEnabled: true,
+        allExitsDownPolicy: 'block',
+        selectedExitClientId: 4,
+        exitInterfaceId: 'awg2',
+        serverIpv4Address: '10.10.0.1',
+        effectivePrefixes: ['203.0.113.0/24'],
+      },
+      {
+        id: 2,
+        routingSlot: 2,
+        enabled: true,
+        natEnabled: true,
+        allExitsDownPolicy: 'block',
+        selectedExitClientId: 2,
+        exitInterfaceId: 'awg1',
+        serverIpv4Address: '10.9.0.1',
+        effectivePrefixes: ['192.168.0.0/16'],
+      },
+    ],
+    peers: [
+      {
+        clientId: 1,
+        interfaceId: 'wg0',
+        peerId: 'member',
+        prefixes: ['10.8.0.2/32'],
+      },
+      {
+        clientId: 2,
+        interfaceId: 'awg1',
+        peerId: 'lan-primary',
+        prefixes: ['10.9.0.2/32', '192.168.0.0/16'],
+      },
+      {
+        clientId: 3,
+        interfaceId: 'awg1',
+        peerId: 'lan-backup',
+        prefixes: ['10.9.0.3/32'],
+      },
+      {
+        clientId: 4,
+        interfaceId: 'awg2',
+        peerId: 'internet',
+        prefixes: ['10.10.0.2/32', '203.0.113.0/24'],
+      },
+    ],
+  };
+}
+const options = { protectedPaths: [] };
+function contains(prefix: string, address: string) {
+  const p = parseCidr(prefix),
+    a = parseCidr(`${address}/32`);
+  return p.start <= a.start && a.end <= p.end;
+}
+
+describe('inactive whole-policy transition closure', () => {
+  test('does nothing for identical state without credential impacts', () => {
+    const plan = fixture();
+    expect(buildRoutingPolicyTransition(plan, plan, options).scopes).toEqual(
+      []
+    );
+  });
+  test('NAT-only edits protect member traffic and both tracked/unmatched returns', () => {
+    const before = fixture(),
+      after = fixture();
+    after.groups[1]!.natEnabled = false;
+    const guard = buildRoutingPolicyTransition(before, after, options);
+    expect(guard.scopes).toContainEqual({
+      direction: 'forward',
+      inputInterface: 'wg0',
+      source: '10.8.0.2/32',
+      destination: '192.168.0.0/16',
+    });
+    expect(guard.scopes).toContainEqual({
+      direction: 'forward',
+      outputInterface: 'wg0',
+      source: '192.168.0.0/16',
+      destination: '10.8.0.2/32',
+    });
+    expect(guard.scopes).toContainEqual({
+      direction: 'input',
+      inputInterface: 'awg1',
+      source: '192.168.0.0/16',
+      destination: '10.9.0.1/32',
+    });
+    expect(
+      guard.scopes.some(
+        (s) => s.inputInterface === 'awg2' || s.outputInterface === 'awg2'
+      )
+    ).toBe(false);
+    expect(
+      guard.scopes.some(
+        (s) =>
+          s.destination === '203.0.113.0/24' || s.source === '203.0.113.0/24'
+      )
+    ).toBe(false);
+  });
+  test('peer ownership moves include local/unmarked paths and leave healthy internet alone', () => {
+    const before = fixture(),
+      after = fixture();
+    after.groups[1]!.selectedExitClientId = 3;
+    after.peers[1]!.prefixes = ['10.9.0.2/32'];
+    after.peers[2]!.prefixes.push('192.168.0.0/16');
+    const guard = buildRoutingPolicyTransition(before, after, options);
+    expect(guard.scopes).toContainEqual({
+      direction: 'output',
+      outputInterface: 'awg1',
+      source: '0.0.0.0/0',
+      destination: '192.168.0.0/16',
+    });
+    expect(guard.scopes).toContainEqual({
+      direction: 'input',
+      inputInterface: 'awg1',
+      source: '192.168.0.0/16',
+      destination: '0.0.0.0/0',
+    });
+    expect(
+      guard.scopes.some(
+        (s) => s.inputInterface === 'awg2' || s.outputInterface === 'awg2'
+      )
+    ).toBe(false);
+  });
+  test('credential-only replacement forces protection from historical peer identity', () => {
+    const before = fixture(),
+      after = fixture();
+    const guard = buildRoutingPolicyTransition(before, after, {
+      ...options,
+      forcePeerIds: new Set(['lan-primary']),
+    });
+    expect(
+      guard.scopes.some(
+        (s) => s.direction === 'output' && s.destination === '192.168.0.0/16'
+      )
+    ).toBe(true);
+    expect(
+      guard.scopes.some(
+        (s) => s.direction === 'input' && s.source === '10.9.0.2/32'
+      )
+    ).toBe(true);
+    after.peers = after.peers.filter((p) => p.clientId !== 2);
+    expect(
+      buildRoutingPolicyTransition(before, after, options).scopes.some(
+        (s) => s.inputInterface === 'awg1' && contains(s.source, '192.168.1.1')
+      )
+    ).toBe(true);
+  });
+  test('prefix rewrites guard the touched peer while excluding an unchanged more-specific owner', () => {
+    const before = fixture(),
+      after = fixture();
+    before.programs = [];
+    after.programs = [];
+    before.peers[1]!.prefixes = ['0.0.0.0/0'];
+    after.peers[1]!.prefixes = ['0.0.0.0/1', '128.0.0.0/1'];
+    const guard = buildRoutingPolicyTransition(before, after, options);
+    const outward = guard.scopes.filter(
+      (s) => s.direction === 'output' && s.outputInterface === 'awg1'
+    );
+    expect(
+      outward.some((s) => contains(s.destination, '255.255.255.255'))
+    ).toBe(true);
+    expect(outward.some((s) => contains(s.destination, '10.9.0.3'))).toBe(
+      false
+    );
+  });
+  test('guards legacy route withdrawal even when selected group ownership keeps the peer map unchanged', () => {
+    const before = fixture(),
+      after = fixture();
+    before.siteRoutes = [{ interfaceId: 'awg1', prefixes: ['192.168.0.0/16'] }];
+    const guard = buildRoutingPolicyTransition(before, after, options);
+    expect(guard.scopes).toContainEqual({
+      direction: 'output',
+      source: '0.0.0.0/0',
+      destination: '192.168.0.0/16',
+    });
+    expect(guard.scopes).toContainEqual({
+      direction: 'input',
+      source: '192.168.0.0/16',
+      destination: '0.0.0.0/0',
+    });
+    expect(() =>
+      buildRoutingPolicyTransition(before, after, {
+        protectedPaths: [
+          {
+            direction: 'output',
+            outputInterface: 'eth0',
+            source: '192.0.2.1/32',
+            destination: '192.168.1.1/32',
+          },
+        ],
+      })
+    ).toThrow('management_collision');
+  });
+  test('refuses a closure that intersects the actual protected management path', () => {
+    const before = fixture(),
+      after = fixture();
+    after.groups[1]!.natEnabled = false;
+    expect(() =>
+      buildRoutingPolicyTransition(before, after, {
+        protectedPaths: [
+          {
+            direction: 'forward',
+            inputInterface: 'wg0',
+            source: '10.8.0.2/32',
+            destination: '192.168.1.1/32',
+          },
+        ],
+      })
+    ).toThrow('management_collision');
+  });
+});

@@ -45,9 +45,14 @@ function cidr(value: string) {
   }
 }
 function normalized(scope: RoutingGuardScope): RoutingGuardScope {
+  const source = cidr(scope.source);
+  const destination = cidr(scope.destination);
   if (
     !['input', 'forward', 'output'].includes(scope.direction) ||
-    (!scope.inputInterface && !scope.outputInterface) ||
+    (!scope.inputInterface &&
+      !scope.outputInterface &&
+      source === '0.0.0.0/0' &&
+      destination === '0.0.0.0/0') ||
     (scope.direction === 'input' && scope.outputInterface) ||
     (scope.direction === 'output' && scope.inputInterface)
   )
@@ -64,8 +69,8 @@ function normalized(scope: RoutingGuardScope): RoutingGuardScope {
     direction: scope.direction,
     ...(input?.success ? { inputInterface: input.data } : {}),
     ...(output?.success ? { outputInterface: output.data } : {}),
-    source: cidr(scope.source),
-    destination: cidr(scope.destination),
+    source,
+    destination,
   };
 }
 function intersects(left: string, right: string) {

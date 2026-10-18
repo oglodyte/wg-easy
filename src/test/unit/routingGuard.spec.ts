@@ -43,9 +43,14 @@ describe('scoped routing transition guard', () => {
     ).toEqual(plan);
   });
 
-  test('requires an interface and valid directional IPv4 matches', () => {
+  test('requires a scoped interface or prefix and valid directional IPv4 matches', () => {
     for (const invalid of [
-      { ...scope, inputInterface: undefined },
+      {
+        ...scope,
+        inputInterface: undefined,
+        source: '0.0.0.0/0',
+        destination: '0.0.0.0/0',
+      },
       { ...scope, inputInterface: 'wg0\n-j ACCEPT' },
       { ...scope, destination: '::/0' },
       { ...scope, source: '10.8.0.2' },
@@ -57,6 +62,11 @@ describe('scoped routing transition guard', () => {
           protectedPaths: [],
         })
       ).toThrow('invalid_scope');
+    expect(() =>
+      buildRoutingGuard([{ ...scope, inputInterface: undefined }], {
+        protectedPaths: [],
+      })
+    ).not.toThrow();
   });
 
   test('refuses management intersections and permits independent paths', () => {

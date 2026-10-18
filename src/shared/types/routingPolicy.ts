@@ -96,6 +96,8 @@ export type CompiledPolicy = {
 /** Last verified runtime state only; never persist the static candidate proof. */
 export type AppliedRoutingPolicyPlan = {
   version: 2;
+  interfaces: { interfaceId: string; ipv4Cidr: string; enabled: boolean }[];
+  siteRoutes: { interfaceId: string; prefixes: string[] }[];
   bypassPrefixes: string[];
   programs: {
     sources: PolicySource[];
@@ -108,6 +110,8 @@ export type AppliedRoutingPolicyPlan = {
   groups: {
     id: number;
     routingSlot: number;
+    enabled: boolean;
+    allExitsDownPolicy: 'block' | 'host';
     natEnabled: boolean;
     selectedExitClientId: number | null;
     exitInterfaceId: string | null;
