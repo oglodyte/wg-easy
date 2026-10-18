@@ -95,6 +95,16 @@ jobs:
         working-directory: src
         run: sudo env "PATH=$PATH" WG_EASY_RUN_PRIVILEGED_TESTS=1 node node_modules/vitest/vitest.mjs run --project integration
 
+      - name: Prove scoped routing guards
+        working-directory: src
+        run: |
+          pnpm exec esbuild ../staging/subnet-policy/guard-probe.ts \
+            --bundle --platform=node --format=esm --packages=bundle \
+            --alias:#server=./server --alias:#shared=./shared \
+            --outfile="$RUNNER_TEMP/wg-easy-guard-probe.mjs"
+          sudo env "PATH=$PATH" WG_EASY_RUN_PRIVILEGED_TESTS=1 \
+            node "$RUNNER_TEMP/wg-easy-guard-probe.mjs"
+
   server-build:
     name: Build server (${{ matrix.architecture }})
     needs:

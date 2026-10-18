@@ -33,3 +33,31 @@ Image/volume rollback and tunnel traffic are separate required gates. Restore a
 second clone from the matching old snapshot for the previous image; never start
 an old image against the migrated clone. Client containers receive only their
 own restricted read-only config files, never an application-data volume.
+
+## Inactive Phase 2 guard checkpoint
+
+`guard-probe.ts` proves directional filter guards with actual Linux namespaces,
+TCP/UDP traffic, SNAT return paths and counters. It checks established-flow
+blocking before ACCEPT rules, atomic client-firewall replacement, unrelated
+forwarding, local traffic, management continuity and exact foreign-rule
+preservation. It refuses namespace collisions and removes only namespaces it
+created. This is a Linux guard proof; AWG ownership, coordinator recovery and
+version 2 activation have separate required gates.
+
+Build from `src` with the locked dependencies:
+
+```sh
+pnpm exec esbuild ../staging/subnet-policy/guard-probe.ts \
+  --bundle --platform=node --format=esm --packages=bundle \
+  --alias:#server=./server --alias:#shared=./shared \
+  --outfile=/private/tmp/guard-probe.mjs
+```
+
+On staging, use a disposable rootful privileged container with `--network none`,
+the bundle mounted read-only, `WG_EASY_RUN_PRIVILEGED_TESTS=1`, and an immutable
+Node-capable image with iproute2/iptables/ping. Override the entrypoint to run
+`node /probe.mjs`. Mount no application volume, host network, host namespaces,
+credentials or client configurations. Retain the bundle checksum and output.
+The image is only an isolated Node/tool interpreter for that exact bundle; it
+does not deploy the inactive application changes. The image workflow runs the
+same bundled proof on its disposable Linux runner.

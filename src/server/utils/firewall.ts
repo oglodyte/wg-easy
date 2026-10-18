@@ -2,6 +2,10 @@ import { createDebug } from 'obug';
 import { isIPv6 } from 'is-ip';
 
 import { execFile } from '#server/utils/cmd';
+import {
+  routingGuardRepositionRules,
+  type RoutingGuardPlan,
+} from '#server/utils/routingGuard';
 import type { ClientType } from '#db/repositories/client/types';
 import type { InterfaceType } from '#db/repositories/interface/types';
 import type { UserConfigType } from '#db/repositories/userConfig/types';
@@ -197,11 +201,15 @@ function buildRestoreDocument({
   family,
   states,
   existingSave,
+  guard = null,
 }: {
   family: 4 | 6;
   states: readonly FirewallInterfaceState[];
   existingSave: string;
+  guard?: RoutingGuardPlan | null;
 }) {
+  const guardHooks =
+    family === 4 ? routingGuardRepositionRules(existingSave, guard) : [];
   const active = states.filter(
     ({ wgInterface, observedUp }) =>
       observedUp &&
@@ -290,6 +298,9 @@ function buildRestoreDocument({
         ]
       : []),
     ...desiredJumps,
+    // These final insertions keep every guard ahead of client ACCEPT rules
+    // throughout the same atomic filter-table transaction.
+    ...guardHooks,
     'COMMIT',
     '',
   ].join('\n');
@@ -488,7 +499,8 @@ export const firewall = {
    */
   async rebuildAllRules(
     states: readonly FirewallInterfaceState[],
-    enableIpv6: boolean
+    enableIpv6: boolean,
+    guard: RoutingGuardPlan | null = null
   ): Promise<void> {
     const hasActiveFiltering = states.some(
       ({ wgInterface, observedUp }) =>
@@ -502,7 +514,7 @@ export const firewall = {
     const ipv4Save = await execFile('iptables-save', ['-t', 'filter']);
     await applyRestoreDocument(
       'iptables-restore',
-      buildRestoreDocument({ family: 4, states, existingSave: ipv4Save })
+      buildRestoreDocument({ family: 4, states, existingSave: ipv4Save, guard })
     );
     if (enableIpv6) {
       const ipv6Save = await execFile('ip6tables-save', ['-t', 'filter']);
