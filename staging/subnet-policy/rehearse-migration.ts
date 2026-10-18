@@ -33,7 +33,15 @@ try {
     const columns = (
       await database.raw.execute(`PRAGMA table_info("${table}")`)
     ).rows.map((r) => String(r.name));
-    const kept = columns;
+    // The accepted 0007 compatibility backfill updates only these timestamps.
+    // Preserve them strictly for already-migrated current-volume snapshots.
+    const legacyBackfill =
+      (table === "interfaces_table" &&
+        !columns.includes("awg_parameters_enabled")) ||
+      (table === "one_time_links_table" && !columns.includes("config_format"));
+    const kept = columns.filter(
+      (column) => column !== "updated_at" || !legacyBackfill,
+    );
     const values = (
       await database.raw.execute(
         `SELECT ${kept.map((c) => `"${c}"`).join(",")} FROM "${table}" ORDER BY rowid`,
