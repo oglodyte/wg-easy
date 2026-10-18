@@ -27,7 +27,8 @@ export type RoutingValidationIssue = {
     | 'server_allowed_ip_conflict'
     | 'routing_group_overlap'
     | 'routing_server_allowed_ip_overlap'
-    | 'global_rule_limit';
+    | 'global_rule_limit'
+    | 'routing_policy_unavailable';
   message: string;
   clientIds?: number[];
   groupIds?: number[];

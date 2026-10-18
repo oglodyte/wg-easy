@@ -37,6 +37,8 @@ export const general = sqliteTable('general_table', {
   routingExitFailbackDelaySeconds: int('routing_exit_failback_delay_seconds')
     .notNull()
     .default(180),
+  // Internal migration gate, excluded from settings request schemas.
+  routingPolicyVersion: int('routing_policy_version').notNull().default(1),
 
   createdAt: text('created_at')
     .notNull()

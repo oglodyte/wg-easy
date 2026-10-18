@@ -27,6 +27,7 @@ import {
   type RoutingValidationIssue,
 } from '#server/utils/routing';
 import { RoutingGroupSchema, schemaLimits } from '#shared/utils/schemas';
+import { assertRoutingPolicyVersion1 } from '#server/utils/routingPolicyValidation';
 
 const ROUTING_EXECUTION_PENDING =
   'Routing execution is waiting for runtime reconciliation and verification.';
@@ -48,6 +49,29 @@ async function loadValidationState(database: QueryDatabase) {
     ]);
   const general = await database.query.general.findFirst().execute();
   if (!general) throw new Error('General Config not found');
+  assertRoutingPolicyVersion1(general.routingPolicyVersion);
+  // The Phase 1 runtime cannot safely interpret advanced rows written by a
+  // different image or manual SQL. Fail before constructing a baseline plan.
+  if (groups.some((group) => group.excludedIpv4Prefixes.length > 0)) {
+    throw new RoutingValidationError([
+      {
+        code: 'routing_policy_unavailable',
+        message: 'Excluded routing policies are unavailable in this image.',
+      },
+    ]);
+  }
+  const assigned = new Set<number>();
+  for (const member of members) {
+    if (assigned.has(member.clientId))
+      throw new RoutingValidationError([
+        {
+          code: 'routing_policy_unavailable',
+          message:
+            'Multiple routing memberships are unavailable in this image.',
+        },
+      ]);
+    assigned.add(member.clientId);
+  }
   return {
     groups,
     exits,
@@ -81,6 +105,7 @@ function persistedGroupInput(
     natEnabled: group.natEnabled,
     allExitsDownPolicy: group.allExitsDownPolicy,
     routedIpv4Prefixes: group.routedIpv4Prefixes,
+    excludedIpv4Prefixes: group.excludedIpv4Prefixes,
     memberClientIds: state.members
       .filter(({ groupId }) => groupId === group.id)
       .map(({ clientId }) => clientId)
@@ -164,6 +189,14 @@ function validationIssues(
 ) {
   const issues: RoutingValidationIssue[] = [];
   const blockingIssues: RoutingValidationIssue[] = [];
+  if (input.excludedIpv4Prefixes?.length) {
+    const issue: RoutingValidationIssue = {
+      code: 'routing_policy_unavailable',
+      message: 'Excluded routing policies are unavailable in this image.',
+    };
+    issues.push(issue);
+    blockingIssues.push(issue);
+  }
   const clientById = new Map(
     state.clients.map((client) => [client.id, client])
   );
@@ -445,6 +478,12 @@ export class RoutingGroupService {
     return group;
   }
 
+  async getForMember(clientId: number) {
+    return (await this.getAll()).filter((group) =>
+      group.members.some((member) => member.clientId === clientId)
+    );
+  }
+
   async createAggregate(rawInput: RoutingGroupInput) {
     const input = RoutingGroupSchema.parse(rawInput);
     const { id, revision } = await this.#db.transaction(async (tx) => {
@@ -463,6 +502,7 @@ export class RoutingGroupService {
           natEnabled: input.natEnabled,
           allExitsDownPolicy: input.allExitsDownPolicy,
           routedIpv4Prefixes: input.routedIpv4Prefixes,
+          excludedIpv4Prefixes: input.excludedIpv4Prefixes ?? [],
         })
         .returning({ id: routingGroup.id })
         .execute();
@@ -519,6 +559,9 @@ export class RoutingGroupService {
           natEnabled: input.natEnabled,
           allExitsDownPolicy: input.allExitsDownPolicy,
           routedIpv4Prefixes: input.routedIpv4Prefixes,
+          excludedIpv4Prefixes:
+            input.excludedIpv4Prefixes ??
+            state.groups.find((group) => group.id === id)!.excludedIpv4Prefixes,
         })
         .where(eq(routingGroup.id, id))
         .execute();

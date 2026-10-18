@@ -24,6 +24,10 @@ export const routingGroup = sqliteTable('routing_groups_table', {
     .$type<string[]>()
     .notNull()
     .default(['0.0.0.0/0']),
+  excludedIpv4Prefixes: text('excluded_ipv4_prefixes', { mode: 'json' })
+    .$type<string[]>()
+    .notNull()
+    .default([]),
   createdAt: text('created_at')
     .notNull()
     .default(sql`(CURRENT_TIMESTAMP)`),
@@ -93,7 +97,7 @@ export const routingGroupMember = sqliteTable(
   },
   (table) => [
     primaryKey({ columns: [table.groupId, table.clientId] }),
-    uniqueIndex('routing_group_members_client_unique').on(table.clientId),
+    index('routing_group_members_client_idx').on(table.clientId),
   ]
 );
 

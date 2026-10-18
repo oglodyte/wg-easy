@@ -1,7 +1,23 @@
 import { sql } from 'drizzle-orm';
-import { int, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { check, int, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 import { wgInterface } from '../interface/schema';
+import type {
+  PendingPolicyTransition,
+  RoutingPolicyJournal,
+} from '../../../../shared/types/routingPolicy';
+
+// Inactive until policy v2 is verified. Historical identities deliberately have
+// no foreign keys: deleting/rekeying a desired profile cannot erase recovery.
+export const routingPolicyRuntime = sqliteTable(
+  'routing_policy_runtime_table',
+  {
+    id: int().primaryKey({ autoIncrement: false }).default(1),
+    applied: text({ mode: 'json' }).$type<RoutingPolicyJournal>(),
+    pending: text({ mode: 'json' }).$type<PendingPolicyTransition>(),
+  },
+  (table) => [check('routing_policy_singleton', sql`${table.id} = 1`)]
+);
 
 export const interfaceRuntimeState = sqliteTable(
   'interface_runtime_state_table',

@@ -24,6 +24,7 @@ import {
 } from '#server/utils/types';
 import {
   InterfaceNameSchema,
+  ConfigFormatSchema,
   ServerAllowedIpsSchema,
 } from '#shared/utils/schemas';
 
@@ -123,6 +124,36 @@ export const ClientUpdateSchema = schemaForType<UpdateClientType>()(
     dns: DnsSchema.nullable(),
   })
 );
+
+// Prepared contracts only. Existing routes continue using the schemas above
+// until the complete peer-aware runtime transition is available in Phase 2.
+export const VpnKeySchema = z
+  .string()
+  .regex(/^[A-Za-z0-9+/]{43}=$/)
+  .refine((value) => {
+    // Canonical base64's unused final bits must be zero. This is browser-safe.
+    const alphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    return alphabet.indexOf(value[42] ?? '') % 4 === 0;
+  }, 'Invalid VPN key');
+
+const ClientCredentialFields = {
+  privateKey: VpnKeySchema.optional(),
+  publicKey: VpnKeySchema.optional(),
+  preSharedKey: VpnKeySchema.nullable().optional(),
+  preferredConfigFormat: ConfigFormatSchema.optional(),
+};
+
+export const ClientConfigurationUpdateSchema = ClientUpdateSchema.extend(
+  ClientCredentialFields
+);
+export const ClientConfigurationCreateSchema =
+  ClientUpdateSchema.partial().extend({
+    ...ClientCredentialFields,
+    name,
+    expiresAt: expiresAt.optional(),
+    interfaceId: InterfaceNameSchema.optional(),
+  });
 
 const clientId = z.coerce.number({ message: t('zod.client.id') });
 

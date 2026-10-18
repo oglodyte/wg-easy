@@ -135,6 +135,12 @@ export const RoutingGroupSchema = z
       .array(RoutingGroupPrefixSchema)
       .max(ROUTING_GROUP_PREFIX_LIMIT)
       .transform((prefixes) => [...new Set(prefixes)]),
+    // Omitted updates preserve storage; only create supplies the empty default.
+    excludedIpv4Prefixes: z
+      .array(RoutingGroupPrefixSchema)
+      .max(ROUTING_GROUP_PREFIX_LIMIT)
+      .transform((prefixes) => [...new Set(prefixes)])
+      .optional(),
     memberClientIds: z
       .array(z.number().int().positive())
       .max(ROUTING_GROUP_MEMBER_LIMIT)

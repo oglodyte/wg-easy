@@ -438,4 +438,66 @@ describe('Phase 5 routing-group repository and service', () => {
       ],
     });
   });
+
+  test('Phase 1 keeps advanced policy writes unavailable and preserves state/revisions', async () => {
+    const { db, clients, routingGroups } = await createServices();
+    const memberId = await addClient(clients, db, 'member', 'wg0');
+    const original = await routingGroups.createAggregate(
+      draft('baseline', {
+        memberClientIds: [memberId],
+      })
+    );
+    const before = await db.query.runtimeReconciliationState
+      .findFirst()
+      .execute();
+    await expect(
+      routingGroups.createAggregate(
+        draft('excluded', {
+          excludedIpv4Prefixes: ['10.0.0.0/8'],
+        })
+      )
+    ).rejects.toThrow('unavailable');
+    await expect(
+      routingGroups.createAggregate(
+        draft('second membership', {
+          memberClientIds: [memberId],
+        })
+      )
+    ).rejects.toThrow('already belongs');
+    expect(
+      await db.query.runtimeReconciliationState.findFirst().execute()
+    ).toEqual(before);
+    expect(
+      (await routingGroups.getForMember(memberId)).map((g) => g.id)
+    ).toEqual([original.group.id]);
+    expect(
+      (await routingGroups.get(original.group.id)).excludedIpv4Prefixes
+    ).toEqual([]);
+    await routingGroups.updateAggregate(
+      original.group.id,
+      draft('old update', { memberClientIds: [memberId] })
+    );
+    expect(
+      (await routingGroups.get(original.group.id)).excludedIpv4Prefixes
+    ).toEqual([]);
+  });
+
+  test('unknown policy versions cannot execute or commit a client mutation', async () => {
+    const { db, clients, routingGroups } = await createServices();
+    const memberId = await addClient(clients, db, 'member', 'wg0');
+    await db.update(schema.general).set({ routingPolicyVersion: 99 }).execute();
+    const before = await db.query.runtimeReconciliationState
+      .findFirst()
+      .execute();
+    await expect(routingGroups.getPlannerSnapshot()).rejects.toThrow(
+      'cannot activate'
+    );
+    await expect(clients.toggle(memberId, false)).rejects.toThrow(
+      'cannot activate'
+    );
+    expect((await clients.get(memberId))!.enabled).toBe(true);
+    expect(
+      await db.query.runtimeReconciliationState.findFirst().execute()
+    ).toEqual(before);
+  });
 });

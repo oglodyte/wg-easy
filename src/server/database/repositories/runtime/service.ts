@@ -3,8 +3,9 @@ import { eq, inArray, sql } from 'drizzle-orm';
 import { interfaceRuntimeState, runtimeReconciliationState } from './schema';
 
 import type { DBType } from '#db/sqlite';
+import { assertRoutingPolicyVersion1 } from '#server/utils/routingPolicyValidation';
 
-type DesiredStateDatabase = Pick<DBType, 'update'>;
+type DesiredStateDatabase = Pick<DBType, 'update' | 'query'>;
 
 export function getSafeRuntimeErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -18,6 +19,9 @@ export async function bumpDesiredRevision(
   db: DesiredStateDatabase,
   interfaceIds: readonly string[]
 ) {
+  const settings = await db.query.general.findFirst().execute();
+  if (!settings) throw new Error('General Config not found');
+  assertRoutingPolicyVersion1(settings.routingPolicyVersion);
   const [runtime] = await db
     .update(runtimeReconciliationState)
     .set({
