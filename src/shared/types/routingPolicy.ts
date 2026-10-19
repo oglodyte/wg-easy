@@ -161,7 +161,32 @@ export type RoutingPolicyGuardScope = {
   source: string;
   destination: string;
 };
+
+/** Temporary v1 bridge only. Typed planner inputs, never executable commands. */
+export type PolicyBootstrapBaseline = {
+  interfaces: AppliedRoutingPolicyPlan['interfaces'];
+  clients: {
+    id: number;
+    interfaceId: string;
+    ipv4Address: string;
+    ipv6Address: string | null;
+    enabled: boolean;
+    serverAllowedIps: string[];
+  }[];
+  groups: {
+    id: number;
+    routingSlot: number;
+    enabled: boolean;
+    natEnabled: boolean;
+    allExitsDownPolicy: 'block' | 'host';
+    routedIpv4Prefixes: string[];
+    memberClientIds: number[];
+    selectedExitClientId: number | null;
+  }[];
+  peers: AppliedRoutingPolicyPlan['peers'];
+};
 export type PendingPolicyTransition = RoutingPolicyJournal & {
+  bootstrap?: PolicyBootstrapBaseline;
   stage:
     'prepared' | 'guarded' | 'peers' | 'classified' | 'verified' | 'restoring';
   guardScopes: RoutingPolicyGuardScope[];

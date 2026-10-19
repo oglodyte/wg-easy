@@ -97,6 +97,8 @@ IPv6 checks preserve the existing unmarked legacy site path, credentials and
 client filtering; common routing classification remains IPv4 only. The full
 matrix also kills workers between IPv4/IPv6 guard installation and removal,
 then repairs only exact known missing family guards before restoration.
+Full private interface verification also compares actual server identity,
+listen port, MTU, addresses, all AWG parameters and peer PSKs in memory.
 Recovery callbacks in this fixture operate the lab endpoints explicitly; the
 product does not push configurations to remote clients.
 

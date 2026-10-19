@@ -14,6 +14,7 @@ import type {
   AppliedRoutingPolicyPlan,
   PendingPolicyTransition,
   RoutingPolicyJournal,
+  PolicyBootstrapBaseline,
 } from '#shared/types/routingPolicy';
 
 const roots: string[] = [];
@@ -71,6 +72,48 @@ function transition(revision = 2): PendingPolicyTransition {
     backupBasenames: ['policy-00000000-0000-0000-0000-000000000001.json'],
     errorCode: null,
   };
+}
+
+function bootstrap(): PendingPolicyTransition {
+  const target = record(2);
+  const baseline: PolicyBootstrapBaseline = {
+    interfaces: target.plan.interfaces,
+    clients: [
+      {
+        id: 73,
+        interfaceId: 'wg0',
+        ipv4Address: '10.8.0.2',
+        ipv6Address: null,
+        enabled: true,
+        serverAllowedIps: [],
+      },
+    ],
+    groups: target.plan.groups.map((g) => ({
+      id: g.id,
+      routingSlot: g.routingSlot,
+      enabled: g.enabled,
+      natEnabled: g.natEnabled,
+      allExitsDownPolicy: g.allExitsDownPolicy,
+      routedIpv4Prefixes: [],
+      memberClientIds: [],
+      selectedExitClientId: null,
+    })),
+    peers: target.plan.peers,
+  };
+  return { ...transition(), ...target, bootstrap: baseline };
+}
+
+async function bootstrapFixture() {
+  const f = await fixture({ version: 1, applied: false });
+  await f.db
+    .update(schema.runtimeReconciliationState)
+    .set({ appliedRevision: 2, status: 'idle' })
+    .execute();
+  await f.db
+    .update(schema.interfaceRuntimeState)
+    .set({ desiredRevision: 2, appliedRevision: 2 })
+    .execute();
+  return f;
 }
 async function fixture({ version = 2, applied = true } = {}) {
   const root = await fs.mkdtemp(
@@ -134,6 +177,178 @@ function deferred() {
 }
 
 describe('inactive durable policy transition service', () => {
+  test('first activation commits version 2 only after whole-state verification under the writer lock', async () => {
+    const { service, db } = await bootstrapFixture();
+    const pending = await service.prepare(bootstrap(), null);
+    expect(await service.get()).toMatchObject({
+      version: 1,
+      applied: null,
+      pending: { bootstrap: pending.bootstrap },
+    });
+    await verified(service, pending);
+    await service.finishApplied(pending, async (tx) => {
+      expect((await tx.query.general.findFirst())?.routingPolicyVersion).toBe(
+        1
+      );
+      expect(
+        (await tx.query.routingPolicyRuntime.findFirst())?.applied
+      ).toBeNull();
+    });
+    expect(await service.get()).toMatchObject({
+      version: 2,
+      applied: record(2),
+      pending: null,
+      runtime: { appliedRevision: 2, status: 'idle' },
+    });
+    expect((await db.query.general.findFirst())?.routingPolicyVersion).toBe(2);
+    await expect(service.prepare(bootstrap(), null)).rejects.toThrow(
+      'version_unavailable'
+    );
+  });
+
+  test.each(['global', 'interface'] as const)(
+    'refuses first activation before the old %s configuration converges',
+    async (scope) => {
+      const { service, db } = await bootstrapFixture();
+      if (scope === 'global')
+        await db
+          .update(schema.runtimeReconciliationState)
+          .set({ appliedRevision: 1 })
+          .execute();
+      else
+        await db
+          .update(schema.interfaceRuntimeState)
+          .set({ restartRequired: true })
+          .execute();
+      await expect(service.prepare(bootstrap(), null)).rejects.toThrow(
+        'bootstrap_not_converged'
+      );
+      expect(await service.get()).toMatchObject({
+        version: 1,
+        applied: null,
+        pending: null,
+      });
+    }
+  );
+
+  test('failed activation verification rolls back version/evidence and verified restoration preserves version 1', async () => {
+    const { service } = await bootstrapFixture();
+    const pending = await service.prepare(bootstrap(), null);
+    await verified(service, pending);
+    await expect(
+      service.finishApplied(pending, async () => {
+        throw new Error('private fixture bytes');
+      })
+    ).rejects.toThrow('final_verification_failed');
+    expect(await service.get()).toMatchObject({
+      version: 1,
+      applied: null,
+      pending: { stage: 'verified' },
+    });
+    await service.markRestoring(pending, 'interrupted_transition');
+    await service.finishRestored(pending, async () => {});
+    expect(await service.get()).toMatchObject({
+      version: 1,
+      applied: null,
+      pending: null,
+      runtime: { appliedRevision: 2 },
+    });
+  });
+
+  test.each([
+    'prepared',
+    'guarded',
+    'peers',
+    'classified',
+    'verified',
+    'restoring',
+  ] as const)(
+    'bootstrap %s survives storage reopen without fabricated Applied evidence',
+    async (stage) => {
+      const { service, store, databasePath } = await bootstrapFixture();
+      const pending = await service.prepare(bootstrap(), null);
+      let from: PendingPolicyTransition['stage'] = 'prepared';
+      for (const to of [
+        'guarded',
+        'peers',
+        'classified',
+        'verified',
+      ] as const) {
+        if (from === stage || stage === 'restoring') break;
+        await service.advance(pending, from, to);
+        from = to;
+      }
+      if (stage === 'restoring')
+        await service.markRestoring(pending, 'interrupted_transition');
+      await store.close();
+      const reopened = createNodeSqliteDatabase(databasePath, schema);
+      stores.push(reopened);
+      const fresh = new RoutingPolicyRuntimeService(reopened.db);
+      expect(await fresh.get()).toMatchObject({
+        version: 1,
+        applied: null,
+        pending: { stage, bootstrap: pending.bootstrap },
+      });
+      await fresh.markRestoring(pending, 'interrupted_transition');
+      await fresh.finishRestored(pending, async () => {});
+      expect(await fresh.get()).toMatchObject({
+        version: 1,
+        applied: null,
+        pending: null,
+      });
+    }
+  );
+
+  test('a concurrent save prevents promotion before guard removal and retains its desired revision after restore', async () => {
+    const { service, db } = await bootstrapFixture();
+    const pending = await service.prepare(bootstrap(), null);
+    await verified(service, pending);
+    await db
+      .update(schema.runtimeReconciliationState)
+      .set({ desiredRevision: 3 })
+      .execute();
+    const removeGuard = vi.fn();
+    await expect(service.finishApplied(pending, removeGuard)).rejects.toThrow(
+      'desired_changed'
+    );
+    expect(removeGuard).not.toHaveBeenCalled();
+    await service.markRestoring(pending, 'desired_changed');
+    await service.finishRestored(pending, async () => {});
+    expect(await service.get()).toMatchObject({
+      version: 1,
+      applied: null,
+      pending: null,
+      runtime: { desiredRevision: 3, appliedRevision: 2 },
+    });
+  });
+
+  test('invalid or secret-bearing legacy baselines are refused before persistence', async () => {
+    const { service } = await bootstrapFixture();
+    const badPrefix = bootstrap();
+    badPrefix.bootstrap!.peers[0]!.prefixes.push('198.51.100.0/24');
+    const badIdentity = bootstrap();
+    badIdentity.bootstrap!.clients[0]!.id = 74;
+    const badGroup = bootstrap();
+    badGroup.bootstrap!.groups[0]!.natEnabled = false;
+    const secret = {
+      ...bootstrap(),
+      bootstrap: {
+        ...bootstrap().bootstrap,
+        privateKey: 'private fixture bytes',
+      },
+    };
+    for (const invalid of [badPrefix, badIdentity, badGroup, secret]) {
+      await expect(
+        service.prepare(invalid as PendingPolicyTransition, null)
+      ).rejects.toThrow('invalid_pending_transition');
+      expect(await service.get()).toMatchObject({
+        version: 1,
+        applied: null,
+        pending: null,
+      });
+    }
+  });
+
   test('a verified policy never advances global Applied over a failed interface', async () => {
     const { db, service } = await fixture();
     await db

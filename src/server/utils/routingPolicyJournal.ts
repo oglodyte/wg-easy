@@ -1,12 +1,16 @@
 import { normalizeCidr, parseCidr } from 'cidr-tools';
-import { isIPv4 } from 'is-ip';
+import { isIPv4, isIPv6 } from 'is-ip';
 import z from 'zod';
 
 import { buildRoutingGuard } from '#server/utils/routingGuard';
 import { ClientFirewallPolicySchema } from '#server/utils/clientFirewallPolicy';
 import { isRoutingPolicyBackupReference } from '#server/utils/routingPolicyBackups';
 import { POLICY_LIMITS, policyRangeCidrs } from '#server/utils/routingPolicy';
-import { routingPolicyRuntimeFingerprint } from '#server/utils/routingPolicyRuntime';
+import {
+  routingPolicyRuntimeFingerprint,
+  specializeRoutingPolicy,
+} from '#server/utils/routingPolicyRuntime';
+import { buildRoutingPlan } from '#server/utils/routing';
 import {
   InterfaceNameSchema,
   Ipv4CidrSchema,
@@ -16,6 +20,7 @@ import type {
   AppliedRoutingPolicyPlan,
   PendingPolicyTransition,
   RoutingPolicyJournal,
+  PolicyBootstrapBaseline,
 } from '#shared/types/routingPolicy';
 
 export class RoutingPolicyJournalError extends Error {
@@ -110,7 +115,36 @@ const guardScope = z.strictObject({
   source: prefix(),
   destination: prefix(),
 });
+const bootstrapSchema = z.strictObject({
+  interfaces: planSchema.shape.interfaces,
+  clients: z.array(
+    z.strictObject({
+      id,
+      interfaceId: InterfaceNameSchema,
+      ipv4Address: address,
+      ipv6Address: z.string().refine(isIPv6).nullable(),
+      enabled: z.boolean(),
+      serverAllowedIps: z.array(prefix()),
+    })
+  ),
+  groups: z
+    .array(
+      z.strictObject({
+        id,
+        routingSlot: RoutingSlotSchema,
+        enabled: z.boolean(),
+        natEnabled: z.boolean(),
+        allExitsDownPolicy: z.enum(['block', 'host']),
+        routedIpv4Prefixes: z.array(prefix(4)).max(POLICY_LIMITS.prefixes),
+        memberClientIds: z.array(id).max(POLICY_LIMITS.members),
+        selectedExitClientId: id.nullable(),
+      })
+    )
+    .max(POLICY_LIMITS.groups),
+  peers: planSchema.shape.peers,
+});
 const pendingSchema = journalSchema.extend({
+  bootstrap: bootstrapSchema.optional(),
   stage: z.enum([
     'prepared',
     'guarded',
@@ -277,6 +311,112 @@ function validatePlan(plan: AppliedRoutingPolicyPlan) {
   }
 }
 
+/** The bridge can only replace the same fully converged v1 generation. */
+function validateBootstrap(
+  baseline: PolicyBootstrapBaseline,
+  target: RoutingPolicyJournal
+) {
+  if (
+    !unique(baseline.clients.map((c) => c.id)) ||
+    !unique(baseline.groups.flatMap((g) => g.memberClientIds)) ||
+    !unique(baseline.peers.map((p) => p.clientId)) ||
+    !unique(baseline.peers.map((p) => p.peerId))
+  )
+    fail();
+  const byId = new Map(target.plan.peers.map((p) => [p.clientId, p]));
+  // Synthetic identities are used only to reconstruct the non-secret semantics;
+  // the actual historical peer identities are independently checked below.
+  const reconstructed = specializeRoutingPolicy(
+    {
+      interfaces: baseline.interfaces,
+      clients: baseline.clients.map((c) => ({
+        ...c,
+        name: '',
+        publicKey: `profile-${c.id}`,
+      })),
+      groups: baseline.groups.map((g) => ({
+        ...g,
+        name: '',
+        exits:
+          g.selectedExitClientId === null
+            ? []
+            : [
+                {
+                  clientId: g.selectedExitClientId,
+                  enabled: true,
+                  priority: 0,
+                },
+              ],
+      })),
+    },
+    {
+      selectedExitClientIds: new Map(
+        baseline.groups.map((g) => [g.id, g.selectedExitClientId])
+      ),
+      enabledInterfaceIds: new Set(
+        baseline.interfaces.filter((i) => i.enabled).map((i) => i.interfaceId)
+      ),
+      upInterfaceIds: new Set(
+        baseline.interfaces
+          .filter((i) => i.observedUp)
+          .map((i) => i.interfaceId)
+      ),
+      enableIpv6: target.plan.clientFirewall.enableIpv6,
+      clientFirewall: target.plan.clientFirewall,
+    }
+  ).plan;
+  for (const p of reconstructed.peers) {
+    const actual = byId.get(p.clientId);
+    if (!actual || actual.interfaceId !== p.interfaceId) fail();
+    p.peerId = actual.peerId;
+  }
+  if (routingPolicyRuntimeFingerprint(reconstructed) !== target.fingerprint)
+    fail();
+  const linux = buildRoutingPlan(baseline);
+  const additions = new Map(
+    linux.peerAllowedIps.map((p) => [p.clientId, p.prefixes])
+  );
+  const clients = new Map(baseline.clients.map((c) => [c.id, c]));
+  if (baseline.peers.length !== target.plan.peers.length) fail();
+  for (const peer of baseline.peers) {
+    const client = clients.get(peer.clientId),
+      expected = byId.get(peer.clientId);
+    if (
+      !client ||
+      !expected ||
+      peer.peerId !== expected.peerId ||
+      peer.interfaceId !== expected.interfaceId
+    )
+      fail();
+    const prefixes = [
+      ...new Set(
+        [
+          `${client.ipv4Address}/32`,
+          ...(target.plan.clientFirewall.enableIpv6 && client.ipv6Address
+            ? [`${client.ipv6Address}/128`]
+            : []),
+          ...client.serverAllowedIps,
+          ...(additions.get(client.id) ?? []),
+        ].map((value) => normalizeCidr(value))
+      ),
+    ].sort();
+    if (JSON.stringify(peer.prefixes) !== JSON.stringify(prefixes)) fail();
+  }
+}
+
+export function parsePolicyBootstrapBaseline(
+  value: unknown,
+  target: RoutingPolicyJournal
+): PolicyBootstrapBaseline {
+  try {
+    const parsed = bootstrapSchema.parse(value);
+    validateBootstrap(parsed, target);
+    return parsed;
+  } catch {
+    throw new RoutingPolicyJournalError('invalid_bootstrap_baseline');
+  }
+}
+
 /** Strict non-secret shape and semantic validation before recovery touches Linux. */
 export function parseRoutingPolicyJournal(
   value: unknown
@@ -301,9 +441,16 @@ export function parsePendingPolicyTransition(
   try {
     const result = pendingSchema.safeParse(value);
     if (!result.success) fail();
-    const { stage, guardScopes, backupBasenames, errorCode, ...journal } =
-      result.data;
+    const {
+      bootstrap,
+      stage,
+      guardScopes,
+      backupBasenames,
+      errorCode,
+      ...journal
+    } = result.data;
     const parsed = parseRoutingPolicyJournal(journal);
+    if (bootstrap) parsePolicyBootstrapBaseline(bootstrap, parsed);
     const guard = buildRoutingGuard(guardScopes, { protectedPaths: [] });
     if (
       JSON.stringify(guard.scopes) !== JSON.stringify(guardScopes) ||
@@ -311,7 +458,14 @@ export function parsePendingPolicyTransition(
       (stage === 'restoring' ? errorCode === null : errorCode !== null)
     )
       fail();
-    return { ...parsed, stage, guardScopes, backupBasenames, errorCode };
+    return {
+      ...parsed,
+      ...(bootstrap ? { bootstrap } : {}),
+      stage,
+      guardScopes,
+      backupBasenames,
+      errorCode,
+    };
   } catch {
     throw new RoutingPolicyJournalError('invalid_pending_transition');
   }

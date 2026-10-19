@@ -22,6 +22,12 @@ export async function atomicWriteFile(
     await validate?.(temporaryPath);
     await fs.rename(temporaryPath, filePath);
     await fs.chmod(filePath, 0o600);
+    const directory = await fs.open(path.dirname(filePath), 'r');
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
   } catch (error) {
     await handle?.close().catch(() => {});
     await fs.unlink(temporaryPath).catch(() => {});

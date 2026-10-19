@@ -306,21 +306,30 @@ export function buildRoutingPolicyTransition(
       JSON.stringify(newPeers.get(id)?.prefixes)
     )
       changedPeers.add(id);
-  const interfaces = new Set(
-    [...(previous?.peers ?? []), ...target.peers].map((p) => p.interfaceId)
-  );
+  const indexPeers = (peers: AppliedRoutingPolicyPlan['peers']) => {
+    const byInterface = new Map<string, AppliedRoutingPolicyPlan['peers']>();
+    for (const peer of peers) {
+      const list = byInterface.get(peer.interfaceId) ?? [];
+      list.push(peer);
+      byInterface.set(peer.interfaceId, list);
+    }
+    return byInterface;
+  };
+  const previousByInterface = indexPeers(previous?.peers ?? []),
+    targetByInterface = indexPeers(target.peers);
+  const interfaces = new Set([
+    ...previousByInterface.keys(),
+    ...targetByInterface.keys(),
+  ]);
   for (const interfaceId of interfaces) {
     for (const family of [4, 6] as const) {
       const bits = family === 4 ? 32 : 128,
         any = family === 4 ? '0.0.0.0/0' : '::/0';
       const before = peerTrie(
-          (previous?.peers ?? []).filter((p) => p.interfaceId === interfaceId),
+          previousByInterface.get(interfaceId) ?? [],
           family
         ),
-        after = peerTrie(
-          target.peers.filter((p) => p.interfaceId === interfaceId),
-          family
-        );
+        after = peerTrie(targetByInterface.get(interfaceId) ?? [], family);
       const points = [...new Set([...before.points, ...after.points])].sort(
           (a, b) => (a < b ? -1 : a > b ? 1 : 0)
         ),

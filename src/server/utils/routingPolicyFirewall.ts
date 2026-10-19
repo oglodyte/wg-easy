@@ -96,12 +96,9 @@ function assertHookOrder(
     .map((l) => l.trim())
     .filter((l) => l.startsWith('-A FORWARD '));
   // Guard placement is independently checked against its full exact manifest.
+  const hasGuard = routingGuardHasFamily(guard, family);
   const withoutGuards = forward
-    .filter(
-      (l) =>
-        !routingGuardHasFamily(guard, family) ||
-        !l.endsWith('-j WG_ROUTE_GUARD')
-    )
+    .filter((l) => !hasGuard || !l.endsWith('-j WG_ROUTE_GUARD'))
     .map(canonicalClientFirewallRule);
   if (!same(withoutGuards.slice(0, desired.length), desired))
     throw new RoutingPolicyFirewallError('filter_hook_unverified', family);

@@ -12,14 +12,18 @@ import {
 import type { RoutingPolicyBackups } from '#server/utils/routingPolicyBackups';
 import {
   parseRoutingPolicyJournal,
+  parsePolicyBootstrapBaseline,
   RoutingPolicyJournalError,
 } from '#server/utils/routingPolicyJournal';
 import { renderRoutingPolicyLinux } from '#server/utils/routingPolicyLinux';
+import { buildRoutingPlan } from '#server/utils/routing';
+import { routingPolicyRuntimeFingerprint } from '#server/utils/routingPolicyRuntime';
 import { buildRoutingPolicyTransition } from '#server/utils/routingPolicyTransition';
 import type {
   AppliedRoutingPolicyPlan,
   PendingPolicyTransition,
   RoutingPolicyJournal,
+  PolicyBootstrapBaseline,
 } from '#shared/types/routingPolicy';
 
 /** Called inside the existing serialized coordinator, never a second loop. */
@@ -89,17 +93,33 @@ function safeFailure(error: unknown) {
     : 'transition_failed';
 }
 
+// This bridge view is never stored as version 2 Applied evidence. The group,
+// filter and interface semantics are unchanged; v1 owns the original prefixes.
+function bootstrapPrevious(
+  target: RoutingPolicyJournal,
+  baseline: PolicyBootstrapBaseline
+): RoutingPolicyJournal {
+  const plan = { ...target.plan, peers: baseline.peers };
+  return {
+    revision: target.revision,
+    plan,
+    fingerprint: routingPolicyRuntimeFingerprint(plan),
+  };
+}
+
 /** Recover persisted uncertainty before starting another desired generation. */
 export async function restorePendingRoutingPolicy(
   deps: PolicyRecoveryDependencies
 ): Promise<PolicyTransitionResult> {
   const state = await deps.journal.get();
   if (!state.pending) throw new RoutingPolicyJournalError('transition_missing');
-  if (!state.applied)
+  if (!state.applied && !state.pending.bootstrap)
     throw new RoutingPolicyJournalError('bootstrap_recovery_unavailable');
   const pending = state.pending,
-    previous = state.applied;
-  const previousLinux = renderRoutingPolicyLinux(previous.plan),
+    previous = state.applied ?? bootstrapPrevious(pending, pending.bootstrap!);
+  const previousLinux = pending.bootstrap
+      ? buildRoutingPlan(pending.bootstrap)
+      : renderRoutingPolicyLinux(previous.plan),
     targetLinux = renderRoutingPolicyLinux(pending.plan);
   // Use the persisted closure, not a reduced closure recomputed after a crash.
   const guard = buildRoutingGuard(pending.guardScopes, {
@@ -150,25 +170,38 @@ export async function restorePendingRoutingPolicy(
   return { status: 'restored', cleanupPending: await cleanup(deps, pending) };
 }
 
-/** Inactive orchestration primitive; bootstrap/promotion must be supplied first. */
+/** Inactive until all application activation prerequisites have passed. */
 export async function applyGuardedRoutingPolicy(
   deps: PolicyRecoveryDependencies,
   value: RoutingPolicyJournal,
   {
     forcePeerIds = new Set<string>(),
-  }: { forcePeerIds?: ReadonlySet<string> } = {}
+    bootstrap,
+  }: {
+    forcePeerIds?: ReadonlySet<string>;
+    bootstrap?: PolicyBootstrapBaseline;
+  } = {}
 ): Promise<PolicyTransitionResult> {
   const target = parseRoutingPolicyJournal(value);
   const state = await deps.journal.get();
   if (state.pending) throw new RoutingPolicyJournalError('recovery_required');
-  if (!state.applied)
+  if (!state.applied && !bootstrap)
     throw new RoutingPolicyJournalError('bootstrap_recovery_unavailable');
-  const previous = state.applied;
+  // Validate the bridge before backups, Linux preflight or any other mutation.
+  const validatedBootstrap = bootstrap
+    ? parsePolicyBootstrapBaseline(bootstrap, target)
+    : undefined;
+  if (validatedBootstrap && (state.version !== 1 || state.applied))
+    throw new RoutingPolicyJournalError('version_unavailable');
+  const previous =
+    state.applied ?? bootstrapPrevious(target, validatedBootstrap!);
   const guard = buildRoutingPolicyTransition(previous.plan, target.plan, {
     protectedPaths: deps.protectedPaths,
     forcePeerIds,
   });
-  const previousLinux = renderRoutingPolicyLinux(previous.plan),
+  const previousLinux = validatedBootstrap
+      ? buildRoutingPlan(validatedBootstrap)
+      : renderRoutingPolicyLinux(previous.plan),
     targetLinux = renderRoutingPolicyLinux(target.plan);
   try {
     await deps.preflightManagedState(previous.plan, target.plan);
@@ -193,12 +226,13 @@ export async function applyGuardedRoutingPolicy(
     pending = await deps.journal.prepare(
       {
         ...target,
+        ...(validatedBootstrap ? { bootstrap: validatedBootstrap } : {}),
         stage: 'prepared',
         guardScopes: guard.scopes,
         backupBasenames: [basename],
         errorCode: null,
       },
-      previous
+      state.applied
     );
   } catch (error) {
     // Confirm no committed journal references the file before exact owned cleanup.

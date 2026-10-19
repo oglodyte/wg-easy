@@ -22,6 +22,10 @@ import {
 } from "../../src/server/utils/routingGuard";
 import { RoutingPolicyBackups } from "../../src/server/utils/routingPolicyBackups";
 import { RoutingPolicyFirewall } from "../../src/server/utils/routingPolicyFirewall";
+import {
+  ManagedInterfaceStateError,
+  verifyManagedInterfaceState,
+} from "../../src/server/utils/managedInterfaceState";
 import { parseRoutingPolicyJournal } from "../../src/server/utils/routingPolicyJournal";
 import { renderRoutingPolicyLinux } from "../../src/server/utils/routingPolicyLinux";
 import {
@@ -352,6 +356,7 @@ async function context(root: string, action: string, failAt = "") {
     preflightManagedState: async () => {
       trace("managed_preflight_begin");
       await peerMap(meta.ns.server, meta.previous.plan);
+      await completeInterfaces(root, meta);
       await clientFirewall.prepare(
         meta.target.plan.clientFirewall,
         [meta.previous.plan.clientFirewall],
@@ -397,6 +402,7 @@ async function context(root: string, action: string, failAt = "") {
     },
     verifyManagedState: async (plan, activeGuard) => {
       await peerMap(meta.ns.server, plan);
+      await completeInterfaces(root, meta);
       await clientFirewall.verify(plan.clientFirewall, activeGuard);
     },
     validateConfig: async (_id, file) => {
@@ -420,6 +426,37 @@ async function context(root: string, action: string, failAt = "") {
     },
   };
   return { meta, database, deps, syncServer, run };
+}
+async function completeInterfaces(root: string, meta: Metadata) {
+  for (const [name, addresses] of [
+    ["wg0", "10.241.1.1/24, fd41:1::1/64"],
+    ["awg1", "10.241.2.1/24, fd41:2::1/64"],
+  ]) {
+    const stripped = await fs.readFile(
+      path.join(root, "app", `${name}.conf`),
+      "utf8",
+    );
+    const quick = stripped.replace(
+      "[Interface]",
+      `[Interface]\nAddress = ${addresses}\nMTU = 1420\nTable = off`,
+    );
+    try {
+      verifyManagedInterfaceState(name!, quick, {
+        showconf: await inside(meta.ns.server, "awg", ["showconf", name!]),
+        addresses: await inside(meta.ns.server, "ip", [
+          "-j",
+          "address",
+          "show",
+          "dev",
+          name!,
+        ]),
+      });
+    } catch (error) {
+      if (error instanceof ManagedInterfaceStateError)
+        trace(`interface_${name}_${error.code}`);
+      throw error;
+    }
+  }
 }
 async function worker(root: string, action: string, failAt: string) {
   const c = await context(root, action, failAt);
@@ -678,7 +715,7 @@ async function parent() {
     ]) {
       await inside(space!, "ip", ["link", "add", name!, "type", "amneziawg"]);
       await inside(space!, "ip", ["addr", "add", address!, "dev", name!]);
-      await inside(space!, "ip", ["link", "set", name!, "up"]);
+      await inside(space!, "ip", ["link", "set", name!, "mtu", "1420", "up"]);
     }
     for (const [space, name, address] of [
       [ns.server, "wg0", "fd41:1::1/64"],
@@ -1055,6 +1092,7 @@ async function parent() {
       { allowAbsent: true },
     );
     await peerMap(ns.server, previous.plan);
+    await completeInterfaces(root, { ns, previous, target, protectedPaths });
     await guard.remove(initialGuard);
     await executor.verify(renderRoutingPolicyLinux(previous.plan), null);
     checkpoint("setup-firewall");
@@ -1387,6 +1425,7 @@ async function parent() {
         applyCrashBoundaries: failures.length,
         recoveryCrashBoundaries: recoveryFailures.length,
         completePeerMap: true,
+        completeInterfaceConfiguration: true,
         completeClientFirewall: true,
         clientFilterDenial: true,
         privateByteRestore: true,

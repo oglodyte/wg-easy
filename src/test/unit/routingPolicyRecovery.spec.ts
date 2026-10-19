@@ -22,6 +22,7 @@ import type {
   AppliedRoutingPolicyPlan,
   RoutingPolicyJournal,
   PendingPolicyTransition,
+  PolicyBootstrapBaseline,
 } from '#shared/types/routingPolicy';
 
 const roots: string[] = [],
@@ -52,7 +53,7 @@ function record(revision: number, peerId: string): RoutingPolicyJournal {
   };
   return { revision, plan, fingerprint: routingPolicyRuntimeFingerprint(plan) };
 }
-async function fixture() {
+async function fixture({ bootstrap = false } = {}) {
   const directory = await fs.mkdtemp(
     path.join(os.tmpdir(), 'wg-easy-policy-recovery-')
   );
@@ -65,26 +66,59 @@ async function fixture() {
       new URL('../../server/database/migrations', import.meta.url)
     ),
   });
-  const previous = record(1, 'a'.repeat(64)),
+  const previous = bootstrap
+      ? record(2, 'b'.repeat(64))
+      : record(1, 'a'.repeat(64)),
     target = record(2, 'b'.repeat(64));
   await store.db
     .update(schema.general)
-    .set({ routingPolicyVersion: 2 })
+    .set({ routingPolicyVersion: bootstrap ? 1 : 2 })
     .execute();
   await store.db
     .update(schema.runtimeReconciliationState)
-    .set({ desiredRevision: 2, appliedRevision: 1, status: 'pending' })
+    .set({
+      desiredRevision: 2,
+      appliedRevision: bootstrap ? 2 : 1,
+      status: 'pending',
+    })
     .execute();
   await store.db
     .update(schema.routingPolicyRuntime)
-    .set({ applied: previous })
+    .set({ applied: bootstrap ? null : previous })
     .execute();
+  if (bootstrap)
+    await store.db
+      .update(schema.interfaceRuntimeState)
+      .set({
+        desiredRevision: 2,
+        appliedRevision: 2,
+        observedUp: true,
+        status: 'up',
+      })
+      .execute();
+  const baseline: PolicyBootstrapBaseline | undefined = bootstrap
+    ? {
+        interfaces: previous.plan.interfaces,
+        clients: [
+          {
+            id: 73,
+            interfaceId: 'wg0',
+            ipv4Address: '10.8.0.2',
+            ipv6Address: null,
+            enabled: true,
+            serverAllowedIps: [],
+          },
+        ],
+        groups: [],
+        peers: previous.plan.peers,
+      }
+    : undefined;
   const configPath = path.join(directory, 'wg0.conf');
   await fs.writeFile(configPath, '# prior fixture bytes\n', { mode: 0o600 });
   const state = {
     activeGuard: null as string | null,
     peer: previous.fingerprint,
-    linux: previous.fingerprint,
+    linux: bootstrap ? 'legacy' : previous.fingerprint,
     failAt: '',
     failed: false,
     restoreFails: false,
@@ -106,12 +140,12 @@ async function fixture() {
   });
   vi.spyOn(executor, 'apply').mockImplementation(async (plan) => {
     expect(state.activeGuard).not.toBeNull();
-    state.linux = plan.classifier!.fingerprint;
+    state.linux = plan.classifier?.fingerprint ?? 'legacy';
     fault('linux');
   });
   vi.spyOn(executor, 'verify').mockImplementation(
     async (plan, expectedGuard) => {
-      expect(state.linux).toBe(plan.classifier!.fingerprint);
+      expect(state.linux).toBe(plan.classifier?.fingerprint ?? 'legacy');
       expect(state.activeGuard).toBe(expectedGuard?.fingerprint ?? null);
       fault(expectedGuard ? 'guarded_verify' : 'unguarded_verify');
     }
@@ -201,10 +235,111 @@ async function fixture() {
     state,
     events,
     deps,
+    baseline,
   };
 }
 
 describe('inactive guarded peer-aware orchestration', () => {
+  test('bootstraps a verified v1 generation without storing false v2 evidence before publication', async () => {
+    const f = await fixture({ bootstrap: true });
+    expect(
+      await applyGuardedRoutingPolicy(f.deps, f.target, {
+        bootstrap: f.baseline,
+      })
+    ).toEqual({ status: 'applied', cleanupPending: false });
+    expect(await f.deps.journal.get()).toMatchObject({
+      version: 2,
+      applied: f.target,
+      pending: null,
+    });
+    expect(f.events.indexOf('guard')).toBeLessThan(f.events.indexOf('peers'));
+    expect(f.events.indexOf('remove')).toBeLessThan(
+      f.events.indexOf('publish')
+    );
+  });
+
+  test.each([
+    'guard',
+    'peers',
+    'peer_verify',
+    'linux',
+    'guarded_verify',
+    'remove',
+    'peers_after_remove',
+    'publish',
+  ])(
+    'restores the old legacy Linux plan/private bytes and version 1 after bootstrap failure at %s',
+    async (failure) => {
+      const f = await fixture({ bootstrap: true });
+      f.state.failAt = failure;
+      expect(
+        await applyGuardedRoutingPolicy(f.deps, f.target, {
+          bootstrap: f.baseline,
+        })
+      ).toEqual({ status: 'restored', cleanupPending: false });
+      expect(await f.deps.journal.get()).toMatchObject({
+        version: 1,
+        applied: null,
+        pending: null,
+        runtime: { appliedRevision: 2 },
+      });
+      expect(f.state.linux).toBe('legacy');
+      expect(f.state.activeGuard).toBeNull();
+      expect(await fs.readFile(f.configPath, 'utf8')).toBe(
+        '# prior fixture bytes\n'
+      );
+    }
+  );
+
+  test('an interrupted bootstrap retains its old baseline and private bytes when restoration fails, then a fresh instance recovers it', async () => {
+    const f = await fixture({ bootstrap: true });
+    f.state.failAt = 'linux';
+    f.state.restoreFails = true;
+    expect(
+      await applyGuardedRoutingPolicy(f.deps, f.target, {
+        bootstrap: f.baseline,
+      })
+    ).toMatchObject({ status: 'failed', guarded: true });
+    expect(await f.deps.journal.get()).toMatchObject({
+      version: 1,
+      applied: null,
+      pending: { bootstrap: f.baseline, stage: 'restoring' },
+    });
+    await f.store.close();
+    const reopened = createNodeSqliteDatabase(f.databasePath, schema);
+    stores.push(reopened);
+    f.deps.journal = new RoutingPolicyRuntimeService(reopened.db);
+    f.state.restoreFails = false;
+    expect(await restorePendingRoutingPolicy(f.deps)).toEqual({
+      status: 'restored',
+      cleanupPending: false,
+    });
+    expect(f.state.linux).toBe('legacy');
+    expect(f.state.activeGuard).toBeNull();
+    expect(await f.deps.journal.get()).toMatchObject({
+      version: 1,
+      applied: null,
+      pending: null,
+    });
+  });
+
+  test('a stale desired revision during first activation restores v1 without losing the newer save', async () => {
+    const f = await fixture({ bootstrap: true });
+    f.state.bumpDesired = true;
+    expect(
+      await applyGuardedRoutingPolicy(f.deps, f.target, {
+        bootstrap: f.baseline,
+      })
+    ).toMatchObject({ status: 'restored' });
+    expect(await f.deps.journal.get()).toMatchObject({
+      version: 1,
+      applied: null,
+      pending: null,
+      runtime: { desiredRevision: 3, appliedRevision: 2 },
+    });
+    expect(f.state.linux).toBe('legacy');
+  });
+
   test('preflights before durable preparation, guards before peer writes and publishes only after complete absence verification', async () => {
     const f = await fixture();
     expect(await applyGuardedRoutingPolicy(f.deps, f.target)).toEqual({

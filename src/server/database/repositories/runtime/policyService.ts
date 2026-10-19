@@ -1,5 +1,7 @@
 import { eq } from 'drizzle-orm';
 
+import { general } from '../general/schema';
+
 import { routingPolicyRuntime, runtimeReconciliationState } from './schema';
 
 import type { DBType } from '#db/sqlite';
@@ -69,7 +71,11 @@ async function readState(db: Database) {
       row.applied !== null ? parseRoutingPolicyJournal(row.applied) : null;
     const pending =
       row.pending !== null ? parsePendingPolicyTransition(row.pending) : null;
-    if (settings.routingPolicyVersion === 1 && (applied || pending))
+    if (
+      (settings.routingPolicyVersion === 1 &&
+        (applied || (pending && !pending.bootstrap))) ||
+      (settings.routingPolicyVersion === 2 && pending?.bootstrap)
+    )
       fail('version_evidence_mismatch');
     if (
       !Number.isSafeInteger(runtime.desiredRevision) ||
@@ -152,7 +158,15 @@ export class RoutingPolicyRuntimeService {
     await this.db.transaction(
       async (tx) => {
         const state = await readState(tx);
-        if (state.version !== 2) fail('version_unavailable');
+        if (pending.bootstrap) {
+          if (state.version !== 1 || expected !== null)
+            fail('version_unavailable');
+          if (
+            state.runtime.appliedRevision !== pending.revision ||
+            !(await configurationsConverged(tx, pending.plan))
+          )
+            fail('bootstrap_not_converged');
+        } else if (state.version !== 2) fail('version_unavailable');
         if (state.pending) fail('recovery_required');
         if (!sameJournal(state.applied, expected)) fail('applied_changed');
         if (state.runtime.desiredRevision !== pending.revision)
@@ -173,7 +187,6 @@ export class RoutingPolicyRuntimeService {
     return this.db.transaction(
       async (tx) => {
         const state = await readState(tx);
-        if (state.version !== 2) fail('version_unavailable');
         const pending = requireIdentity(state.pending, expected);
         if (pending.stage !== from) fail('stage_changed');
         const next = { ...pending, stage: to };
@@ -193,7 +206,6 @@ export class RoutingPolicyRuntimeService {
     return this.db.transaction(
       async (tx) => {
         const state = await readState(tx);
-        if (state.version !== 2) fail('version_unavailable');
         const pending = requireIdentity(state.pending, expected);
         const next = { ...pending, stage: 'restoring' as const, errorCode };
         await tx
@@ -241,7 +253,6 @@ export class RoutingPolicyRuntimeService {
     return this.db.transaction(
       async (tx) => {
         const state = await readState(tx);
-        if (state.version !== 2) fail('version_unavailable');
         const pending = requireIdentity(state.pending, expected);
         if (pending.stage !== (restoring ? 'restoring' : 'verified'))
           fail('stage_changed');
@@ -261,6 +272,10 @@ export class RoutingPolicyRuntimeService {
             });
         const complete =
           !restoring && (await configurationsConverged(tx, pending.plan));
+        if (pending.bootstrap && !restoring) {
+          if (!complete) fail('bootstrap_not_converged');
+          await tx.update(general).set({ routingPolicyVersion: 2 }).execute();
+        }
         await tx
           .update(routingPolicyRuntime)
           .set({ applied, pending: null })
