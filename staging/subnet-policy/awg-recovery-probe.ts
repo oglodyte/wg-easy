@@ -353,6 +353,45 @@ async function context(root: string, action: string, failAt = "") {
     executor,
     guard,
     protectedPaths: meta.protectedPaths,
+    candidateConfigurations: new Map(
+      await Promise.all(
+        ["wg0", "awg1"].map(
+          async (name) =>
+            [
+              name,
+              await fs.readFile(
+                path.join(root, "target", `${name}.conf`),
+                "utf8",
+              ),
+            ] as const,
+        ),
+      ),
+    ),
+    beforeRestoreManagedState: async (
+      _previous,
+      _target,
+      reference,
+      activeGuard,
+    ) => {
+      await guard.verify(activeGuard);
+      for (const entry of await backups.readPrivateConfigurations(reference)) {
+        assert.equal(
+          typeof entry.candidate,
+          "string",
+          "candidate private bytes retained",
+        );
+        const current = await fs.readFile(
+          path.join(app, `${entry.interfaceId}.conf`),
+          "utf8",
+        );
+        assert(
+          current === entry.config || current === entry.candidate,
+          "only known private generation before restore",
+        );
+      }
+      // This fixture uses sync-only changes. It never executes server hooks.
+      crash("before_restore_managed");
+    },
     preflightManagedState: async () => {
       trace("managed_preflight_begin");
       await peerMap(meta.ns.server, meta.previous.plan);
@@ -1227,6 +1266,7 @@ async function parent() {
           "restoring",
           "restore_guard_ipv4_written",
           "restore_guard_ipv6_written",
+          "before_restore_managed",
           "restored_files",
           "restored_peers",
           "restored_firewall",
@@ -1429,6 +1469,7 @@ async function parent() {
         completeClientFirewall: true,
         clientFilterDenial: true,
         privateByteRestore: true,
+        privateCandidateByteRecovery: true,
         newKeyAndPskTraffic: true,
         presharedKeyClear: true,
         managementPreserved: true,

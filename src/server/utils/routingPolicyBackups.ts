@@ -14,7 +14,11 @@ export function isRoutingPolicyBackupReference(value: string) {
 }
 type SavedConfigurations = {
   owner: typeof OWNER;
-  interfaces: { interfaceId: string; config: string | null }[];
+  interfaces: {
+    interfaceId: string;
+    config: string | null;
+    candidate?: string | null;
+  }[];
 };
 export class RoutingPolicyBackupError extends Error {
   constructor(
@@ -66,7 +70,12 @@ function parse(value: unknown): SavedConfigurations {
       typeof entry !== 'object' ||
       !('interfaceId' in entry) ||
       !('config' in entry) ||
-      Object.keys(entry).sort().join(',') !== 'config,interfaceId' ||
+      !['config,interfaceId', 'candidate,config,interfaceId'].includes(
+        Object.keys(entry).sort().join(',')
+      ) ||
+      ('candidate' in entry &&
+        typeof entry.candidate !== 'string' &&
+        entry.candidate !== null) ||
       (typeof entry.config !== 'string' && entry.config !== null)
     )
       throw new RoutingPolicyBackupError('invalid_manifest');
@@ -74,7 +83,13 @@ function parse(value: unknown): SavedConfigurations {
     if (!parsed.success || ids.has(parsed.data))
       throw new RoutingPolicyBackupError('invalid_manifest');
     ids.add(parsed.data);
-    return { interfaceId: parsed.data, config: entry.config };
+    return {
+      interfaceId: parsed.data,
+      config: entry.config,
+      ...('candidate' in entry
+        ? { candidate: entry.candidate as string | null }
+        : {}),
+    };
   });
   return { owner: OWNER, interfaces };
 }
@@ -123,10 +138,24 @@ export class RoutingPolicyBackups {
     }
     await fs.chmod(this.directory, 0o700);
   }
-  async create(interfaceIds: readonly string[]) {
+  async create(
+    interfaceIds: readonly string[],
+    {
+      candidateConfigurations,
+    }: { candidateConfigurations?: ReadonlyMap<string, string | null> } = {}
+  ) {
     const ids = [...new Set(interfaceIds)].sort();
     if (ids.some((id) => !InterfaceNameSchema.safeParse(id).success))
       throw new RoutingPolicyBackupError('invalid_interface');
+    const knownIds = new Set(ids);
+    if (
+      candidateConfigurations &&
+      [...candidateConfigurations].some(
+        ([id, config]) =>
+          !knownIds.has(id) || (typeof config !== 'string' && config !== null)
+      )
+    )
+      throw new RoutingPolicyBackupError('invalid_candidate');
     await this.ownedDirectory();
     const interfaces: SavedConfigurations['interfaces'] = [];
     for (const interfaceId of ids) {
@@ -139,7 +168,13 @@ export class RoutingPolicyBackups {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') config = null;
         else throw new RoutingPolicyBackupError('source_unavailable');
       }
-      interfaces.push({ interfaceId, config });
+      interfaces.push({
+        interfaceId,
+        config,
+        ...(candidateConfigurations?.has(interfaceId)
+          ? { candidate: candidateConfigurations.get(interfaceId)! }
+          : {}),
+      });
     }
     const basename = `policy-${randomUUID()}.json`;
     const handle = await fs.open(this.reference(basename), 'wx', 0o600);
@@ -162,6 +197,10 @@ export class RoutingPolicyBackups {
     } catch {
       throw new RoutingPolicyBackupError('invalid_or_missing_backup');
     }
+  }
+  /** Private in-memory bytes only; never expose through an API or diagnostics. */
+  async readPrivateConfigurations(basename: string) {
+    return (await this.read(basename)).interfaces;
   }
   async restore(
     basename: string,

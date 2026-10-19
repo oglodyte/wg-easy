@@ -20,6 +20,72 @@ const oldConfig = '[Interface]\n# restricted fixture before replacement\n';
 const newConfig = '[Interface]\n# restricted fixture after replacement\n';
 
 describe('private routing configuration recovery backups', () => {
+  test('retains both private generations after reopen, including new and removed interface files', async () => {
+    const { root, backups } = await setup();
+    await fs.writeFile(path.join(root, 'wg0.conf'), oldConfig, { mode: 0o600 });
+    await fs.writeFile(path.join(root, 'removed0.conf'), oldConfig, {
+      mode: 0o600,
+    });
+    const reference = await backups.create(['wg0', 'new0', 'removed0'], {
+      candidateConfigurations: new Map([
+        ['wg0', newConfig],
+        ['new0', newConfig],
+        ['removed0', null],
+      ]),
+    });
+    const reopened = new RoutingPolicyBackups(root);
+    expect(await reopened.readPrivateConfigurations(reference)).toEqual([
+      { interfaceId: 'new0', config: null, candidate: newConfig },
+      { interfaceId: 'removed0', config: oldConfig, candidate: null },
+      { interfaceId: 'wg0', config: oldConfig, candidate: newConfig },
+    ]);
+    await fs.writeFile(path.join(root, 'wg0.conf'), newConfig);
+    await fs.writeFile(path.join(root, 'new0.conf'), newConfig);
+    await fs.unlink(path.join(root, 'removed0.conf'));
+    await reopened.restore(reference);
+    expect(await fs.readFile(path.join(root, 'wg0.conf'), 'utf8')).toBe(
+      oldConfig
+    );
+    expect(await fs.readFile(path.join(root, 'removed0.conf'), 'utf8')).toBe(
+      oldConfig
+    );
+    await expect(fs.stat(path.join(root, 'new0.conf'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
+    expect(
+      (await reopened.readPrivateConfigurations(reference))[2]?.candidate
+    ).toBe(newConfig);
+    expect(
+      (await fs.stat(path.join(backups.directory, reference))).mode & 0o777
+    ).toBe(0o600);
+  });
+
+  test('rejects unknown candidate identities and malformed candidate bytes before touching runtime files', async () => {
+    const { root, backups } = await setup();
+    await fs.writeFile(path.join(root, 'wg0.conf'), oldConfig, { mode: 0o600 });
+    await expect(
+      backups.create(['wg0'], {
+        candidateConfigurations: new Map([['../foreign', newConfig]]),
+      })
+    ).rejects.toThrow('invalid_candidate');
+    const reference = await backups.create(['wg0'], {
+      candidateConfigurations: new Map([['wg0', newConfig]]),
+    });
+    const file = path.join(backups.directory, reference);
+    const manifest = JSON.parse(await fs.readFile(file, 'utf8'));
+    manifest.interfaces[0].candidate = { unexpected: 'private fixture bytes' };
+    await fs.writeFile(file, JSON.stringify(manifest));
+    await expect(backups.readPrivateConfigurations(reference)).rejects.toThrow(
+      'invalid_or_missing_backup'
+    );
+    await expect(backups.restore(reference)).rejects.toThrow(
+      'invalid_or_missing_backup'
+    );
+    expect(await fs.readFile(path.join(root, 'wg0.conf'), 'utf8')).toBe(
+      oldConfig
+    );
+  });
+
   test('restores exact historical bytes without desired client/key rows and removes newly created configs', async () => {
     const { root, backups } = await setup();
     await fs.writeFile(path.join(root, 'wg0.conf'), oldConfig, { mode: 0o600 });

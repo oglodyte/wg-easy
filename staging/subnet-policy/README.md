@@ -99,6 +99,8 @@ matrix also kills workers between IPv4/IPv6 guard installation and removal,
 then repairs only exact known missing family guards before restoration.
 Full private interface verification also compares actual server identity,
 listen port, MTU, addresses, all AWG parameters and peer PSKs in memory.
+Both prior/candidate private bytes survive process death before restoration;
+this fixture uses sync-only changes and does not execute server lifecycle hooks.
 Recovery callbacks in this fixture operate the lab endpoints explicitly; the
 product does not push configurations to remote clients.
 

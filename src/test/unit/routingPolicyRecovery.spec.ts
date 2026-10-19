@@ -240,6 +240,60 @@ async function fixture({ bootstrap = false } = {}) {
 }
 
 describe('inactive guarded peer-aware orchestration', () => {
+  test('stops candidate runtime under the guard using durable candidate bytes before old files are restored', async () => {
+    const f = await fixture();
+    f.deps.candidateConfigurations = new Map([
+      ['wg0', '# candidate fixture bytes\n'],
+    ]);
+    f.state.failAt = 'linux';
+    let failStop = true;
+    f.deps.beforeRestoreManagedState = async (
+      _previous,
+      _target,
+      reference,
+      guard
+    ) => {
+      await f.deps.guard.verify(guard);
+      expect((await f.deps.journal.get()).pending?.stage).toBe('restoring');
+      expect(await fs.readFile(f.configPath, 'utf8')).toBe(
+        '# candidate fixture bytes\n'
+      );
+      expect(await f.deps.backups.readPrivateConfigurations(reference)).toEqual(
+        [
+          {
+            interfaceId: 'wg0',
+            config: '# prior fixture bytes\n',
+            candidate: '# candidate fixture bytes\n',
+          },
+        ]
+      );
+      f.events.push('stop_candidate');
+      if (failStop) throw new Error('private candidate hook failure');
+    };
+    expect(await applyGuardedRoutingPolicy(f.deps, f.target)).toMatchObject({
+      status: 'failed',
+      guarded: true,
+    });
+    expect((await f.deps.journal.get()).applied).toEqual(f.previous);
+    expect(f.events).not.toContain('validate_restore');
+    expect(await fs.readFile(f.configPath, 'utf8')).toBe(
+      '# candidate fixture bytes\n'
+    );
+    failStop = false;
+    expect(await restorePendingRoutingPolicy(f.deps)).toEqual({
+      status: 'restored',
+      cleanupPending: false,
+    });
+    expect(f.events.indexOf('stop_candidate')).toBeLessThan(
+      f.events.indexOf('validate_restore')
+    );
+    expect(await fs.readFile(f.configPath, 'utf8')).toBe(
+      '# prior fixture bytes\n'
+    );
+    expect(f.state.activeGuard).toBeNull();
+    expect((await f.deps.journal.get()).pending).toBeNull();
+  });
+
   test('bootstraps a verified v1 generation without storing false v2 evidence before publication', async () => {
     const f = await fixture({ bootstrap: true });
     expect(

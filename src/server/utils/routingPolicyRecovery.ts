@@ -33,6 +33,13 @@ export type PolicyRecoveryDependencies = {
   executor: RoutingExecutor;
   guard: RoutingGuard;
   protectedPaths: readonly RoutingGuardScope[];
+  candidateConfigurations?: ReadonlyMap<string, string | null>;
+  beforeRestoreManagedState?: (
+    previous: AppliedRoutingPolicyPlan,
+    target: AppliedRoutingPolicyPlan,
+    backup: string,
+    guard: RoutingGuardPlan
+  ) => Promise<void>;
   preflightManagedState: (
     previous: AppliedRoutingPolicyPlan,
     target: AppliedRoutingPolicyPlan
@@ -131,6 +138,13 @@ export async function restorePendingRoutingPolicy(
       pending,
       pending.errorCode ?? 'interrupted_transition'
     );
+    await deps.beforeRestoreManagedState?.(
+      previous.plan,
+      pending.plan,
+      pending.backupBasenames[0]!,
+      guard
+    );
+    await deps.guard.verify(guard);
     // This restoration uses private prior bytes even if desired rows/keys are gone.
     await deps.backups.restore(
       pending.backupBasenames[0]!,
@@ -220,7 +234,9 @@ export async function applyGuardedRoutingPolicy(
       )
     ),
   ];
-  const basename = await deps.backups.create(interfaces);
+  const basename = await deps.backups.create(interfaces, {
+    candidateConfigurations: deps.candidateConfigurations,
+  });
   let pending: PendingPolicyTransition;
   try {
     pending = await deps.journal.prepare(
