@@ -7,10 +7,26 @@ import type { AppliedRoutingPolicyPlan } from '#shared/types/routingPolicy';
 function fixture(): AppliedRoutingPolicyPlan {
   return {
     version: 2,
+    clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
     interfaces: [
-      { interfaceId: 'wg0', ipv4Cidr: '10.8.0.0/24', enabled: true },
-      { interfaceId: 'awg1', ipv4Cidr: '10.9.0.0/24', enabled: true },
-      { interfaceId: 'awg2', ipv4Cidr: '10.10.0.0/24', enabled: true },
+      {
+        interfaceId: 'wg0',
+        ipv4Cidr: '10.8.0.0/24',
+        enabled: true,
+        observedUp: true,
+      },
+      {
+        interfaceId: 'awg1',
+        ipv4Cidr: '10.9.0.0/24',
+        enabled: true,
+        observedUp: true,
+      },
+      {
+        interfaceId: 'awg2',
+        ipv4Cidr: '10.10.0.0/24',
+        enabled: true,
+        observedUp: true,
+      },
     ],
     siteRoutes: [],
     bypassPrefixes: ['10.8.0.0/24', '10.9.0.0/24', '10.10.0.0/24'],
@@ -121,6 +137,54 @@ describe('inactive whole-policy transition closure', () => {
       guard.scopes.some(
         (s) =>
           s.destination === '203.0.113.0/24' || s.source === '203.0.113.0/24'
+      )
+    ).toBe(false);
+  });
+  test('effective client-filter edits guard only that peer on a shared interface', () => {
+    const before = fixture(),
+      after = fixture();
+    for (const plan of [before, after]) {
+      plan.peers.push({
+        clientId: 5,
+        interfaceId: 'wg0',
+        peerId: 'unrelated-member',
+        prefixes: ['10.8.0.3/32'],
+      });
+      plan.clientFirewall = {
+        enableIpv6: false,
+        interfaces: [{ interfaceId: 'wg0', ipv6: false }],
+        entries: [
+          {
+            interfaceId: 'wg0',
+            clientId: 1,
+            clientName: 'client 1: member',
+            family: 4,
+            source: '10.8.0.2',
+            destination: '0.0.0.0/0',
+          },
+        ],
+      };
+    }
+    after.clientFirewall.entries[0]!.destination = '198.51.100.0/24';
+    const guard = buildRoutingPolicyTransition(before, after, options);
+    expect(guard.scopes).toContainEqual({
+      direction: 'forward',
+      inputInterface: 'wg0',
+      source: '10.8.0.2/32',
+      destination: '0.0.0.0/0',
+    });
+    expect(
+      guard.scopes.some(
+        (s) =>
+          s.inputInterface === 'awg1' ||
+          s.outputInterface === 'awg1' ||
+          s.inputInterface === 'awg2' ||
+          s.outputInterface === 'awg2'
+      )
+    ).toBe(false);
+    expect(
+      guard.scopes.some(
+        (s) => s.source === '10.8.0.3/32' || s.destination === '10.8.0.3/32'
       )
     ).toBe(false);
   });

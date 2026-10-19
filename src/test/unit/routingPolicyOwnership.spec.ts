@@ -12,8 +12,14 @@ import type { AppliedRoutingPolicyPlan } from '#shared/types/routingPolicy';
 function plan(action: 'host' | 'block' = 'block') {
   const value: AppliedRoutingPolicyPlan = {
     version: 2,
+    clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
     interfaces: [
-      { interfaceId: 'wg0', ipv4Cidr: '10.8.0.0/24', enabled: true },
+      {
+        interfaceId: 'wg0',
+        ipv4Cidr: '10.8.0.0/24',
+        enabled: true,
+        observedUp: true,
+      },
     ],
     bypassPrefixes: ['10.8.0.0/24'],
     siteRoutes: [],

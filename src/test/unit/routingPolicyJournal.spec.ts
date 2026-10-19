@@ -17,8 +17,14 @@ import type {
 function fixture(): RoutingPolicyJournal {
   const plan: AppliedRoutingPolicyPlan = {
     version: 2,
+    clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
     interfaces: [
-      { interfaceId: 'wg0', ipv4Cidr: '10.8.0.0/24', enabled: true },
+      {
+        interfaceId: 'wg0',
+        ipv4Cidr: '10.8.0.0/24',
+        enabled: true,
+        observedUp: true,
+      },
     ],
     siteRoutes: [],
     bypassPrefixes: ['10.8.0.0/24'],
@@ -66,6 +72,7 @@ describe('strict inactive policy recovery records', () => {
         interfaces: value.plan.interfaces,
         siteRoutes: [],
         version: 2,
+        clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
       })
     ).toBe(value.fingerprint);
     expect(parsePendingPolicyTransition(pending())).toEqual(pending());
@@ -102,6 +109,7 @@ describe('strict inactive policy recovery records', () => {
             interfaceId: 'wg0;anything',
             ipv4Cidr: '10.8.0.0/24',
             enabled: true,
+            observedUp: true,
           },
         ],
       },
@@ -201,6 +209,7 @@ describe('strict inactive policy recovery records', () => {
         enabledInterfaceIds: new Set(['wg0', 'awg1']),
         upInterfaceIds: new Set(['wg0', 'awg1']),
         enableIpv6: true,
+        clientFirewall: { enableIpv6: true, interfaces: [], entries: [] },
       }
     );
     const record = {

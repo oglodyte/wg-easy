@@ -76,10 +76,12 @@ async function readState(db: Database) {
       !Number.isSafeInteger(runtime.appliedRevision) ||
       runtime.appliedRevision < 0 ||
       runtime.desiredRevision < runtime.appliedRevision ||
-      (applied && applied.revision !== runtime.appliedRevision) ||
+      (applied &&
+        (applied.revision < runtime.appliedRevision ||
+          applied.revision > runtime.desiredRevision)) ||
       (pending &&
         (pending.revision > runtime.desiredRevision ||
-          pending.revision < runtime.appliedRevision))
+          pending.revision < (applied?.revision ?? runtime.appliedRevision)))
     )
       fail('revision_evidence_mismatch');
     return {
@@ -93,6 +95,36 @@ async function readState(db: Database) {
     // JSON decoding and database driver messages must not echo persisted input.
     fail('state_unreadable');
   }
+}
+
+/** Policy health cannot make an unverified interface configuration Applied. */
+async function configurationsConverged(
+  tx: PolicyPublicationTransaction,
+  plan: RoutingPolicyJournal['plan']
+) {
+  const interfaces = await tx.query.wgInterface.findMany().execute();
+  const runtime = await tx.query.interfaceRuntimeState.findMany().execute();
+  const states = new Map(runtime.map((i) => [i.interfaceId, i]));
+  const planned = new Map(plan.interfaces.map((i) => [i.interfaceId, i]));
+  return (
+    interfaces.length === planned.size &&
+    interfaces.every((iface) => {
+      const state = states.get(iface.name),
+        intended = planned.get(iface.name),
+        enabled = iface.enabled && !iface.pendingDelete;
+      return (
+        state &&
+        intended &&
+        intended.enabled === enabled &&
+        intended.observedUp === enabled &&
+        state.observedUp === enabled &&
+        state.status === (enabled ? 'up' : 'disabled') &&
+        state.appliedRevision === state.desiredRevision &&
+        !state.restartRequired &&
+        state.lastError === null
+      );
+    })
+  );
 }
 
 /** Inactive until promotion; the existing coordinator is its sole writer. */
@@ -227,6 +259,8 @@ export class RoutingPolicyRuntimeService {
               fingerprint: pending.fingerprint,
               plan: pending.plan,
             });
+        const complete =
+          !restoring && (await configurationsConverged(tx, pending.plan));
         await tx
           .update(routingPolicyRuntime)
           .set({ applied, pending: null })
@@ -240,12 +274,17 @@ export class RoutingPolicyRuntimeService {
                   status: 'pending',
                   lastError: 'routing_policy_restored',
                 }
-              : {
-                  appliedRevision: pending.revision,
-                  status: 'idle',
-                  lastSucceededAt: new Date().toISOString(),
-                  lastError: null,
-                }
+              : complete
+                ? {
+                    appliedRevision: pending.revision,
+                    status: 'idle',
+                    lastSucceededAt: new Date().toISOString(),
+                    lastError: null,
+                  }
+                : {
+                    status: 'degraded',
+                    lastError: 'interface_configuration_unapplied',
+                  }
           )
           .where(eq(runtimeReconciliationState.id, 1))
           .execute();

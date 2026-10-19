@@ -3,6 +3,7 @@ import { isIPv4 } from 'is-ip';
 import z from 'zod';
 
 import { buildRoutingGuard } from '#server/utils/routingGuard';
+import { ClientFirewallPolicySchema } from '#server/utils/clientFirewallPolicy';
 import { isRoutingPolicyBackupReference } from '#server/utils/routingPolicyBackups';
 import { POLICY_LIMITS, policyRangeCidrs } from '#server/utils/routingPolicy';
 import { routingPolicyRuntimeFingerprint } from '#server/utils/routingPolicyRuntime';
@@ -51,11 +52,13 @@ const branch = z.strictObject({
 });
 const planSchema = z.strictObject({
   version: z.literal(2),
+  clientFirewall: ClientFirewallPolicySchema,
   interfaces: z.array(
     z.strictObject({
       interfaceId: InterfaceNameSchema,
       ipv4Cidr: Ipv4CidrSchema,
       enabled: z.boolean(),
+      observedUp: z.boolean(),
     })
   ),
   siteRoutes: z.array(
@@ -155,6 +158,21 @@ function validatePlan(plan: AppliedRoutingPolicyPlan) {
   const interfaces = new Map(plan.interfaces.map((i) => [i.interfaceId, i]));
   const groups = new Map(plan.groups.map((g) => [g.id, g]));
   const peers = new Map(plan.peers.map((p) => [p.clientId, p]));
+  for (const iface of plan.interfaces)
+    if (iface.observedUp && !iface.enabled) fail();
+  for (const iface of plan.clientFirewall.interfaces)
+    if (!interfaces.get(iface.interfaceId)?.observedUp) fail();
+  for (const entry of plan.clientFirewall.entries) {
+    const peer = peers.get(entry.clientId);
+    if (
+      !peer ||
+      peer.interfaceId !== entry.interfaceId ||
+      !peer.prefixes.includes(
+        normalizeCidr(`${entry.source}/${entry.family === 4 ? 32 : 128}`)
+      )
+    )
+      fail();
+  }
   if (
     JSON.stringify(
       policyRangeCidrs(ranges(plan.interfaces.map((i) => i.ipv4Cidr)))
@@ -170,11 +188,11 @@ function validatePlan(plan: AppliedRoutingPolicyPlan) {
   )
     fail();
   for (const peer of plan.peers)
-    if (!interfaces.get(peer.interfaceId)?.enabled || !unique(peer.prefixes))
+    if (!interfaces.get(peer.interfaceId)?.observedUp || !unique(peer.prefixes))
       fail();
   for (const route of plan.siteRoutes) {
     if (
-      !interfaces.get(route.interfaceId)?.enabled ||
+      !interfaces.get(route.interfaceId)?.observedUp ||
       !unique(route.prefixes) ||
       route.prefixes.some((p) => Number(parseCidr(p).prefix) === 0)
     )
@@ -199,7 +217,7 @@ function validatePlan(plan: AppliedRoutingPolicyPlan) {
       const network = parseCidr(iface.ipv4Cidr),
         ip = parseCidr(`${member.ipv4Address}/32`).start;
       if (ip < network.start + 2n || ip >= network.end) fail();
-      if (iface.enabled) {
+      if (iface.observedUp) {
         const peer = peers.get(member.clientId);
         if (
           !peer ||
@@ -243,7 +261,7 @@ function validatePlan(plan: AppliedRoutingPolicyPlan) {
         !group.enabled ||
         !peer ||
         peer.interfaceId !== group.exitInterfaceId ||
-        !iface?.enabled ||
+        !iface?.observedUp ||
         parseCidr(`${group.serverIpv4Address}/32`).start !==
           parseCidr(iface.ipv4Cidr).start + 1n ||
         group.effectivePrefixes.some((p) => !peer.prefixes.includes(p))

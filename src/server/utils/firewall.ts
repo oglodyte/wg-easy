@@ -2,6 +2,7 @@ import { createDebug } from 'obug';
 import { isIPv6 } from 'is-ip';
 
 import { execFile } from '#server/utils/cmd';
+import { validateClientFirewallPolicy } from '#server/utils/clientFirewallPolicy';
 import {
   routingGuardRepositionRules,
   type RoutingGuardPlan,
@@ -10,6 +11,7 @@ import type { ClientType } from '#db/repositories/client/types';
 import type { InterfaceType } from '#db/repositories/interface/types';
 import type { UserConfigType } from '#db/repositories/userConfig/types';
 import { InterfaceNameSchema } from '#shared/utils/schemas';
+import type { PolicyClientFirewall } from '#shared/types/routingPolicy';
 
 const FW_DEBUG = createDebug('Firewall');
 const CHAIN_NAME = 'WG_CLIENTS';
@@ -39,11 +41,14 @@ type FirewallClient = Pick<
   | 'enabled'
 >;
 
-type FirewallInterfaceState = {
-  wgInterface: InterfaceType;
+export type FirewallInterfaceState = {
+  wgInterface: Pick<
+    InterfaceType,
+    'name' | 'enabled' | 'firewallEnabled' | 'ipv6Cidr'
+  >;
   observedUp: boolean;
   clients: FirewallClient[];
-  userConfig: UserConfigType;
+  userConfig: Pick<UserConfigType, 'defaultAllowedIps'>;
 };
 
 /**
@@ -210,39 +215,14 @@ function buildRestoreDocument({
 }) {
   const guardHooks =
     family === 4 ? routingGuardRepositionRules(existingSave, guard) : [];
-  const active = states.filter(
-    ({ wgInterface, observedUp }) =>
-      observedUp &&
-      wgInterface.enabled &&
-      wgInterface.firewallEnabled &&
-      (family === 4 || !!wgInterface.ipv6Cidr)
-  );
   const managedInterfaces = new Set(
     states.map(({ wgInterface }) => InterfaceNameSchema.parse(wgInterface.name))
   );
-  const rules: string[][] = [];
-  for (const { clients, userConfig } of active) {
-    for (const client of clients) {
-      if (!client.enabled || (family === 6 && !client.ipv6Address)) continue;
-      const effectiveIps =
-        client.firewallIps && client.firewallIps.length > 0
-          ? client.firewallIps
-          : (client.allowedIps ?? userConfig.defaultAllowedIps);
-      const comment = sanitizeComment(client.id, client.name);
-      for (const entry of effectiveIps.map(parseFirewallEntry)) {
-        const baseIp = entry.ip.split('/')[0] ?? entry.ip;
-        if ((family === 6) !== isIPv6(baseIp)) continue;
-        rules.push(
-          ...generateRuleArgs(
-            family === 6 ? client.ipv6Address! : client.ipv4Address,
-            entry,
-            comment
-          )
-        );
-      }
-    }
-  }
-
+  const manifest = buildClientFirewallManifest(
+    buildPolicyClientFirewall(states, family === 6),
+    family
+  );
+  /* State ownership checks below preserve the accepted version 1 behavior. */
   const savedLines = existingSave
     .split('\n')
     .map((line) => line.trim())
@@ -274,29 +254,118 @@ function buildRestoreDocument({
   if (chainExists && !ownerMarkerExists && ownedJumpLines.length === 0) {
     throw new Error(`Reserved chain ${CHAIN_NAME} is not owned by wg-easy`);
   }
-  const existingJumps = ownedJumpLines.map((line) =>
-    line.replace(/^-A /, '-D ')
+  return buildClientFirewallRestore(manifest, existingSave, guardHooks);
+}
+
+export function buildPolicyClientFirewall(
+  states: readonly FirewallInterfaceState[],
+  enableIpv6: boolean
+): PolicyClientFirewall {
+  const active = states
+    .filter(
+      ({ wgInterface, observedUp }) =>
+        wgInterface.enabled && observedUp && wgInterface.firewallEnabled
+    )
+    .sort((a, b) => a.wgInterface.name.localeCompare(b.wgInterface.name));
+  const entries: PolicyClientFirewall['entries'] = [];
+  for (const { clients, userConfig, wgInterface } of active) {
+    const interfaceId = wgInterface.name;
+    for (const client of [...clients].sort((a, b) => a.id - b.id)) {
+      if (!client.enabled) continue;
+      const effectiveIps =
+        client.firewallIps && client.firewallIps.length > 0
+          ? client.firewallIps
+          : (client.allowedIps ?? userConfig.defaultAllowedIps);
+      for (const entry of effectiveIps.map(parseFirewallEntry)) {
+        const baseIp = entry.ip.split('/')[0] ?? entry.ip;
+        const family = isIPv6(baseIp) ? 6 : 4;
+        if (
+          family === 6 &&
+          (!enableIpv6 || !client.ipv6Address || !wgInterface.ipv6Cidr)
+        )
+          continue;
+        entries.push({
+          interfaceId,
+          clientId: client.id,
+          clientName: sanitizeComment(client.id, client.name),
+          family,
+          source: family === 6 ? client.ipv6Address! : client.ipv4Address,
+          destination: entry.ip,
+          ...(entry.port === undefined ? {} : { port: entry.port }),
+          ...(entry.proto === undefined ? {} : { proto: entry.proto }),
+        });
+      }
+    }
+  }
+  return validateClientFirewallPolicy({
+    enableIpv6,
+    interfaces: active.map(({ wgInterface }) => ({
+      interfaceId: wgInterface.name,
+      ipv6: enableIpv6 && !!wgInterface.ipv6Cidr,
+    })),
+    entries,
+  });
+}
+
+export function buildClientFirewallManifest(
+  plan: PolicyClientFirewall,
+  family: 4 | 6
+) {
+  const interfaces = plan.interfaces
+    .filter((i) => family === 4 || i.ipv6)
+    .map((i) => i.interfaceId);
+  return {
+    body: [
+      `-A ${CHAIN_NAME} -m comment --comment "${OWNER_COMMENT} owner"`,
+      ...plan.entries
+        .filter((e) => e.family === family)
+        .flatMap((e) =>
+          generateRuleArgs(
+            e.source,
+            { ip: e.destination, port: e.port, proto: e.proto },
+            e.clientName
+          ).map(restoreRule)
+        ),
+      ...(interfaces.length
+        ? [
+            `-A ${CHAIN_NAME} -m comment --comment "${OWNER_COMMENT} default deny" -j DROP`,
+          ]
+        : []),
+    ],
+    jumps: interfaces
+      .map(
+        (name) =>
+          `-A FORWARD -i ${InterfaceNameSchema.parse(name)} -m comment --comment "${OWNER_COMMENT}" -j ${CHAIN_NAME}`
+      )
+      .reverse(),
+  };
+}
+
+/** Caller verifies exact known ownership first on the version 2 path. */
+export function buildClientFirewallRestore(
+  manifest: ReturnType<typeof buildClientFirewallManifest>,
+  existingSave: string,
+  guardHooks: readonly string[]
+) {
+  const savedLines = existingSave
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const jumpLines = savedLines.filter(
+    (line) =>
+      line.startsWith('-A FORWARD ') && line.endsWith(`-j ${CHAIN_NAME}`)
   );
-  const desiredJumps = active
-    .map(({ wgInterface }) => InterfaceNameSchema.parse(wgInterface.name))
-    .sort((left, right) => left.localeCompare(right))
-    .map(
-      (interfaceName) =>
-        `-I FORWARD 1 -i ${interfaceName} -m comment --comment "${OWNER_COMMENT}" -j ${CHAIN_NAME}`
-    );
+  const existingJumps = jumpLines.map((line) => line.replace(/^-A /, '-D '));
+  const desiredJumps = [...manifest.jumps]
+    .reverse()
+    .map((line) => line.replace(/^-A FORWARD /, '-I FORWARD 1 '));
 
   return [
     '*filter',
     `:${CHAIN_NAME} - [0:0]`,
     `-F ${CHAIN_NAME}`,
     ...existingJumps,
-    `-A ${CHAIN_NAME} -m comment --comment "${OWNER_COMMENT} owner"`,
-    ...rules.map(restoreRule),
-    ...(active.length > 0
-      ? [
-          `-A ${CHAIN_NAME} -m comment --comment "${OWNER_COMMENT} default deny" -j DROP`,
-        ]
-      : []),
+    ...manifest.body,
     ...desiredJumps,
     // These final insertions keep every guard ahead of client ACCEPT rules
     // throughout the same atomic filter-table transaction.

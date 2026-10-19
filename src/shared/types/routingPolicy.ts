@@ -93,10 +93,32 @@ export type CompiledPolicy = {
   counts: PolicyCounts;
 };
 
+/** Effective filter inputs only; no credentials or executable rule arrays. */
+export type PolicyClientFirewall = {
+  enableIpv6: boolean;
+  interfaces: { interfaceId: string; ipv6: boolean }[];
+  entries: {
+    interfaceId: string;
+    clientId: number;
+    clientName: string;
+    family: 4 | 6;
+    source: string;
+    destination: string;
+    port?: number;
+    proto?: 'tcp' | 'udp' | 'both';
+  }[];
+};
+
 /** Last verified runtime state only; never persist the static candidate proof. */
 export type AppliedRoutingPolicyPlan = {
   version: 2;
-  interfaces: { interfaceId: string; ipv4Cidr: string; enabled: boolean }[];
+  clientFirewall: PolicyClientFirewall;
+  interfaces: {
+    interfaceId: string;
+    ipv4Cidr: string;
+    enabled: boolean;
+    observedUp: boolean;
+  }[];
   siteRoutes: { interfaceId: string; prefixes: string[] }[];
   bypassPrefixes: string[];
   programs: {

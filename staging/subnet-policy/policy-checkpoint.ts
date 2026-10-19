@@ -84,6 +84,7 @@ export async function provePolicyClassifier({
       enabledInterfaceIds: new Set(["wg0", "awg1"]),
       upInterfaceIds: new Set(["wg0", "awg1"]),
       enableIpv6: false,
+      clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
     }).plan;
   for (const address of ["172.31.200.2", "172.31.201.2"])
     await server("ip", [

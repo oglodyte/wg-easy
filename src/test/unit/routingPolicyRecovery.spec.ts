@@ -33,8 +33,14 @@ afterEach(async () => {
 function record(revision: number, peerId: string): RoutingPolicyJournal {
   const plan: AppliedRoutingPolicyPlan = {
     version: 2,
+    clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
     interfaces: [
-      { interfaceId: 'wg0', ipv4Cidr: '10.8.0.0/24', enabled: true },
+      {
+        interfaceId: 'wg0',
+        ipv4Cidr: '10.8.0.0/24',
+        enabled: true,
+        observedUp: true,
+      },
     ],
     siteRoutes: [],
     bypassPrefixes: ['10.8.0.0/24'],
@@ -169,7 +175,12 @@ async function fixture() {
       expect(state.activeGuard).toBeNull();
       await tx
         .update(schema.interfaceRuntimeState)
-        .set({ appliedRevision: applied.revision })
+        .set({
+          appliedRevision: applied.revision,
+          desiredRevision: applied.revision,
+          observedUp: true,
+          status: 'up',
+        })
         .execute();
       fault('publish');
     },

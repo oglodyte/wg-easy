@@ -69,6 +69,7 @@ function specialize(snapshot: PolicySnapshot, lanExit: number | null = 3) {
     enabledInterfaceIds: new Set(['wg0', 'awg1', 'awg2']),
     upInterfaceIds: new Set(['wg0', 'awg1', 'awg2']),
     enableIpv6: true,
+    clientFirewall: { enableIpv6: true, interfaces: [], entries: [] },
   }).plan;
 }
 function contains(prefix: string, ip: string) {

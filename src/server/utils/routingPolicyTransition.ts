@@ -225,6 +225,50 @@ export function buildRoutingPolicyTransition(
   const oldPeers = new Map(previous?.peers.map((p) => [p.peerId, p]) ?? []),
     newPeers = new Map(target.peers.map((p) => [p.peerId, p]));
   const changedPeers = new Set(forcePeerIds);
+  const filters = (plan: AppliedRoutingPolicyPlan | null) => {
+    const interfaces = new Map(
+      plan?.clientFirewall.interfaces.map((i) => [
+        i.interfaceId,
+        JSON.stringify(i),
+      ]) ?? []
+    );
+    const entries = new Map<string, typeof target.clientFirewall.entries>();
+    for (const entry of plan?.clientFirewall.entries ?? []) {
+      const key = JSON.stringify([entry.interfaceId, entry.clientId]);
+      const list = entries.get(key) ?? [];
+      list.push(entry);
+      entries.set(key, list);
+    }
+    return {
+      interfaces,
+      peers: new Map(
+        [...entries].map(([key, value]) => [key, JSON.stringify(value)])
+      ),
+    };
+  };
+  const oldFilters = filters(previous),
+    newFilters = filters(target);
+  // A client filter can change even when peer keys/prefixes and routing do not.
+  const changedFilters = new Set(
+    [
+      ...new Set(
+        [...(previous?.interfaces ?? []), ...target.interfaces].map(
+          (i) => i.interfaceId
+        )
+      ),
+    ].filter(
+      (id) => oldFilters.interfaces.get(id) !== newFilters.interfaces.get(id)
+    )
+  );
+  for (const peer of [...oldPeers.values(), ...newPeers.values()])
+    if (
+      changedFilters.has(peer.interfaceId) ||
+      oldFilters.peers.get(
+        JSON.stringify([peer.interfaceId, peer.clientId])
+      ) !==
+        newFilters.peers.get(JSON.stringify([peer.interfaceId, peer.clientId]))
+    )
+      changedPeers.add(peer.peerId);
   for (const id of new Set([...oldPeers.keys(), ...newPeers.keys()]))
     if (
       JSON.stringify(oldPeers.get(id)?.prefixes) !==

@@ -5,6 +5,8 @@ import {
   verifyRoutingPolicyPeerMap,
 } from '#server/utils/routingPolicyRuntime';
 import type { PolicySnapshot } from '#shared/types/routingPolicy';
+import { parseRoutingPolicyJournal } from '#server/utils/routingPolicyJournal';
+import { renderRoutingPolicyLinux } from '#server/utils/routingPolicyLinux';
 
 function fixture(): PolicySnapshot {
   return {
@@ -94,6 +96,7 @@ function specialize(
     enabledInterfaceIds,
     upInterfaceIds: enabledInterfaceIds,
     enableIpv6,
+    clientFirewall: { enableIpv6, interfaces: [], entries: [] },
   });
 }
 function observed(state: ReturnType<typeof specialize>) {
@@ -106,6 +109,72 @@ function observed(state: ReturnType<typeof specialize>) {
 }
 
 describe('inactive complete runtime policy specialization', () => {
+  test('an unavailable interface retains static proof and bypass but no live peers or legacy routes', () => {
+    const snapshot = fixture();
+    const previous = specialize(snapshot);
+    const current = specializeRoutingPolicy(snapshot, {
+      selectedExitClientIds: new Map([
+        [1, null],
+        [2, null],
+      ]),
+      enabledInterfaceIds,
+      upInterfaceIds: new Set(['wg0']),
+      enableIpv6: true,
+      clientFirewall: { enableIpv6: true, interfaces: [], entries: [] },
+    });
+    expect(current.compiled).toEqual(previous.compiled);
+    expect(current.plan.bypassPrefixes).toEqual(previous.plan.bypassPrefixes);
+    expect(current.plan.interfaces[0]).toMatchObject({
+      enabled: true,
+      observedUp: false,
+    });
+    expect(current.plan.peers.map((p) => p.clientId)).toEqual([1]);
+    expect(current.plan.siteRoutes).toEqual([]);
+    expect(() =>
+      parseRoutingPolicyJournal({
+        revision: 2,
+        fingerprint: current.fingerprint,
+        plan: current.plan,
+      })
+    ).not.toThrow();
+    expect(() =>
+      verifyRoutingPolicyPeerMap(current.plan, observed(current))
+    ).not.toThrow();
+    expect(() =>
+      verifyRoutingPolicyPeerMap(current.plan, observed(previous))
+    ).toThrow('peer_map_mismatch');
+    expect(
+      renderRoutingPolicyLinux(current.plan).parentMarkJumps.map(
+        (p) => p.interfaceId
+      )
+    ).toEqual(['wg0']);
+  });
+  test('unavailable ingress is not dispatched and unexpected availability is rejected', () => {
+    const current = specializeRoutingPolicy(fixture(), {
+      selectedExitClientIds: new Map([
+        [1, 2],
+        [2, 3],
+      ]),
+      enabledInterfaceIds,
+      upInterfaceIds: new Set(['awg1']),
+      enableIpv6: true,
+      clientFirewall: { enableIpv6: true, interfaces: [], entries: [] },
+    });
+    expect(current.plan.programs[0]!.sources).toHaveLength(1);
+    const linux = renderRoutingPolicyLinux(current.plan);
+    expect(linux.markChainRules.some((r) => r.includes('--goto'))).toBe(false);
+    expect(linux.parentMarkJumps.map((p) => p.interfaceId)).toEqual(['awg1']);
+    for (const id of ['wg0', 'unknown0'])
+      expect(() =>
+        specializeRoutingPolicy(fixture(), {
+          selectedExitClientIds: new Map(),
+          enabledInterfaceIds: new Set(['awg1']),
+          upInterfaceIds: new Set([id]),
+          enableIpv6: false,
+          clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
+        })
+      ).toThrow('interface_availability_invalid');
+  });
   test('uses one winner partition and complete enabled peer maps', () => {
     const result = specialize();
     expect(result.plan.peers.map((p) => p.clientId)).toEqual([1, 2, 3]);
@@ -245,6 +314,7 @@ describe('inactive complete runtime policy specialization', () => {
         enabledInterfaceIds,
         upInterfaceIds: new Set(['wg0']),
         enableIpv6: true,
+        clientFirewall: { enableIpv6: true, interfaces: [], entries: [] },
       })
     ).toThrow('selected_exit_unavailable');
   });

@@ -42,7 +42,10 @@ export type PolicyRecoveryDependencies = {
     backup: string,
     guard: RoutingGuardPlan
   ) => Promise<void>;
-  verifyManagedState: (plan: AppliedRoutingPolicyPlan) => Promise<void>;
+  verifyManagedState: (
+    plan: AppliedRoutingPolicyPlan,
+    guard: RoutingGuardPlan | null
+  ) => Promise<void>;
   validateConfig: (interfaceId: string, temporaryPath: string) => Promise<void>;
   publishGroups: (
     tx: PolicyPublicationTransaction,
@@ -125,12 +128,12 @@ export async function restorePendingRoutingPolicy(
       previousPlan: targetLinux,
       guardedTransition: { guard, knownPlans: [targetLinux] },
     });
-    await deps.verifyManagedState(previous.plan);
+    await deps.verifyManagedState(previous.plan, guard);
     await deps.executor.verify(previousLinux, guard);
     await deps.journal.finishRestored(pending, async (tx) => {
       await deps.guard.remove(guard);
       await deps.executor.verify(previousLinux, null);
-      await deps.verifyManagedState(previous.plan);
+      await deps.verifyManagedState(previous.plan, null);
       await deps.publishGroups(tx, previous, true);
     });
   } catch (error) {
@@ -211,20 +214,20 @@ export async function applyGuardedRoutingPolicy(
     await deps.guard.verify(guard);
     await deps.applyManagedState(target.plan, guard);
     await deps.guard.verify(guard);
-    await deps.verifyManagedState(target.plan);
+    await deps.verifyManagedState(target.plan, guard);
     await deps.journal.advance(pending, 'guarded', 'peers');
     await deps.executor.apply(targetLinux, {
       previousPlan: previousLinux,
       guardedTransition: { guard, knownPlans: [previousLinux] },
     });
     await deps.journal.advance(pending, 'peers', 'classified');
-    await deps.verifyManagedState(target.plan);
+    await deps.verifyManagedState(target.plan, guard);
     await deps.executor.verify(targetLinux, guard);
     await deps.journal.advance(pending, 'classified', 'verified');
     await deps.journal.finishApplied(pending, async (tx) => {
       await deps.guard.remove(guard);
       await deps.executor.verify(targetLinux, null);
-      await deps.verifyManagedState(target.plan);
+      await deps.verifyManagedState(target.plan, null);
       await deps.publishGroups(tx, target, false);
     });
   } catch (error) {

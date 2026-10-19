@@ -89,8 +89,10 @@ interpreter image must include the matching migrations at
 generation; it does not perform initial application promotion. It exercises real
 peer/key replacement, an obfuscated exit, complete peer maps, marked route
 lookups, byte counters, observed sink sources, independent worker process kills,
-retained guards, durable private-byte restoration and same-identity preshared-key
-clearing. Unchanged interfaces use no sync; affected peers use `awg syncconf`.
+retained guards, durable private-byte restoration, complete client-filter recovery
+and same-identity preshared-key clearing. It verifies filter denial while another
+member on the same interface retains its default path. Unchanged interfaces use
+no sync; affected peers use `awg syncconf`.
 Recovery callbacks in this fixture operate the lab endpoints explicitly; the
 product does not push configurations to remote clients.
 

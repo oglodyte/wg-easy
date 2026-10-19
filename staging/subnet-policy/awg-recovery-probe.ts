@@ -20,6 +20,7 @@ import {
   type RoutingGuardScope,
 } from "../../src/server/utils/routingGuard";
 import { RoutingPolicyBackups } from "../../src/server/utils/routingPolicyBackups";
+import { RoutingPolicyFirewall } from "../../src/server/utils/routingPolicyFirewall";
 import { parseRoutingPolicyJournal } from "../../src/server/utils/routingPolicyJournal";
 import { renderRoutingPolicyLinux } from "../../src/server/utils/routingPolicyLinux";
 import {
@@ -211,7 +212,8 @@ async function context(root: string, action: string, failAt = "") {
   const journal = new RoutingPolicyRuntimeService(database.db),
     backups = new RoutingPolicyBackups(app);
   const guard = new RoutingGuard(run),
-    executor = new RoutingExecutor(run);
+    executor = new RoutingExecutor(run),
+    clientFirewall = new RoutingPolicyFirewall(run);
   const executorPrepare = executor.prepare.bind(executor);
   executor.prepare = async (...args) => {
     trace("linux_preflight_begin");
@@ -307,9 +309,14 @@ async function context(root: string, action: string, failAt = "") {
     preflightManagedState: async () => {
       trace("managed_preflight_begin");
       await peerMap(meta.ns.server, meta.previous.plan);
+      await clientFirewall.prepare(
+        meta.target.plan.clientFirewall,
+        [meta.previous.plan.clientFirewall],
+        null,
+      );
       trace("managed_preflight_complete");
     },
-    applyManagedState: async () => {
+    applyManagedState: async (plan, activeGuard) => {
       for (const name of ["wg0", "awg1"])
         await fs.copyFile(
           path.join(root, "target", `${name}.conf`),
@@ -323,8 +330,14 @@ async function context(root: string, action: string, failAt = "") {
         path.join(root, "member-new.conf"),
       );
       crash("client_peer_sync");
+      await clientFirewall.apply(
+        plan.clientFirewall,
+        [meta.previous.plan.clientFirewall],
+        activeGuard,
+      );
+      crash("client_firewall");
     },
-    restoreManagedState: async () => {
+    restoreManagedState: async (plan, _backup, activeGuard) => {
       await syncServer();
       await syncPrivateConfig(
         meta.ns.member,
@@ -332,8 +345,17 @@ async function context(root: string, action: string, failAt = "") {
         path.join(root, "member-old.conf"),
       );
       crash("restored_peers");
+      await clientFirewall.apply(
+        plan.clientFirewall,
+        [meta.target.plan.clientFirewall],
+        activeGuard,
+      );
+      crash("restored_firewall");
     },
-    verifyManagedState: (plan) => peerMap(meta.ns.server, plan),
+    verifyManagedState: async (plan, activeGuard) => {
+      await peerMap(meta.ns.server, plan);
+      await clientFirewall.verify(plan.clientFirewall, activeGuard);
+    },
     validateConfig: async (_id, file) => {
       const text = await fs.readFile(file, "utf8");
       assert(
@@ -344,7 +366,12 @@ async function context(root: string, action: string, failAt = "") {
     publishGroups: async (tx, record, restored) => {
       await tx
         .update(schema.interfaceRuntimeState)
-        .set({ appliedRevision: record.revision })
+        .set({
+          appliedRevision: record.revision,
+          desiredRevision: record.revision,
+          observedUp: true,
+          status: "up",
+        })
         .execute();
       crash(restored ? "restore_before_commit" : "before_commit");
     },
@@ -694,6 +721,23 @@ async function parent() {
         enabledInterfaceIds: new Set(["wg0", "awg1"]),
         upInterfaceIds: new Set(["wg0", "awg1"]),
         enableIpv6: false,
+        clientFirewall: {
+          enableIpv6: false,
+          interfaces: [{ interfaceId: "wg0", ipv6: false }],
+          entries: [1, 4].flatMap((id) =>
+            (id === 1 && replacement
+              ? [LAN, "172.31.211.0/24"]
+              : ["0.0.0.0/0"]
+            ).map((destination) => ({
+              interfaceId: "wg0",
+              clientId: id,
+              clientName: `client ${id}: fixture`,
+              family: 4,
+              source: id === 1 ? "10.241.1.2" : "10.241.1.3",
+              destination,
+            })),
+          ),
+        },
       });
       return { revision, fingerprint: value.fingerprint, plan: value.plan };
     };
@@ -811,6 +855,26 @@ async function parent() {
         process.env.WG_EASY_PROBE_MIGRATIONS ??
         "/app/server/database/migrations",
     });
+    const defaultInterface = await database.db.query.wgInterface.findFirst();
+    assert(defaultInterface, "synthetic default interface");
+    await database.db
+      .insert(schema.wgInterface)
+      .values({
+        ...defaultInterface,
+        name: "awg1",
+        port: 62002,
+        ipv4Cidr: "10.241.2.0/24",
+        ipv6Cidr: null,
+        privateKey: keys.server1!.privateKey,
+        publicKey: keys.server1!.publicKey,
+      })
+      .execute();
+    await database.db
+      .insert(schema.interfaceRuntimeState)
+      .values({
+        interfaceId: "awg1",
+      })
+      .execute();
     await database.db
       .update(schema.general)
       .set({ routingPolicyVersion: 2 })
@@ -842,6 +906,12 @@ async function parent() {
     await executor.apply(renderRoutingPolicyLinux(previous.plan), {
       guardedTransition: { guard: initialGuard, knownPlans: [] },
     });
+    await new RoutingPolicyFirewall(server).apply(
+      previous.plan.clientFirewall,
+      [],
+      initialGuard,
+      { allowAbsent: true },
+    );
     await peerMap(ns.server, previous.plan);
     await guard.remove(initialGuard);
     await executor.verify(renderRoutingPolicyLinux(previous.plan), null);
@@ -889,6 +959,7 @@ async function parent() {
           "guarded",
           "server_peer_sync",
           "client_peer_sync",
+          "client_firewall",
           "peers",
           "linux_preflight",
           "linux_routes",
@@ -950,6 +1021,7 @@ async function parent() {
           "restoring",
           "restored_files",
           "restored_peers",
+          "restored_firewall",
           ...[
             "preflight",
             "routes",
@@ -1018,7 +1090,26 @@ async function parent() {
     assert.equal(await applied.deps.backups.cleanupOrphans(new Set()), 1);
     await applied.database.close();
     checkpoint("same-identity-preshared-key-clear");
-    const cleared = { ...target, revision: 3 };
+    const clearedPlan = structuredClone(target.plan);
+    clearedPlan.clientFirewall.entries =
+      clearedPlan.clientFirewall.entries.filter(
+        (e) => e.clientId !== 1 || e.destination === LAN,
+      );
+    const cleared = {
+      ...target,
+      revision: 3,
+      plan: clearedPlan,
+      fingerprint: specializeRoutingPolicy(snapshot(true), {
+        selectedExitClientIds: new Map([
+          [1, 2],
+          [2, 2],
+        ]),
+        enabledInterfaceIds: new Set(["wg0", "awg1"]),
+        upInterfaceIds: new Set(["wg0", "awg1"]),
+        enableIpv6: false,
+        clientFirewall: clearedPlan.clientFirewall,
+      }).fingerprint,
+    };
     for (const name of ["wg0", "awg1"])
       await fs.copyFile(
         path.join(app, `${name}.conf`),
@@ -1053,6 +1144,8 @@ async function parent() {
     await reachable(ns.member, "10.241.1.2");
     await reachable(ns.other, "10.241.1.3");
     checkpoint("preshared-key-clear-traffic-complete");
+    await assert.rejects(fetchFrom(ns.member, OTHER_SINK));
+    await reachable(ns.other, "10.241.2.1", OTHER_SINK);
     const serverPsk = (await server("awg", ["show", "wg0", "preshared-keys"]))
       .split("\n")
       .find((l) => l.split("\t")[0] === keys.memberNew!.publicKey)
@@ -1103,6 +1196,8 @@ async function parent() {
         applyCrashBoundaries: failures.length,
         recoveryCrashBoundaries: recoveryFailures.length,
         completePeerMap: true,
+        completeClientFirewall: true,
+        clientFilterDenial: true,
         privateByteRestore: true,
         newKeyAndPskTraffic: true,
         presharedKeyClear: true,

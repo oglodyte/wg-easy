@@ -27,8 +27,14 @@ afterEach(async () => {
 function record(revision = 1): RoutingPolicyJournal {
   const plan: AppliedRoutingPolicyPlan = {
     version: 2,
+    clientFirewall: { enableIpv6: false, interfaces: [], entries: [] },
     interfaces: [
-      { interfaceId: 'wg0', ipv4Cidr: '10.8.0.0/24', enabled: true },
+      {
+        interfaceId: 'wg0',
+        ipv4Cidr: '10.8.0.0/24',
+        enabled: true,
+        observedUp: true,
+      },
     ],
     siteRoutes: [],
     bypassPrefixes: ['10.8.0.0/24'],
@@ -88,6 +94,15 @@ async function fixture({ version = 2, applied = true } = {}) {
     .update(schema.runtimeReconciliationState)
     .set({ desiredRevision: 2, appliedRevision: 1, status: 'pending' })
     .execute();
+  await db
+    .update(schema.interfaceRuntimeState)
+    .set({
+      desiredRevision: 1,
+      appliedRevision: 1,
+      observedUp: true,
+      status: 'up',
+    })
+    .execute();
   if (applied)
     await db
       .update(schema.routingPolicyRuntime)
@@ -119,6 +134,82 @@ function deferred() {
 }
 
 describe('inactive durable policy transition service', () => {
+  test('a verified policy never advances global Applied over a failed interface', async () => {
+    const { db, service } = await fixture();
+    await db
+      .update(schema.interfaceRuntimeState)
+      .set({
+        status: 'degraded',
+        observedUp: false,
+        restartRequired: true,
+        lastError: 'interface_unavailable',
+      })
+      .execute();
+    const pending = await service.prepare(transition(), record());
+    await verified(service, pending);
+    await service.finishApplied(pending, async () => {});
+    expect(await service.get()).toMatchObject({
+      applied: record(2),
+      pending: null,
+      runtime: {
+        desiredRevision: 2,
+        appliedRevision: 1,
+        status: 'degraded',
+        lastError: 'interface_configuration_unapplied',
+      },
+    });
+    // A health retry uses the same desired revision, not a new sequence.
+    const retry = await service.prepare(transition(), record(2));
+    await verified(service, retry);
+    await service.finishApplied(retry, async (tx) => {
+      await tx
+        .update(schema.interfaceRuntimeState)
+        .set({
+          status: 'up',
+          observedUp: true,
+          restartRequired: false,
+          lastError: null,
+        })
+        .execute();
+    });
+    expect(await service.get()).toMatchObject({
+      applied: record(2),
+      pending: null,
+      runtime: {
+        desiredRevision: 2,
+        appliedRevision: 2,
+        status: 'idle',
+        lastError: null,
+      },
+    });
+  });
+  test.each([
+    'pending revision',
+    'pending status',
+    'restart required',
+    'unobserved enabled device',
+  ])(
+    'configuration evidence refuses false global convergence: %s',
+    async (kind) => {
+      const { db, service } = await fixture();
+      const patch =
+        kind === 'pending revision'
+          ? { desiredRevision: 2 }
+          : kind === 'pending status'
+            ? { status: 'pending' as const }
+            : kind === 'restart required'
+              ? { restartRequired: true }
+              : { observedUp: false };
+      await db.update(schema.interfaceRuntimeState).set(patch).execute();
+      const pending = await service.prepare(transition(), record());
+      await verified(service, pending);
+      await service.finishApplied(pending, async () => {});
+      expect((await service.get()).runtime).toMatchObject({
+        appliedRevision: 1,
+        status: 'degraded',
+      });
+    }
+  );
   test('version 1 never fabricates applied evidence and unknown versions cannot mutate', async () => {
     const { db, service } = await fixture({ version: 1, applied: false });
     expect(await service.get()).toMatchObject({
@@ -235,7 +326,7 @@ describe('inactive durable policy transition service', () => {
     await service.finishApplied(pending, async (tx) => {
       await tx
         .update(schema.interfaceRuntimeState)
-        .set({ appliedRevision: 2 })
+        .set({ appliedRevision: 2, desiredRevision: 2 })
         .where(eq(schema.interfaceRuntimeState.interfaceId, 'wg0'))
         .execute();
     });

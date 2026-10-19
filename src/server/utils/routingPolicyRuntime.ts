@@ -10,6 +10,7 @@ import {
 } from '#server/utils/routingPolicy';
 import type {
   AppliedRoutingPolicyPlan,
+  PolicyClientFirewall,
   PolicySnapshot,
 } from '#shared/types/routingPolicy';
 
@@ -43,14 +44,18 @@ export function specializeRoutingPolicy(
     enabledInterfaceIds,
     upInterfaceIds,
     enableIpv6,
+    clientFirewall,
   }: {
     selectedExitClientIds: ReadonlyMap<number, number | null>;
     enabledInterfaceIds: ReadonlySet<string>;
     upInterfaceIds: ReadonlySet<string>;
     enableIpv6: boolean;
+    clientFirewall: PolicyClientFirewall;
   }
 ) {
   const compiled = compileRoutingPolicy(snapshot);
+  if (clientFirewall.enableIpv6 !== enableIpv6)
+    throw new PolicyValidationError('firewall_ipv6_mismatch');
   const clients = new Map(snapshot.clients.map((c) => [c.id, c]));
   const interfaces = new Map(
     snapshot.interfaces.map((i) => [i.interfaceId, i])
@@ -69,8 +74,13 @@ export function specializeRoutingPolicy(
   for (const id of enabledInterfaceIds)
     if (!interfaces.has(id))
       throw new PolicyValidationError('interface_not_found');
+  for (const id of upInterfaceIds)
+    if (!enabledInterfaceIds.has(id))
+      throw new PolicyValidationError('interface_availability_invalid', {
+        interfaceId: interfaces.has(id) ? id : undefined,
+      });
   const peers = compiled.basePeers
-    .filter((p) => enabledInterfaceIds.has(p.interfaceId))
+    .filter((p) => upInterfaceIds.has(p.interfaceId))
     .map((p) => ({
       ...p,
       prefixes: [
@@ -136,18 +146,21 @@ export function specializeRoutingPolicy(
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const plan: AppliedRoutingPolicyPlan = {
     version: 2,
+    clientFirewall: structuredClone(clientFirewall),
     interfaces: [...snapshot.interfaces]
       .sort((a, b) => a.interfaceId.localeCompare(b.interfaceId))
       .map((i) => ({
         interfaceId: i.interfaceId,
         ipv4Cidr: normalizeCidr(i.ipv4Cidr),
         enabled: enabledInterfaceIds.has(i.interfaceId),
+        observedUp: upInterfaceIds.has(i.interfaceId),
       })),
     siteRoutes: [...snapshot.clients]
       .filter(
         (c) =>
           c.enabled &&
           enabledInterfaceIds.has(c.interfaceId) &&
+          upInterfaceIds.has(c.interfaceId) &&
           c.serverAllowedIps.length > 0
       )
       .sort((a, b) => a.id - b.id)

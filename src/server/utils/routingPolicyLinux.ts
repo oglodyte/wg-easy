@@ -41,6 +41,9 @@ export function renderRoutingPolicyLinux(
   });
   const result = buildRoutingPlan({ interfaces: [], clients: [], groups: [] });
   const byGroup = new Map(plan.groups.map((g) => [g.id, g]));
+  const upInterfaces = new Set(
+    plan.interfaces.filter((i) => i.observedUp).map((i) => i.interfaceId)
+  );
   const mask = formatMark(FWMARK_MASK);
   result.classifier = { fingerprint, children: [] };
   result.markChainRules = [
@@ -116,7 +119,9 @@ export function renderRoutingPolicyLinux(
         rules,
       });
     }
-    for (const source of program.sources)
+    for (const source of program.sources.filter((s) =>
+      upInterfaces.has(s.interfaceId)
+    ))
       result.markChainRules.push([
         '-A',
         ROUTING_MARK_CHAIN,
@@ -133,7 +138,7 @@ export function renderRoutingPolicyLinux(
       ]);
   }
   result.parentMarkJumps = plan.interfaces
-    .filter((i) => i.enabled)
+    .filter((i) => i.observedUp)
     .map((i) => ({
       interfaceId: i.interfaceId,
       args: [
