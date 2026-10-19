@@ -105,6 +105,15 @@ jobs:
           sudo env "PATH=$PATH" WG_EASY_RUN_PRIVILEGED_TESTS=1 \
             node "$RUNNER_TEMP/wg-easy-guard-probe.mjs"
 
+      - name: Build dedicated staging AWG recovery proof
+        working-directory: src
+        run: |
+          pnpm exec prettier --check ../staging/subnet-policy/awg-recovery-probe.ts
+          pnpm exec esbuild ../staging/subnet-policy/awg-recovery-probe.ts \
+            --bundle --platform=node --format=esm --packages=bundle \
+            --alias:#server=./server --alias:#shared=./shared --alias:#db=./server/database \
+            --outfile="$RUNNER_TEMP/wg-easy-awg-recovery-probe.mjs"
+
   server-build:
     name: Build server (${{ matrix.architecture }})
     needs:

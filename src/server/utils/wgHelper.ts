@@ -11,6 +11,11 @@ import type { UserConfigType } from '#db/repositories/userConfig/types';
 import type { HooksType } from '#db/repositories/hooks/types';
 import type { ConcreteConfigFormat, ConfigFormat } from '#shared/types/runtime';
 import { InterfaceNameSchema } from '#shared/utils/schemas';
+import {
+  PeerSyncCredentialError,
+  preparePeerSyncConfig,
+  verifyPeerSyncPresharedKeys,
+} from '#server/utils/peerSyncConfig';
 
 type Options = {
   enableIpv6?: boolean;
@@ -271,13 +276,28 @@ Endpoint = ${userConfig.host}:${userConfig.port}`;
 
   sync: async (infName: string) => {
     const interfaceId = InterfaceNameSchema.parse(infName);
-    const strippedConfig = await execFile(`${wgExecutable}-quick`, [
-      'strip',
-      interfaceId,
-    ]);
-    return withSecureInputFile(`${strippedConfig}\n`, (inputPath) =>
-      execFile(wgExecutable, ['syncconf', interfaceId, inputPath])
-    );
+    try {
+      const strippedConfig = await execFile(`${wgExecutable}-quick`, [
+        'strip',
+        interfaceId,
+      ]);
+      const result = await withSecureInputFile(
+        preparePeerSyncConfig(strippedConfig),
+        (inputPath) =>
+          execFile(wgExecutable, ['syncconf', interfaceId, inputPath])
+      );
+      const observed = await execFile(
+        wgExecutable,
+        ['show', interfaceId, 'preshared-keys'],
+        { log: false }
+      );
+      verifyPeerSyncPresharedKeys(interfaceId, strippedConfig, observed);
+      return result;
+    } catch (error) {
+      if (error instanceof PeerSyncCredentialError) throw error;
+      // Tool/strip errors can quote private configuration input.
+      throw new PeerSyncCredentialError('sync_failed', interfaceId);
+    }
   },
 
   validateConfig: async (configPath: string) => {

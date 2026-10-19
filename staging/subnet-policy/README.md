@@ -65,3 +65,37 @@ credentials or client configurations. Retain the bundle checksum and output.
 The image is only an isolated Node/tool interpreter for that exact bundle; it
 does not deploy the inactive application changes. The image workflow runs the
 same bundled proof on its disposable Linux runner.
+
+## Real AWG process recovery
+
+`awg-recovery-probe.ts` requires the shipped AWG kernel device/tools on dedicated
+staging. It creates separate underlay, member, exit, sink and management
+namespaces, ephemeral private keys/configs and a fresh synthetic database. It
+mounts no application data, host network or client configurations. Only exact
+namespaces and the owner-marked private directory it creates are removed.
+
+Build from `src`:
+
+```sh
+pnpm exec esbuild ../staging/subnet-policy/awg-recovery-probe.ts \
+  --bundle --platform=node --format=esm --packages=bundle \
+  --alias:#server=./server --alias:#shared=./shared --alias:#db=./server/database \
+  --outfile=/private/tmp/awg-recovery-probe.mjs
+```
+
+Run with the same disposable privileged/network-none pattern above. The immutable
+interpreter image must include the matching migrations at
+`/app/server/database/migrations`. This fixture seeds a verified synthetic applied
+generation; it does not perform initial application promotion. It exercises real
+peer/key replacement, an obfuscated exit, complete peer maps, marked route
+lookups, byte counters, observed sink sources, independent worker process kills,
+retained guards, durable private-byte restoration and same-identity preshared-key
+clearing. Unchanged interfaces use no sync; affected peers use `awg syncconf`.
+Recovery callbacks in this fixture operate the lab endpoints explicitly; the
+product does not push configurations to remote clients.
+
+Keep only its safe stage/count/source output and bundle hash as evidence. Keys,
+database bytes and configuration text remain inside the disposable private
+fixture. This is a component-level AWG proof. Full application callback/firewall
+integration, promotion/migration/rollback, browser behavior and independent
+published-UDP traversal retain their separate required gates.
