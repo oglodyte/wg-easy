@@ -41,8 +41,12 @@ TCP/UDP traffic, SNAT return paths and counters. It checks established-flow
 blocking before ACCEPT rules, atomic client-firewall replacement, unrelated
 forwarding, local traffic, management continuity and exact foreign-rule
 preservation. It refuses namespace collisions and removes only namespaces it
-created. This is a Linux guard proof; AWG ownership, coordinator recovery and
-version 2 activation have separate required gates.
+created. Its `policy-checkpoint.ts` module also exercises the shared classifier,
+same-device default/LAN paths, terminal block/host, per-group NAT, all eight
+executor fault boundaries, fresh-executor restoration under a retained guard,
+stale-child cleanup and foreign-body refusal. These are veth/Linux proofs;
+AWG peer ownership, durable coordinator recovery and version 2 activation have
+separate required gates. Normal application paths still use version 1.
 
 Build from `src` with the locked dependencies:
 

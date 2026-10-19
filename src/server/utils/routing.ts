@@ -15,6 +15,7 @@ export const WG_EASY_ROUTE_PROTOCOL = 186;
 export const FWMARK_NAMESPACE = 0x54000000;
 export const FWMARK_MASK = 0xffff0000;
 export const ROUTING_MARK_CHAIN = 'WG_ROUTE_MARK';
+export const ROUTING_PROGRAM_CHAIN_PREFIX = 'WG_RP_';
 export const ROUTING_NAT_CHAIN = 'WG_ROUTE_NAT';
 export const ROUTING_OWNER_COMMENT = 'wg-easy common routing';
 
@@ -496,6 +497,7 @@ export type ObservedRoutingState = {
     table: 'mangle' | 'nat';
     line: string;
   }[];
+  rawIptables?: { mangle: string; nat: string };
 };
 
 export type OwnershipConflict = {
@@ -592,6 +594,8 @@ export function preflightRoutingOwnership(observed: ObservedRoutingState): {
   for (const chain of observed.chains) {
     const reserved =
       (chain.table === 'mangle' && chain.name === ROUTING_MARK_CHAIN) ||
+      (chain.table === 'mangle' &&
+        chain.name.startsWith(ROUTING_PROGRAM_CHAIN_PREFIX)) ||
       (chain.table === 'nat' && chain.name === ROUTING_NAT_CHAIN);
     if (reserved && chain.owner !== 'wg-easy') {
       conflicts.push({
@@ -696,6 +700,10 @@ export type RoutingPlan = {
   parentMarkJumps: { interfaceId: string; args: string[] }[];
   parentNatJump: string[] | null;
   markChainRules: string[][];
+  classifier?: {
+    fingerprint: string;
+    children: { name: string; fingerprint: string; rules: string[][] }[];
+  };
   natChainRules: string[][];
   routes: PlannedRoute[];
   policyRules: PlannedPolicyRule[];
@@ -807,7 +815,9 @@ function serverIpv4Address(cidr: string) {
   return stringifyIp({ number: parsed.start + 1n, version: 4 });
 }
 
-function routeCommand(route: Omit<PlannedRoute, 'command'>): CommandIntent {
+export function routeCommand(
+  route: Omit<PlannedRoute, 'command'>
+): CommandIntent {
   const args = [
     `-${route.family}`,
     'route',
@@ -823,7 +833,9 @@ function routeCommand(route: Omit<PlannedRoute, 'command'>): CommandIntent {
   return { executable: 'ip', args };
 }
 
-function ruleCommand(rule: Omit<PlannedPolicyRule, 'command'>): CommandIntent {
+export function ruleCommand(
+  rule: Omit<PlannedPolicyRule, 'command'>
+): CommandIntent {
   const args = [
     `-${rule.family}`,
     'rule',

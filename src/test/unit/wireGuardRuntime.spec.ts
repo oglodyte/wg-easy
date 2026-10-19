@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.resetModules();
   vi.clearAllMocks();
 });
@@ -324,6 +325,28 @@ async function loadRuntime(
 }
 
 describe('interface-scoped WireGuard runtime', () => {
+  test('evaluates a handshake observed during the dump using the completed observation time', async () => {
+    const { WireGuard, wg, routingGroupRuntime } = await loadRuntime(
+      undefined,
+      undefined,
+      true
+    );
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const originalDump = wg.dump.getMockImplementation()!;
+    wg.dump.mockImplementation(async (interfaceId: string) => {
+      vi.setSystemTime(Date.now() + 10);
+      return originalDump(interfaceId);
+    });
+    const result = await WireGuard.requestReconcile(
+      'handshake-during-observation'
+    );
+    expect(result.runtime.status).toBe('applied');
+    expect(routingGroupRuntime).toMatchObject({
+      selectedExitClientId: 2,
+      appliedExitClientId: 2,
+      status: 'active',
+    });
+  });
   test('writes per-interface peer sets and isolates an interface startup failure', async () => {
     const { WireGuard, Database, runtime, wg, atomicWriteFile } =
       await loadRuntime('awg1');

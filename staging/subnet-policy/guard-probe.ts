@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { provePolicyClassifier } from "./policy-checkpoint";
 
 import { execFile } from "../../src/server/utils/cmd";
 import { firewallTestExports } from "../../src/server/utils/firewall";
@@ -540,6 +541,17 @@ try {
   await guard.remove(legacy);
   assert.equal((await fetchFrom(ns.management)).source, "192.0.2.2");
   assert.equal((await fetchFrom(ns.server)).source, "10.240.2.1");
+  const policyEvidence = await provePolicyClassifier({
+    server,
+    fetchFrom: (destination) => fetchFrom(ns.member, destination),
+    denied: () => denied(),
+    management: () => ping(ns.management, "192.0.2.1"),
+    protectedPaths,
+    checkpoint,
+    exitMac: (
+      await inside(ns.exit, "cat", ["/sys/class/net/tun0/address"])
+    ).trim(),
+  });
   const after = (await server("iptables-save", ["-t", "filter"]))
     .split("\n")
     .filter((line) => foreign.includes(line));
@@ -561,6 +573,7 @@ try {
       legacyPrefixGuard: true,
       unmarkedForwarding: true,
       scopeCount: full.scopes.length,
+      ...policyEvidence,
     }),
   );
 } finally {

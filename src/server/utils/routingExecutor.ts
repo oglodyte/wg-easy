@@ -3,6 +3,7 @@ import {
   ROUTING_MARK_CHAIN,
   ROUTING_NAT_CHAIN,
   ROUTING_OWNER_COMMENT,
+  ROUTING_PROGRAM_CHAIN_PREFIX,
   WG_EASY_ROUTE_PROTOCOL,
   formatMark,
   isOwnedRoutingRoute,
@@ -16,6 +17,15 @@ import {
   type PlannedPolicyRule,
   type RoutingPlan,
 } from '#server/utils/routing';
+import {
+  RoutingGuard,
+  type RoutingGuardPlan,
+} from '#server/utils/routingGuard';
+import {
+  assertRoutingPolicyChains,
+  canonicalRoutingRule,
+  routingRestoreRule,
+} from '#server/utils/routingPolicyOwnership';
 
 export type RoutingApplyPhase =
   | 'preflight'
@@ -36,6 +46,10 @@ type RunCommand = (
 type ApplyOptions = {
   previousPlan?: RoutingPlan;
   afterPhase?: (phase: RoutingApplyPhase) => void | Promise<void>;
+  guardedTransition?: {
+    guard: RoutingGuardPlan;
+    knownPlans: readonly RoutingPlan[];
+  };
 };
 
 const OWNER_MARKER = `${ROUTING_OWNER_COMMENT} owner`;
@@ -151,6 +165,14 @@ function parseIptablesState(
 
   for (const { table, output } of tables) {
     const lines = output.split('\n').map((line) => line.trim());
+    const byChain = new Map<string, string[]>();
+    for (const line of lines) {
+      const name = line.match(/^-A (\S+) /)?.[1];
+      if (!name) continue;
+      const rules = byChain.get(name) ?? [];
+      rules.push(line);
+      byChain.set(name, rules);
+    }
     const reservedChain =
       table === 'mangle' ? ROUTING_MARK_CHAIN : ROUTING_NAT_CHAIN;
     const exists = lines.some((line) => line.startsWith(`:${reservedChain} `));
@@ -171,6 +193,23 @@ function parseIptablesState(
         name: reservedChain,
         owner: exists && owned && !nonOwnedJump ? 'wg-easy' : 'other',
       });
+    }
+    if (table === 'mangle') {
+      for (const line of lines) {
+        const name = line.match(/^:([^ ]+) /)?.[1];
+        if (!name?.startsWith(ROUTING_PROGRAM_CHAIN_PREFIX)) continue;
+        const rules = byChain.get(name) ?? [];
+        chains.push({
+          table,
+          name,
+          owner: rules.some((l) =>
+            l.includes(`--comment "${ROUTING_OWNER_COMMENT} program `)
+          )
+            ? 'wg-easy'
+            : 'other',
+        });
+        ownedChainRules.push(...rules.map((line) => ({ table, line })));
+      }
     }
 
     for (const line of lines) {
@@ -211,22 +250,8 @@ function replaceAppendWithInsert(args: readonly string[]) {
   return ['-I', args[1], '1', ...args.slice(2)];
 }
 
-function restoreArgument(value: string) {
-  return /^[A-Za-z0-9_./:=+-]+$/.test(value)
-    ? value
-    : `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
-}
-
-function restoreRule(args: readonly string[]) {
-  return args.map(restoreArgument).join(' ');
-}
-
-function canonicalizeIptablesRule(rule: string) {
-  // iptables-save omits an explicit IPv4 default-destination match. Keep the
-  // verifier aligned with that canonical representation without changing the
-  // generated restore input, which remains explicit and readable.
-  return rule.replace(/ -d 0\.0\.0\.0\/0(?= |$)/g, '');
-}
+const restoreRule = routingRestoreRule;
+const canonicalizeIptablesRule = canonicalRoutingRule;
 
 function renderRestoreDocument({
   table,
@@ -234,22 +259,27 @@ function renderRestoreDocument({
   rules,
   jumps,
   observed,
+  children = [],
 }: {
   table: 'mangle' | 'nat';
   chain: string;
   rules: readonly string[][];
   jumps: readonly string[][];
   observed: ObservedRoutingState;
+  children?: NonNullable<RoutingPlan['classifier']>['children'];
 }) {
   const lines = [
     `*${table}`,
     `:${chain} - [0:0]`,
+    ...children.map((c) => `:${c.name} - [0:0]`),
     `-F ${chain}`,
+    ...children.map((c) => `-F ${c.name}`),
     ...(observed.ownedParentJumps ?? [])
       .filter((jump) => jump.table === table)
       .map(({ line }) => line.replace(/^-A /, '-D ')),
     `-A ${chain} -m comment --comment "${OWNER_MARKER}"`,
     ...rules.map(restoreRule),
+    ...children.flatMap((c) => c.rules.map(restoreRule)),
     ...jumps.map((args) => restoreRule(replaceAppendWithInsert(args))),
     'COMMIT',
     '',
@@ -366,6 +396,7 @@ export class RoutingExecutor {
       policyRules: [...parseRules(rules4, 4), ...parseRules(rules6, 6)],
       routes: [...parseRoutes(routes4, 4), ...parseRoutes(routes6, 6)],
       ...iptables,
+      rawIptables: { mangle, nat },
     };
   }
 
@@ -378,10 +409,14 @@ export class RoutingExecutor {
   }
 
   async apply(plan: RoutingPlan, options: ApplyOptions = {}) {
+    if (plan.classifier && !options.guardedTransition) {
+      throw new Error('Guarded policy classifier execution is unavailable');
+    }
     let mutationStarted = false;
     try {
       await this.#applyOnce(plan, {
         afterPhase: options.afterPhase,
+        guardedTransition: options.guardedTransition,
         previousNatRules: options.previousPlan?.natChainRules,
         previousNatJump: options.previousPlan?.parentNatJump,
         onMutation: () => {
@@ -389,7 +424,12 @@ export class RoutingExecutor {
         },
       });
     } catch (error) {
-      if (!mutationStarted || !options.previousPlan) throw error;
+      if (
+        !mutationStarted ||
+        !options.previousPlan ||
+        options.guardedTransition
+      )
+        throw error;
       try {
         await this.#applyOnce(options.previousPlan, {
           previousNatRules: [],
@@ -414,15 +454,24 @@ export class RoutingExecutor {
       previousNatRules = [],
       previousNatJump = null,
       onMutation,
+      guardedTransition,
     }: {
       afterPhase?: ApplyOptions['afterPhase'];
       previousNatRules?: readonly string[][];
       previousNatJump?: string[] | null;
       onMutation: () => void;
+      guardedTransition?: ApplyOptions['guardedTransition'];
     }
   ) {
     await this.capabilityPreflight();
     const before = await this.observe();
+    if (
+      !guardedTransition &&
+      before.chains.some((c) => c.name.startsWith(ROUTING_PROGRAM_CHAIN_PREFIX))
+    )
+      throw new RoutingOwnershipConflictError(
+        'Guarded classifier recovery is required'
+      );
     const preflight = preflightRoutingOwnership(before);
     if (!preflight.ok) {
       throw new RoutingOwnershipConflictError(
@@ -434,6 +483,29 @@ export class RoutingExecutor {
       ...previousNatRules,
       ...plan.natChainRules,
     ]);
+    const transitionNatJumps =
+      transitionNatRules.length > 0
+        ? [plan.parentNatJump ?? previousNatJump!]
+        : [];
+    const knownPlans = [plan, ...(guardedTransition?.knownPlans ?? [])];
+    const assertKnown = (state: ObservedRoutingState) => {
+      if (guardedTransition) {
+        if (!state.rawIptables)
+          throw new Error('Routing policy observation is unavailable');
+        assertRoutingPolicyChains(state.rawIptables, knownPlans, {
+          transitionNatRules,
+          transitionNatJumps,
+        });
+      }
+    };
+    const checkpoint = async (phase: RoutingApplyPhase) => {
+      await afterPhase?.(phase);
+      if (guardedTransition)
+        await new RoutingGuard(this.#run).verify(guardedTransition.guard);
+    };
+    assertKnown(before);
+    if (guardedTransition)
+      await new RoutingGuard(this.#run).verify(guardedTransition.guard);
     const transitionNatDocument = renderRestoreDocument({
       table: 'nat',
       chain: ROUTING_NAT_CHAIN,
@@ -452,6 +524,7 @@ export class RoutingExecutor {
         rules: plan.markChainRules,
         jumps: plan.parentMarkJumps.map(({ args }) => args),
         observed: before,
+        children: plan.classifier?.children,
       })
     );
     await this.#testRestore(
@@ -463,13 +536,13 @@ export class RoutingExecutor {
         observed: before,
       })
     );
-    await afterPhase?.('preflight');
+    await checkpoint('preflight');
 
     for (const route of plan.routes) {
       onMutation();
       await this.#run(route.command.executable, route.command.args);
     }
-    await afterPhase?.('routes');
+    await checkpoint('routes');
 
     const existingRuleKeys = new Set(
       before.policyRules
@@ -481,13 +554,14 @@ export class RoutingExecutor {
       onMutation();
       await this.#run(rule.command.executable, rule.command.args);
     }
-    await afterPhase?.('rules');
+    await checkpoint('rules');
 
     onMutation();
     await this.#restore(transitionNatDocument);
-    await afterPhase?.('transition_nat');
+    await checkpoint('transition_nat');
 
     const afterNat = await this.observe();
+    assertKnown(afterNat);
     await this.#restore(
       renderRestoreDocument({
         table: 'mangle',
@@ -495,11 +569,13 @@ export class RoutingExecutor {
         rules: plan.markChainRules,
         jumps: plan.parentMarkJumps.map(({ args }) => args),
         observed: afterNat,
+        children: plan.classifier?.children,
       })
     );
-    await afterPhase?.('mark_activation');
+    await checkpoint('mark_activation');
 
     const afterMark = await this.observe();
+    assertKnown(afterMark);
     await this.#restore(
       renderRestoreDocument({
         table: 'nat',
@@ -509,11 +585,30 @@ export class RoutingExecutor {
         observed: afterMark,
       })
     );
-    await afterPhase?.('final_nat');
+    await checkpoint('final_nat');
 
     const desiredRoutes = new Set(plan.routes.map(routeKey));
     const desiredRules = new Set(plan.policyRules.map(ruleKey));
     const afterActivation = await this.observe();
+    assertKnown(afterActivation);
+    const retainedChildren = new Set(
+      plan.classifier?.children.map((c) => c.name) ?? []
+    );
+    const staleChildren = afterActivation.chains.filter(
+      (c) =>
+        c.table === 'mangle' &&
+        c.name.startsWith(ROUTING_PROGRAM_CHAIN_PREFIX) &&
+        !retainedChildren.has(c.name)
+    );
+    if (staleChildren.length)
+      await this.#restore(
+        [
+          '*mangle',
+          ...staleChildren.flatMap((c) => [`-F ${c.name}`, `-X ${c.name}`]),
+          'COMMIT',
+          '',
+        ].join('\n')
+      );
     for (const route of afterActivation.routes) {
       if (
         isOwnedRoutingRoute(route) &&
@@ -540,9 +635,25 @@ export class RoutingExecutor {
         retainedRuleKeys.add(key);
       }
     }
-    await afterPhase?.('cleanup');
+    await checkpoint('cleanup');
 
+    await this.verify(plan, guardedTransition?.guard);
+    await checkpoint('verify');
+  }
+
+  /** Read-only whole Linux verification; an explicit null requires guard absence. */
+  async verify(plan: RoutingPlan, guard?: RoutingGuardPlan | null) {
+    if (plan.classifier && guard === undefined)
+      throw new Error('Routing policy guard observation is required');
+    if (guard !== undefined) await new RoutingGuard(this.#run).verify(guard);
     const verified = await this.observe();
+    if (guard !== undefined) {
+      if (!verified.rawIptables)
+        throw new Error('Routing policy observation is unavailable');
+      assertRoutingPolicyChains(verified.rawIptables, [plan], { final: true });
+    }
+    const desiredRoutes = new Set(plan.routes.map(routeKey));
+    const desiredRules = new Set(plan.policyRules.map(ruleKey));
     const verifiedOwnership = preflightRoutingOwnership(verified);
     if (!verifiedOwnership.ok) {
       throw new RoutingOwnershipConflictError(
@@ -571,6 +682,9 @@ export class RoutingExecutor {
     );
     const desiredChainRules = new Set([
       ...plan.markChainRules.map(
+        (args) => `mangle:${canonicalizeIptablesRule(restoreRule(args))}`
+      ),
+      ...(plan.classifier?.children.flatMap((c) => c.rules) ?? []).map(
         (args) => `mangle:${canonicalizeIptablesRule(restoreRule(args))}`
       ),
       ...plan.natChainRules.map(
@@ -619,7 +733,6 @@ export class RoutingExecutor {
         `Routing verification did not observe the complete plan: ${verificationIssues.join('; ')}`
       );
     }
-    await afterPhase?.('verify');
   }
 
   async #restore(document: string) {

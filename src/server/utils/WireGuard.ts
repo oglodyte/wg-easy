@@ -390,13 +390,15 @@ class WireGuard {
   async #evaluateRouting({
     bootstrap = false,
   } = {}): Promise<RoutingEvaluation> {
-    const now = new Date();
     const [snapshot, dump] = await Promise.all([
       Database.routingGroups.getPlannerSnapshot(),
       bootstrap
         ? Promise.resolve({ statuses: [], failures: [] })
         : this.dumpAll(),
     ]);
+    // Judge the collected observations at decision time. A handshake that
+    // arrives during the dump must not appear to be from the future.
+    const now = new Date();
     const interfaceById = new Map(
       snapshot.interfaces.map((wgInterface) => [
         wgInterface.interfaceId,
