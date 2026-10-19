@@ -99,6 +99,82 @@ function contains(prefix: string, address: string) {
 }
 
 describe('inactive whole-policy transition closure', () => {
+  test('credential-only replacement guards IPv6 identity paths while leaving another same-interface peer alone', () => {
+    const plan = fixture();
+    plan.peers[0]!.prefixes.push('fd08::2/128');
+    plan.peers.push({
+      clientId: 5,
+      interfaceId: 'wg0',
+      peerId: 'unrelated',
+      prefixes: ['10.8.0.3/32', 'fd08::3/128'],
+    });
+    const guard = buildRoutingPolicyTransition(plan, plan, {
+      ...options,
+      forcePeerIds: new Set(['member']),
+    });
+    expect(
+      guard.scopes.filter(
+        (s) => s.source.includes(':') || s.destination.includes(':')
+      )
+    ).toHaveLength(4);
+    expect(guard.scopes).toContainEqual({
+      direction: 'input',
+      inputInterface: 'wg0',
+      source: 'fd08::2/128',
+      destination: '::/0',
+    });
+    expect(
+      guard.scopes.some(
+        (s) => s.source === 'fd08::3/128' || s.destination === 'fd08::3/128'
+      )
+    ).toBe(false);
+  });
+  test('IPv6 LPM closure preserves unchanged more-specific peers and unsigned high addresses', () => {
+    const before = fixture(),
+      after = fixture();
+    before.peers[1]!.prefixes.push('8000::/1');
+    after.peers[2]!.prefixes.push('8000::/1');
+    for (const plan of [before, after])
+      plan.peers.push({
+        clientId: 5,
+        interfaceId: 'awg1',
+        peerId: 'unrelated6',
+        prefixes: ['8000:1234::/32'],
+      });
+    const guard = buildRoutingPolicyTransition(before, after, options);
+    const outbound = guard.scopes.filter(
+      (s) => s.direction === 'output' && s.destination.includes(':')
+    );
+    const covered = (ip: string) =>
+      outbound.some((s) => {
+        const p = parseCidr(s.destination),
+          a = parseCidr(ip);
+        return p.start <= a.start && p.end >= a.end;
+      });
+    expect(covered('8000:1234::1')).toBe(false);
+    expect(covered('8000:1235::1')).toBe(true);
+    expect(covered('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')).toBe(true);
+    expect(covered('7fff:ffff::1')).toBe(false);
+  });
+  test('IPv6 legacy route withdrawal has prefix-only local and forwarded protection even if peers do not change', () => {
+    const before = fixture(),
+      after = fixture();
+    before.siteRoutes = [
+      { interfaceId: 'awg1', prefixes: ['2001:db8:44::/64'] },
+    ];
+    const guard = buildRoutingPolicyTransition(before, after, options);
+    expect(guard.scopes).toHaveLength(4);
+    expect(guard.scopes).toContainEqual({
+      direction: 'output',
+      source: '::/0',
+      destination: '2001:db8:44::/64',
+    });
+    expect(guard.scopes).toContainEqual({
+      direction: 'input',
+      source: '2001:db8:44::/64',
+      destination: '::/0',
+    });
+  });
   test('does nothing for identical state without credential impacts', () => {
     const plan = fixture();
     expect(buildRoutingPolicyTransition(plan, plan, options).scopes).toEqual(

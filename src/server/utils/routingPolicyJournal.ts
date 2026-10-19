@@ -107,8 +107,8 @@ const guardScope = z.strictObject({
   direction: z.enum(['input', 'forward', 'output']),
   inputInterface: InterfaceNameSchema.optional(),
   outputInterface: InterfaceNameSchema.optional(),
-  source: prefix(4),
-  destination: prefix(4),
+  source: prefix(),
+  destination: prefix(),
 });
 const pendingSchema = journalSchema.extend({
   stage: z.enum([

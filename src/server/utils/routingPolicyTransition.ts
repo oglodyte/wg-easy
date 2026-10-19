@@ -1,4 +1,5 @@
 import { parseCidr } from 'cidr-tools';
+import { stringifyIp } from 'ip-bigint';
 
 import {
   buildRoutingGuard,
@@ -59,20 +60,21 @@ function sourcePrograms(plan: AppliedRoutingPolicyPlan | null) {
   return programs;
 }
 type Trie = { owner?: string; zero?: Trie; one?: Trie };
-function peerTrie(peers: AppliedRoutingPolicyPlan['peers']) {
+function peerTrie(peers: AppliedRoutingPolicyPlan['peers'], family: 4 | 6) {
   const root: Trie = {},
-    points = new Set<number>();
+    points = new Set<bigint>();
+  const bits = family === 4 ? 32 : 128;
   for (const peer of peers)
     for (const prefix of peer.prefixes) {
       const p = parseCidr(prefix);
-      if (p.version !== 4) continue;
-      const start = Number(p.start);
+      if (p.version !== family) continue;
+      const start = p.start;
       points.add(start);
-      points.add(Number(p.end) + 1);
+      points.add(p.end + 1n);
       let node = root;
       for (let bit = 0; bit < Number(p.prefix); bit++) {
         const side =
-          Math.floor(start / 2 ** (31 - bit)) % 2 === 0 ? 'zero' : 'one';
+          ((start >> BigInt(bits - 1 - bit)) & 1n) === 0n ? 'zero' : 'one';
         node[side] ??= {};
         node = node[side]!;
       }
@@ -82,18 +84,44 @@ function peerTrie(peers: AppliedRoutingPolicyPlan['peers']) {
     }
   return { root, points };
 }
-function lookup(root: Trie, address: number) {
+function lookup(root: Trie, address: bigint, bits: number) {
   let node: Trie | undefined = root,
     owner = root.owner;
-  for (let bit = 0; bit < 32 && node; bit++) {
+  for (let bit = 0; bit < bits && node; bit++) {
     node =
-      node[Math.floor(address / 2 ** (31 - bit)) % 2 === 0 ? 'zero' : 'one'];
+      node[((address >> BigInt(bits - 1 - bit)) & 1n) === 0n ? 'zero' : 'one'];
     if (node?.owner) owner = node.owner;
   }
   return owner;
 }
 
-/** Pure IPv4 closure; previous identities survive deletion and key replacement. */
+function* claimRangeCidrs(
+  ranges: { start: bigint; end: bigint }[],
+  family: 4 | 6
+) {
+  const ordered = [...ranges].sort((a, b) =>
+    a.start < b.start ? -1 : a.start > b.start ? 1 : 0
+  );
+  const union: typeof ranges = [];
+  for (const r of ordered) {
+    const last = union.at(-1);
+    if (last && r.start <= last.end)
+      last.end = last.end > r.end ? last.end : r.end;
+    else union.push({ ...r });
+  }
+  const bits = family === 4 ? 32 : 128;
+  for (const r of union) {
+    let start = r.start;
+    while (start < r.end) {
+      let size = start === 0n ? 1n << BigInt(bits) : start & -start;
+      while (size > r.end - start) size >>= 1n;
+      yield `${stringifyIp({ number: start, version: family })}/${bits - (size.toString(2).length - 1)}`;
+      start += size;
+    }
+  }
+}
+
+/** IPv4 policy plus IPv4/IPv6 peer and legacy preservation, without IPv6 policy. */
 export function buildRoutingPolicyTransition(
   previous: AppliedRoutingPolicyPlan | null,
   target: AppliedRoutingPolicyPlan,
@@ -206,21 +234,24 @@ export function buildRoutingPolicyTransition(
   const siteClaims = (plan: AppliedRoutingPolicyPlan | null) =>
     new Map(
       (plan?.siteRoutes ?? []).flatMap((route) =>
-        route.prefixes
-          .filter((prefix) => parseCidr(prefix).version === 4)
-          .map((prefix) => [prefix, route.interfaceId] as const)
+        route.prefixes.map((prefix) => [prefix, route.interfaceId] as const)
       )
     );
   const oldSites = siteClaims(previous),
     newSites = siteClaims(target);
-  const siteRanges = [...new Set([...oldSites.keys(), ...newSites.keys()])]
-    .filter((prefix) => oldSites.get(prefix) !== newSites.get(prefix))
-    .map(range);
-  for (const prefix of policyRangeCidrs(siteRanges)) {
-    add({ direction: 'forward', source: '0.0.0.0/0', destination: prefix });
-    add({ direction: 'output', source: '0.0.0.0/0', destination: prefix });
-    add({ direction: 'forward', source: prefix, destination: '0.0.0.0/0' });
-    add({ direction: 'input', source: prefix, destination: '0.0.0.0/0' });
+  for (const family of [4, 6] as const) {
+    const any = family === 4 ? '0.0.0.0/0' : '::/0';
+    const siteRanges = [...new Set([...oldSites.keys(), ...newSites.keys()])]
+      .filter((prefix) => oldSites.get(prefix) !== newSites.get(prefix))
+      .map(parseCidr)
+      .filter((p) => p.version === family)
+      .map((p) => ({ start: p.start, end: p.end + 1n }));
+    for (const prefix of claimRangeCidrs(siteRanges, family)) {
+      add({ direction: 'forward', source: any, destination: prefix });
+      add({ direction: 'output', source: any, destination: prefix });
+      add({ direction: 'forward', source: prefix, destination: any });
+      add({ direction: 'input', source: prefix, destination: any });
+    }
   }
   const oldPeers = new Map(previous?.peers.map((p) => [p.peerId, p]) ?? []),
     newPeers = new Map(target.peers.map((p) => [p.peerId, p]));
@@ -279,52 +310,58 @@ export function buildRoutingPolicyTransition(
     [...(previous?.peers ?? []), ...target.peers].map((p) => p.interfaceId)
   );
   for (const interfaceId of interfaces) {
-    const before = peerTrie(
-        (previous?.peers ?? []).filter((p) => p.interfaceId === interfaceId)
-      ),
-      after = peerTrie(
-        target.peers.filter((p) => p.interfaceId === interfaceId)
-      );
-    const points = [...new Set([...before.points, ...after.points])].sort(
-        (a, b) => a - b
-      ),
-      changed: Range[] = [];
-    for (let i = 0; i < points.length - 1; i++) {
-      const start = points[i]!,
-        end = points[i + 1]!,
-        oldOwner = lookup(before.root, start),
-        newOwner = lookup(after.root, start);
-      if (
-        (oldOwner && changedPeers.has(oldOwner)) ||
-        (newOwner && changedPeers.has(newOwner))
-      )
-        changed.push({ start, end });
-    }
-    for (const prefix of policyRangeCidrs(changed)) {
-      add({
-        direction: 'forward',
-        outputInterface: interfaceId,
-        source: '0.0.0.0/0',
-        destination: prefix,
-      });
-      add({
-        direction: 'output',
-        outputInterface: interfaceId,
-        source: '0.0.0.0/0',
-        destination: prefix,
-      });
-      add({
-        direction: 'forward',
-        inputInterface: interfaceId,
-        source: prefix,
-        destination: '0.0.0.0/0',
-      });
-      add({
-        direction: 'input',
-        inputInterface: interfaceId,
-        source: prefix,
-        destination: '0.0.0.0/0',
-      });
+    for (const family of [4, 6] as const) {
+      const bits = family === 4 ? 32 : 128,
+        any = family === 4 ? '0.0.0.0/0' : '::/0';
+      const before = peerTrie(
+          (previous?.peers ?? []).filter((p) => p.interfaceId === interfaceId),
+          family
+        ),
+        after = peerTrie(
+          target.peers.filter((p) => p.interfaceId === interfaceId),
+          family
+        );
+      const points = [...new Set([...before.points, ...after.points])].sort(
+          (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+        ),
+        changed: { start: bigint; end: bigint }[] = [];
+      for (let i = 0; i < points.length - 1; i++) {
+        const start = points[i]!,
+          end = points[i + 1]!,
+          oldOwner = lookup(before.root, start, bits),
+          newOwner = lookup(after.root, start, bits);
+        if (
+          (oldOwner && changedPeers.has(oldOwner)) ||
+          (newOwner && changedPeers.has(newOwner))
+        )
+          changed.push({ start, end });
+      }
+      for (const prefix of claimRangeCidrs(changed, family)) {
+        add({
+          direction: 'forward',
+          outputInterface: interfaceId,
+          source: any,
+          destination: prefix,
+        });
+        add({
+          direction: 'output',
+          outputInterface: interfaceId,
+          source: any,
+          destination: prefix,
+        });
+        add({
+          direction: 'forward',
+          inputInterface: interfaceId,
+          source: prefix,
+          destination: any,
+        });
+        add({
+          direction: 'input',
+          inputInterface: interfaceId,
+          source: prefix,
+          destination: any,
+        });
+      }
     }
   }
   return buildRoutingGuard([...scopes.values()], { protectedPaths });

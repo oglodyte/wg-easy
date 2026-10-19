@@ -265,4 +265,27 @@ describe('strict guarded client firewall recovery', () => {
       new RoutingPolicyFirewall(k.run).verify(fixture(), guard)
     ).rejects.toThrow('filter_hook_unverified');
   });
+  test('client filter replacement keeps both known family guards before accepts in their own atomic tables', async () => {
+    const k = kernel();
+    const dual = buildRoutingGuard(
+      [
+        ...guard.scopes,
+        {
+          direction: 'forward',
+          inputInterface: 'wg0',
+          source: 'fd08::2/128',
+          destination: '::/0',
+        },
+      ],
+      { protectedPaths: [] }
+    );
+    k.apply(4, routingGuardRestoreDocument(k.save(4), dual, guard, 4)!);
+    k.apply(6, routingGuardRestoreDocument(k.save(6), dual, null, 6)!);
+    const target = fixture();
+    target.entries[1]!.port = 8443;
+    await new RoutingPolicyFirewall(k.run).apply(target, [fixture()], dual);
+    assertRoutingGuardState(k.save(4), dual, 4);
+    assertRoutingGuardState(k.save(6), dual, 6);
+    await new RoutingPolicyFirewall(k.run).verify(target, dual);
+  });
 });

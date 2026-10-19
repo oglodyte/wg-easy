@@ -70,8 +70,7 @@ async function ensureGuard(
   } catch {
     /* Inspect absence before installing; unknown state stays untouched. */
   }
-  await deps.guard.verify(null);
-  await deps.guard.install(guard);
+  await deps.guard.ensure(guard);
 }
 async function cleanup(
   deps: PolicyRecoveryDependencies,

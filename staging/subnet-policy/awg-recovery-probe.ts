@@ -16,6 +16,7 @@ import {
 import { RoutingExecutor } from "../../src/server/utils/routingExecutor";
 import {
   buildRoutingGuard,
+  assertRoutingGuardState,
   RoutingGuard,
   type RoutingGuardScope,
 } from "../../src/server/utils/routingGuard";
@@ -49,6 +50,9 @@ process.umask(0o077);
 const LAN = "172.31.210.0/24",
   SINK = "172.31.210.2",
   OTHER_SINK = "172.31.211.2";
+const V6MEMBERS = "fd41:1::/64",
+  V6LAN = "2001:db8:210::/64",
+  V6SINK = "2001:db8:210::2";
 const diagnosticOnly =
   process.env.WG_EASY_AWG_PROBE_MATRIX === "credential-only";
 type Namespaces = Record<
@@ -198,6 +202,32 @@ async function tunnelEvidence(ns: string) {
       "real marked lookup uses the selected AWG table/device",
     );
   }
+  const routes6 = JSON.parse(
+    await inside(ns, "ip", [
+      "-j",
+      "-6",
+      "route",
+      "get",
+      V6SINK,
+      "from",
+      "fd41:1::2",
+      "iif",
+      "wg0",
+    ]),
+  );
+  assert(
+    routes6[0]?.dev === "awg1" && Number(routes6[0]?.table) === 51999,
+    "IPv6 legacy route uses its existing site table",
+  );
+  console.log(
+    JSON.stringify({
+      ipv6LegacyRouteEvidence: {
+        expectedTable: 51999,
+        observedTable: Number(routes6[0]?.table),
+        expectedDevice: true,
+      },
+    }),
+  );
   return counters;
 }
 async function context(root: string, action: string, failAt = "") {
@@ -207,8 +237,21 @@ async function context(root: string, action: string, failAt = "") {
     path.join(app, "wg-easy.db"),
     schema,
   );
-  const run: typeof execFile = (binary, args = [], options = {}) =>
-    inside(meta.ns.server, binary, args, options.input);
+  const run: typeof execFile = async (binary, args = [], options = {}) => {
+    const result = await inside(meta.ns.server, binary, args, options.input);
+    if (binary.endsWith("tables-restore") && !args.includes("--test")) {
+      const family = binary.startsWith("ip6") ? "ipv6" : "ipv4";
+      if (options.input?.includes("-F WG_ROUTE_GUARD"))
+        crash(
+          `${action === "recover" ? "restore_" : ""}guard_${family}_written`,
+        );
+      if (options.input?.includes("-X WG_ROUTE_GUARD"))
+        crash(
+          `${action === "recover" ? "restore_" : ""}guard_${family}_removed`,
+        );
+    }
+    return result;
+  };
   const journal = new RoutingPolicyRuntimeService(database.db),
     backups = new RoutingPolicyBackups(app);
   const guard = new RoutingGuard(run),
@@ -445,7 +488,8 @@ async function runWorker(root: string, action: string, failAt = "") {
   );
 }
 async function fetchFrom(ns: string, destination = SINK) {
-  const code = `const http=require('node:http');const r=http.get('http://${destination}:8080/',x=>{let b='';x.on('data',d=>b+=d);x.on('end',()=>console.log(b));});r.setTimeout(1200,()=>r.destroy(new Error('timeout')));r.on('error',()=>process.exit(9));`;
+  const address = destination.includes(":") ? `[${destination}]` : destination;
+  const code = `const http=require('node:http');const r=http.get('http://${address}:8080/',x=>{let b='';x.on('data',d=>b+=d);x.on('end',()=>console.log(b));});const timer=setTimeout(()=>r.destroy(new Error('timeout')),1200);r.on('close',()=>clearTimeout(timer));r.on('error',()=>process.exit(9));`;
   return JSON.parse(await inside(ns, "node", ["-e", code])) as {
     source: string;
   };
@@ -459,7 +503,9 @@ async function reachable(ns: string, source: string, destination = SINK) {
     }
     await delay(100);
   }
-  throw new Error("Actual tunnel/source observation did not converge");
+  throw new ProbeFailure(
+    `Actual tunnel/source observation did not converge (${source} to ${destination})`,
+  );
 }
 async function parent() {
   const root = await fs.mkdtemp("/tmp/wg-easy-awg-recovery-");
@@ -487,6 +533,23 @@ async function parent() {
     stage = value;
     console.log(JSON.stringify({ awgRecoveryStage: value }));
   };
+  async function memberTraffic() {
+    await reachable(ns.member, "10.241.1.2");
+    await reachable(ns.member, "fd41:1::2", V6SINK);
+  }
+  async function survivorTraffic() {
+    await reachable(ns.other, "10.241.1.3");
+    await reachable(ns.other, "fd41:1::3", V6SINK);
+    await inside(ns.management, "ping", ["-c", "1", "-W", "1", "192.0.2.13"]);
+    await inside(ns.management, "ping", [
+      "-6",
+      "-c",
+      "1",
+      "-W",
+      "1",
+      "fd41:ff::1",
+    ]);
+  }
   try {
     const existing = (await quiet("ip", ["netns", "list"]))
       .split("\n")
@@ -499,6 +562,12 @@ async function parent() {
       await quiet("ip", ["netns", "add", name]);
       created.push(name);
       await inside(name, "ip", ["link", "set", "lo", "up"]);
+      await inside(name, "sysctl", [
+        "-q",
+        "-w",
+        "net.ipv6.conf.all.disable_ipv6=0",
+        "net.ipv6.conf.default.disable_ipv6=0",
+      ]);
     }
     let sequence = 0;
     async function connect(
@@ -587,7 +656,12 @@ async function parent() {
       "eth0",
     ]);
     for (const space of [ns.server, ns.exit])
-      await inside(space, "sysctl", ["-q", "-w", "net.ipv4.ip_forward=1"]);
+      await inside(space, "sysctl", [
+        "-q",
+        "-w",
+        "net.ipv4.ip_forward=1",
+        "net.ipv6.conf.all.forwarding=1",
+      ]);
     for (const space of Object.values(ns))
       for (const dev of ["all", "default"])
         await inside(space, "sysctl", [
@@ -606,6 +680,44 @@ async function parent() {
       await inside(space!, "ip", ["addr", "add", address!, "dev", name!]);
       await inside(space!, "ip", ["link", "set", name!, "up"]);
     }
+    for (const [space, name, address] of [
+      [ns.server, "wg0", "fd41:1::1/64"],
+      [ns.server, "awg1", "fd41:2::1/64"],
+      [ns.member, "vpn0", "fd41:1::2/64"],
+      [ns.other, "vpn0", "fd41:1::3/64"],
+      [ns.exit, "vpn0", "fd41:2::2/64"],
+      [ns.exit, "lan0", "2001:db8:210::1/64"],
+      [ns.sink, "eth0", `${V6SINK}/64`],
+      [ns.server, "eth0", "fd41:ff::1/64"],
+      [ns.management, "eth0", "fd41:ff::2/64"],
+    ])
+      await inside(space!, "ip", [
+        "-6",
+        "addr",
+        "add",
+        address!,
+        "dev",
+        name!,
+        "nodad",
+      ]);
+    for (const space of [ns.member, ns.other])
+      await inside(space, "ip", ["-6", "route", "add", V6LAN, "dev", "vpn0"]);
+    await inside(ns.exit, "ip", [
+      "-6",
+      "route",
+      "add",
+      V6MEMBERS,
+      "dev",
+      "vpn0",
+    ]);
+    await inside(ns.sink, "ip", [
+      "-6",
+      "route",
+      "add",
+      V6MEMBERS,
+      "via",
+      "2001:db8:210::1",
+    ]);
     for (const space of [ns.member, ns.other])
       for (const prefix of [LAN, "172.31.211.0/24"])
         await inside(space, "ip", ["route", "add", prefix, "dev", "vpn0"]);
@@ -667,6 +779,7 @@ async function parent() {
           interfaceId: "wg0",
           name: "member",
           ipv4Address: "10.241.1.2",
+          ipv6Address: "fd41:1::2",
           publicKey: keys[replacement ? "memberNew" : "memberOld"]!.publicKey,
         },
         {
@@ -674,6 +787,7 @@ async function parent() {
           interfaceId: "wg0",
           name: "other",
           ipv4Address: "10.241.1.3",
+          ipv6Address: "fd41:1::3",
           publicKey: keys.other!.publicKey,
         },
         {
@@ -681,9 +795,14 @@ async function parent() {
           interfaceId: "awg1",
           name: "exit",
           ipv4Address: "10.241.2.2",
+          ipv6Address: "fd41:2::2",
           publicKey: keys.exit!.publicKey,
         },
-      ].map((c) => ({ ...c, enabled: true, serverAllowedIps: [] })),
+      ].map((c) => ({
+        ...c,
+        enabled: true,
+        serverAllowedIps: c.id === 2 ? [V6LAN] : [],
+      })),
       groups: [
         {
           id: 1,
@@ -720,12 +839,12 @@ async function parent() {
         ]),
         enabledInterfaceIds: new Set(["wg0", "awg1"]),
         upInterfaceIds: new Set(["wg0", "awg1"]),
-        enableIpv6: false,
+        enableIpv6: true,
         clientFirewall: {
-          enableIpv6: false,
-          interfaces: [{ interfaceId: "wg0", ipv6: false }],
-          entries: [1, 4].flatMap((id) =>
-            (id === 1 && replacement
+          enableIpv6: true,
+          interfaces: [{ interfaceId: "wg0", ipv6: true }],
+          entries: [1, 4].flatMap((id) => [
+            ...(id === 1 && replacement
               ? [LAN, "172.31.211.0/24"]
               : ["0.0.0.0/0"]
             ).map((destination) => ({
@@ -736,11 +855,20 @@ async function parent() {
               source: id === 1 ? "10.241.1.2" : "10.241.1.3",
               destination,
             })),
-          ),
+            {
+              interfaceId: "wg0",
+              clientId: id,
+              clientName: `client ${id}: fixture`,
+              family: 6,
+              source: id === 1 ? "fd41:1::2" : "fd41:1::3",
+              destination: id === 1 && replacement ? V6LAN : "::/0",
+            },
+          ]),
         },
       });
       return { revision, fingerprint: value.fingerprint, plan: value.plan };
     };
+    checkpoint("setup-policy");
     const previous = make(false, 1),
       target = make(true, 2);
     function serverConfig(
@@ -796,7 +924,7 @@ async function parent() {
         "memberOld",
         "server0",
         "192.0.2.1:62001",
-        `${LAN},172.31.211.0/24,10.241.1.1/32`,
+        `${LAN},172.31.211.0/24,10.241.1.1/32,${V6LAN},fd41:1::1/128`,
         pskOld,
       ),
     );
@@ -806,7 +934,7 @@ async function parent() {
         "memberNew",
         "server0",
         "192.0.2.1:62001",
-        `${LAN},172.31.211.0/24,10.241.1.1/32`,
+        `${LAN},172.31.211.0/24,10.241.1.1/32,${V6LAN},fd41:1::1/128`,
         pskNew,
       ),
     );
@@ -816,7 +944,7 @@ async function parent() {
         "other",
         "server0",
         "192.0.2.9:62001",
-        `${LAN},172.31.211.0/24,10.241.1.1/32`,
+        `${LAN},172.31.211.0/24,10.241.1.1/32,${V6LAN},fd41:1::1/128`,
       ),
     );
     await privateFile(
@@ -825,10 +953,22 @@ async function parent() {
         "exit",
         "server1",
         "192.0.2.5:62002",
-        "10.241.1.0/24,10.241.2.1/32",
+        "10.241.1.0/24,10.241.2.1/32,fd41:1::/64,fd41:2::1/128",
       ),
     );
     const protectedPaths: RoutingGuardScope[] = [
+      {
+        direction: "input",
+        inputInterface: "eth0",
+        source: "fd41:ff::2/128",
+        destination: "fd41:ff::1/128",
+      },
+      {
+        direction: "output",
+        outputInterface: "eth0",
+        source: "fd41:ff::1/128",
+        destination: "fd41:ff::2/128",
+      },
       {
         direction: "input",
         inputInterface: "eth0",
@@ -902,10 +1042,12 @@ async function parent() {
       }),
       guard = new RoutingGuard(server),
       executor = new RoutingExecutor(server);
+    checkpoint("setup-guard");
     await guard.install(initialGuard);
     await executor.apply(renderRoutingPolicyLinux(previous.plan), {
       guardedTransition: { guard: initialGuard, knownPlans: [] },
     });
+    checkpoint("setup-linux");
     await new RoutingPolicyFirewall(server).apply(
       previous.plan.clientFirewall,
       [],
@@ -915,6 +1057,7 @@ async function parent() {
     await peerMap(ns.server, previous.plan);
     await guard.remove(initialGuard);
     await executor.verify(renderRoutingPolicyLinux(previous.plan), null);
+    checkpoint("setup-firewall");
     const sink = spawn(
       "ip",
       [
@@ -923,13 +1066,14 @@ async function parent() {
         ns.sink,
         "node",
         "-e",
-        `require('node:http').createServer((q,s)=>s.end(JSON.stringify({source:q.socket.remoteAddress.replace('::ffff:','')}))).listen(8080,'0.0.0.0')`,
+        `require('node:http').createServer((q,s)=>s.end(JSON.stringify({source:q.socket.remoteAddress.replace('::ffff:','')}))).listen(8080,'::')`,
       ],
       { stdio: "ignore" },
     );
     children.push(sink);
-    await reachable(ns.member, "10.241.1.2");
-    await reachable(ns.other, "10.241.1.3");
+    checkpoint("setup-traffic");
+    await memberTraffic();
+    await survivorTraffic();
     await reachable(ns.member, "10.241.2.1", OTHER_SINK);
     checkpoint("baseline-route-counter-evidence");
     await tunnelEvidence(ns.server);
@@ -956,6 +1100,7 @@ async function parent() {
       ? []
       : [
           "prepared",
+          "guard_ipv4_written",
           "guarded",
           "server_peer_sync",
           "client_peer_sync",
@@ -971,6 +1116,7 @@ async function parent() {
           "linux_verify",
           "classified",
           "verified",
+          "guard_ipv4_removed",
           "guard_removed",
           "before_commit",
         ];
@@ -987,15 +1133,37 @@ async function parent() {
         1,
         "target never prematurely Applied",
       );
-      if (!["prepared", "guard_removed", "before_commit"].includes(failure)) {
+      const persistedGuard = buildRoutingGuard(pending.guardScopes, {
+        protectedPaths,
+      });
+      if (failure === "guard_ipv4_written") {
+        assertRoutingGuardState(
+          await c.deps.guard.observe(4),
+          persistedGuard,
+          4,
+        );
+        assertRoutingGuardState(await c.deps.guard.observe(6), null, 6);
+        await assert.rejects(fetchFrom(ns.member));
+        await reachable(ns.member, "fd41:1::2", V6SINK);
+      } else if (failure === "guard_ipv4_removed") {
+        assertRoutingGuardState(await c.deps.guard.observe(4), null, 4);
+        assertRoutingGuardState(
+          await c.deps.guard.observe(6),
+          persistedGuard,
+          6,
+        );
+        await assert.rejects(fetchFrom(ns.member, V6SINK));
+      } else if (
+        !["prepared", "guard_removed", "before_commit"].includes(failure)
+      ) {
         await c.deps.guard.verify(
           buildRoutingGuard(pending.guardScopes, { protectedPaths }),
         );
         await assert.rejects(fetchFrom(ns.member));
+        await assert.rejects(fetchFrom(ns.member, V6SINK));
       }
       await c.database.close();
-      await reachable(ns.other, "10.241.1.3");
-      await inside(ns.management, "ping", ["-c", "1", "-W", "1", "192.0.2.13"]);
+      await survivorTraffic();
       checkpoint(`kill-${failure}-survivor`);
       assert.equal(
         (await runWorker(root, "recover")).code,
@@ -1009,16 +1177,18 @@ async function parent() {
       assert.equal(state.applied?.revision, 1);
       checkpoint(`kill-${failure}-restored-record`);
       await peerMap(ns.server, previous.plan);
-      await recovered.deps.guard.verify(null);
+      await recovered.deps.guard.verify(null, { families: [4, 6] });
       await recovered.database.close();
       checkpoint(`kill-${failure}-restored-map`);
-      await reachable(ns.member, "10.241.1.2");
-      await reachable(ns.other, "10.241.1.3");
+      await memberTraffic();
+      await survivorTraffic();
     }
     const recoveryFailures = diagnosticOnly
       ? []
       : [
           "restoring",
+          "restore_guard_ipv4_written",
+          "restore_guard_ipv6_written",
           "restored_files",
           "restored_peers",
           "restored_firewall",
@@ -1033,12 +1203,22 @@ async function parent() {
             "verify",
           ].map((p) => `restore_linux_${p}`),
           "restore_guard_removed",
+          "restore_guard_ipv4_removed",
           "restore_before_commit",
           "restored_commit",
         ];
     for (const failure of recoveryFailures) {
       checkpoint(`kill-${failure}`);
-      assert.equal((await runWorker(root, "apply", "peers")).signal, "SIGKILL");
+      const seedFailure =
+        failure === "restore_guard_ipv6_written"
+          ? "guard_ipv4_written"
+          : failure === "restore_guard_ipv4_written"
+            ? "guard_ipv4_removed"
+            : "peers";
+      assert.equal(
+        (await runWorker(root, "apply", seedFailure)).signal,
+        "SIGKILL",
+      );
       assert.equal(
         (await runWorker(root, "recover", failure)).signal,
         "SIGKILL",
@@ -1049,39 +1229,46 @@ async function parent() {
       if (failure === "restored_commit") {
         assert.equal(state.pending, null);
         await peerMap(ns.server, previous.plan);
-        await c.deps.guard.verify(null);
+        await c.deps.guard.verify(null, { families: [4, 6] });
         assert.equal(await c.deps.backups.cleanupOrphans(new Set()), 1);
       } else {
         assert(state.pending, "unfinished restoration remains durable");
-        if (
+        if (failure === "restore_guard_ipv4_removed") {
+          const expected = buildRoutingGuard(state.pending.guardScopes, {
+            protectedPaths,
+          });
+          assertRoutingGuardState(await c.deps.guard.observe(4), null, 4);
+          assertRoutingGuardState(await c.deps.guard.observe(6), expected, 6);
+          await assert.rejects(fetchFrom(ns.member, V6SINK));
+        } else if (
           !["restore_guard_removed", "restore_before_commit"].includes(failure)
         ) {
           await c.deps.guard.verify(
             buildRoutingGuard(state.pending.guardScopes, { protectedPaths }),
           );
           await assert.rejects(fetchFrom(ns.member));
+          await assert.rejects(fetchFrom(ns.member, V6SINK));
         }
       }
       await c.database.close();
-      await reachable(ns.other, "10.241.1.3");
-      await inside(ns.management, "ping", ["-c", "1", "-W", "1", "192.0.2.13"]);
+      await survivorTraffic();
       if (failure !== "restored_commit")
         assert.equal((await runWorker(root, "recover")).code, 0);
       const final = await context(root, "inspect");
       assert.equal((await final.deps.journal.get()).pending, null);
       await peerMap(ns.server, previous.plan);
-      await final.deps.guard.verify(null);
+      await final.deps.guard.verify(null, { families: [4, 6] });
       await final.database.close();
-      await reachable(ns.member, "10.241.1.2");
-      await reachable(ns.other, "10.241.1.3");
+      await memberTraffic();
+      await survivorTraffic();
     }
     checkpoint("successful-key-and-psk-replacement-commit-crash");
     assert.equal(
       (await runWorker(root, "apply", "applied_commit")).signal,
       "SIGKILL",
     );
-    await reachable(ns.member, "10.241.1.2");
-    await reachable(ns.other, "10.241.1.3");
+    await memberTraffic();
+    await survivorTraffic();
     const counters = await tunnelEvidence(ns.server);
     const applied = await context(root, "inspect");
     assert.equal((await applied.deps.journal.get()).applied?.revision, 2);
@@ -1093,7 +1280,8 @@ async function parent() {
     const clearedPlan = structuredClone(target.plan);
     clearedPlan.clientFirewall.entries =
       clearedPlan.clientFirewall.entries.filter(
-        (e) => e.clientId !== 1 || e.destination === LAN,
+        (e) =>
+          e.clientId !== 1 || e.destination === LAN || e.destination === V6LAN,
       );
     const cleared = {
       ...target,
@@ -1106,7 +1294,7 @@ async function parent() {
         ]),
         enabledInterfaceIds: new Set(["wg0", "awg1"]),
         upInterfaceIds: new Set(["wg0", "awg1"]),
-        enableIpv6: false,
+        enableIpv6: true,
         clientFirewall: clearedPlan.clientFirewall,
       }).fingerprint,
     };
@@ -1141,8 +1329,8 @@ async function parent() {
     await next.database.close();
     assert.equal((await runWorker(root, "apply")).code, 0);
     checkpoint("preshared-key-clear-worker-complete");
-    await reachable(ns.member, "10.241.1.2");
-    await reachable(ns.other, "10.241.1.3");
+    await memberTraffic();
+    await survivorTraffic();
     checkpoint("preshared-key-clear-traffic-complete");
     await assert.rejects(fetchFrom(ns.member, OTHER_SINK));
     await reachable(ns.other, "10.241.2.1", OTHER_SINK);
@@ -1190,6 +1378,9 @@ async function parent() {
         awgRecovery: diagnosticOnly ? "DIAGNOSTIC_PASS" : "PASS",
         completeMatrix: !diagnosticOnly,
         kernelAwg: true,
+        ipv6LegacyTraffic: true,
+        dualFamilyGuards: true,
+        partialFamilyCrashRepair: !diagnosticOnly,
         obfuscatedExit: true,
         sameInterfaceUnrelatedPeer: true,
         realProcessKills: 1 + failures.length + 2 * recoveryFailures.length + 1,

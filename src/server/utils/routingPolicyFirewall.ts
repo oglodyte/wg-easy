@@ -10,6 +10,7 @@ import {
 } from '#server/utils/firewall';
 import {
   routingGuardRepositionRules,
+  routingGuardHasFamily,
   type RoutingGuardPlan,
 } from '#server/utils/routingGuard';
 import type { PolicyClientFirewall } from '#shared/types/routingPolicy';
@@ -64,7 +65,8 @@ function assertKnown(
   save: string,
   known: readonly PolicyClientFirewall[],
   family: 4 | 6,
-  allowAbsent: boolean
+  allowAbsent: boolean,
+  guard: RoutingGuardPlan | null
 ) {
   const observed = observe(save);
   if (!observed.exists && allowAbsent) return;
@@ -77,12 +79,13 @@ function assertKnown(
   });
   if (!observed.exists || !matched)
     throw new RoutingPolicyFirewallError('ownership_unknown', family);
-  assertHookOrder(save, matched, family);
+  assertHookOrder(save, matched, family, guard);
 }
 function assertHookOrder(
   save: string,
   plan: PolicyClientFirewall,
-  family: 4 | 6
+  family: 4 | 6,
+  guard: RoutingGuardPlan | null
 ) {
   const desired = buildClientFirewallManifest(plan, family).jumps.map(
     canonicalClientFirewallRule
@@ -94,7 +97,11 @@ function assertHookOrder(
     .filter((l) => l.startsWith('-A FORWARD '));
   // Guard placement is independently checked against its full exact manifest.
   const withoutGuards = forward
-    .filter((l) => family !== 4 || !l.endsWith('-j WG_ROUTE_GUARD'))
+    .filter(
+      (l) =>
+        !routingGuardHasFamily(guard, family) ||
+        !l.endsWith('-j WG_ROUTE_GUARD')
+    )
     .map(canonicalClientFirewallRule);
   if (!same(withoutGuards.slice(0, desired.length), desired))
     throw new RoutingPolicyFirewallError('filter_hook_unverified', family);
@@ -129,9 +136,8 @@ export class RoutingPolicyFirewall {
       const save = await this.run(`${binary}-save`, ['-t', 'filter'], {
         log: false,
       });
-      assertKnown(save, plans, family, allowAbsent);
-      const hooks =
-        family === 4 ? routingGuardRepositionRules(save, guard) : [];
+      assertKnown(save, plans, family, allowAbsent, guard);
+      const hooks = routingGuardRepositionRules(save, guard, family);
       documents.push({
         family,
         binary,
@@ -191,8 +197,8 @@ export class RoutingPolicyFirewall {
           ['-t', 'filter'],
           { log: false }
         );
-        assertKnown(save, [target], family, false);
-        if (family === 4) routingGuardRepositionRules(save, guard);
+        assertKnown(save, [target], family, false, guard);
+        routingGuardRepositionRules(save, guard, family);
       }
     });
   }

@@ -93,6 +93,10 @@ retained guards, durable private-byte restoration, complete client-filter recove
 and same-identity preshared-key clearing. It verifies filter denial while another
 member on the same interface retains its default path. Unchanged interfaces use
 no sync; affected peers use `awg syncconf`.
+IPv6 checks preserve the existing unmarked legacy site path, credentials and
+client filtering; common routing classification remains IPv4 only. The full
+matrix also kills workers between IPv4/IPv6 guard installation and removal,
+then repairs only exact known missing family guards before restoration.
 Recovery callbacks in this fixture operate the lab endpoints explicitly; the
 product does not push configurations to remote clients.
 

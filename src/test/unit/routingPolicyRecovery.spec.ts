@@ -127,6 +127,12 @@ async function fixture() {
   vi.spyOn(guard, 'verify').mockImplementation(async (plan) => {
     expect(state.activeGuard).toBe(plan?.fingerprint ?? null);
   });
+  vi.spyOn(guard, 'ensure').mockImplementation(async (plan) => {
+    if (state.activeGuard !== null && state.activeGuard !== plan.fingerprint)
+      throw new Error('unknown guard state');
+    if (state.activeGuard === null) await guard.install(plan);
+    await guard.verify(plan);
+  });
   vi.spyOn(guard, 'remove').mockImplementation(async (plan) => {
     expect(state.activeGuard).toBe(plan.fingerprint);
     state.activeGuard = null;

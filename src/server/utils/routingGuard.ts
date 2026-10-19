@@ -33,7 +33,7 @@ export class RoutingGuardError extends Error {
 function cidr(value: string) {
   try {
     const parsed = parseCidr(value);
-    if (parsed.version !== 4 || !parsed.prefixPresent) throw new Error();
+    if (!parsed.prefixPresent) throw new Error();
     return normalizeCidr(value);
   } catch {
     throw new RoutingGuardError('invalid_scope');
@@ -42,12 +42,15 @@ function cidr(value: string) {
 function normalized(scope: RoutingGuardScope): RoutingGuardScope {
   const source = cidr(scope.source);
   const destination = cidr(scope.destination);
+  const sourceRange = parseCidr(source),
+    destinationRange = parseCidr(destination);
   if (
+    sourceRange.version !== destinationRange.version ||
     !['input', 'forward', 'output'].includes(scope.direction) ||
     (!scope.inputInterface &&
       !scope.outputInterface &&
-      source === '0.0.0.0/0' &&
-      destination === '0.0.0.0/0') ||
+      sourceRange.prefix === '0' &&
+      destinationRange.prefix === '0') ||
     (scope.direction === 'input' && scope.outputInterface) ||
     (scope.direction === 'output' && scope.inputInterface)
   )
@@ -71,7 +74,7 @@ function normalized(scope: RoutingGuardScope): RoutingGuardScope {
 function intersects(left: string, right: string) {
   const a = parseCidr(left);
   const b = parseCidr(right);
-  return a.start <= b.end && b.start <= a.end;
+  return a.version === b.version && a.start <= b.end && b.start <= a.end;
 }
 function scopesIntersect(a: RoutingGuardScope, b: RoutingGuardScope) {
   return (
@@ -127,18 +130,32 @@ function checked(plan: RoutingGuardPlan) {
 function hook(scope: RoutingGuardScope): Hook {
   return scope.direction.toUpperCase() as Hook;
 }
-function hookRules(plan: RoutingGuardPlan) {
-  return plan.scopes.map((scope) => {
-    const args = [
-      '-A',
-      hook(scope),
-      ...(scope.source === '0.0.0.0/0' ? [] : ['-s', scope.source]),
-      ...(scope.destination === '0.0.0.0/0' ? [] : ['-d', scope.destination]),
-      ...(scope.inputInterface ? ['-i', scope.inputInterface] : []),
-      ...(scope.outputInterface ? ['-o', scope.outputInterface] : []),
-    ];
-    return `${args.join(' ')} -m comment --comment "${OWNER} scope" -j ${ROUTING_GUARD_CHAIN}`;
-  });
+export function routingGuardHasFamily(
+  plan: RoutingGuardPlan | null,
+  family: 4 | 6
+) {
+  return (
+    plan !== null &&
+    (family === 4 ||
+      plan.scopes.some((s) => parseCidr(s.source).version === family))
+  );
+}
+function hookRules(plan: RoutingGuardPlan, family: 4 | 6) {
+  return plan.scopes
+    .filter((s) => parseCidr(s.source).version === family)
+    .map((scope) => {
+      const args = [
+        '-A',
+        hook(scope),
+        ...(parseCidr(scope.source).prefix === '0' ? [] : ['-s', scope.source]),
+        ...(parseCidr(scope.destination).prefix === '0'
+          ? []
+          : ['-d', scope.destination]),
+        ...(scope.inputInterface ? ['-i', scope.inputInterface] : []),
+        ...(scope.outputInterface ? ['-o', scope.outputInterface] : []),
+      ];
+      return `${args.join(' ')} -m comment --comment "${OWNER} scope" -j ${ROUTING_GUARD_CHAIN}`;
+    });
 }
 function bodyRules(plan: RoutingGuardPlan) {
   return [
@@ -161,8 +178,10 @@ function references(save: string) {
 /** Refuse every unrecognized rule/reference, duplicate, or bypassing hook. */
 export function assertRoutingGuardState(
   save: string,
-  expected: RoutingGuardPlan | null
+  expected: RoutingGuardPlan | null,
+  family: 4 | 6 = 4
 ) {
+  if (!routingGuardHasFamily(expected, family)) expected = null;
   const saved = lines(save);
   const declarations = saved.filter((line) =>
     line.startsWith(`:${ROUTING_GUARD_CHAIN} `)
@@ -177,7 +196,7 @@ export function assertRoutingGuardState(
     return;
   }
   checked(expected);
-  const desired = hookRules(expected);
+  const desired = hookRules(expected, family);
   if (
     declarations.length !== 1 ||
     !declarations[0]!.startsWith(`:${ROUTING_GUARD_CHAIN} - `) ||
@@ -199,11 +218,12 @@ export function assertRoutingGuardState(
 /** Append after other owned insertions within the same filter transaction. */
 export function routingGuardRepositionRules(
   save: string,
-  expected: RoutingGuardPlan | null
+  expected: RoutingGuardPlan | null,
+  family: 4 | 6 = 4
 ) {
-  assertRoutingGuardState(save, expected);
-  if (!expected) return [];
-  const rules = hookRules(expected);
+  assertRoutingGuardState(save, expected, family);
+  if (!expected || !routingGuardHasFamily(expected, family)) return [];
+  const rules = hookRules(expected, family);
   return [
     ...rules.map((line) => line.replace(/^-A /, '-D ')),
     ...[...rules]
@@ -215,22 +235,25 @@ export function routingGuardRepositionRules(
 export function routingGuardRestoreDocument(
   save: string,
   target: RoutingGuardPlan | null,
-  previous: RoutingGuardPlan | null
+  previous: RoutingGuardPlan | null,
+  family: 4 | 6 = 4
 ) {
-  assertRoutingGuardState(save, previous);
+  assertRoutingGuardState(save, previous, family);
   if (target) checked(target);
+  if (!routingGuardHasFamily(target, family)) target = null;
+  if (!routingGuardHasFamily(previous, family)) previous = null;
   if (!target && !previous) return null;
   return [
     '*filter',
     ...(target ? [`:${ROUTING_GUARD_CHAIN} - [0:0]`] : []),
     ...(previous
-      ? hookRules(previous).map((line) => line.replace(/^-A /, '-D '))
+      ? hookRules(previous, family).map((line) => line.replace(/^-A /, '-D '))
       : []),
     `-F ${ROUTING_GUARD_CHAIN}`,
     ...(target
       ? [
           ...bodyRules(target),
-          ...hookRules(target)
+          ...hookRules(target, family)
             .reverse()
             .map((line) =>
               line.replace(/^-A (INPUT|FORWARD|OUTPUT) /, '-I $1 1 ')
@@ -246,29 +269,71 @@ export function routingGuardRestoreDocument(
 export class RoutingGuard {
   constructor(private readonly run: Runner = execFile) {}
 
-  async observe() {
-    return this.run('iptables-save', ['-t', 'filter']);
+  async observe(family: 4 | 6 = 4) {
+    return this.run(family === 4 ? 'iptables-save' : 'ip6tables-save', [
+      '-t',
+      'filter',
+    ]);
   }
 
-  async verify(plan: RoutingGuardPlan | null) {
-    assertRoutingGuardState(await this.observe(), plan);
+  async verify(
+    plan: RoutingGuardPlan | null,
+    { families = this.families(plan) }: { families?: readonly (4 | 6)[] } = {}
+  ) {
+    for (const family of families)
+      assertRoutingGuardState(await this.observe(family), plan, family);
+  }
+
+  private families(...plans: (RoutingGuardPlan | null)[]): (4 | 6)[] {
+    return plans.some((p) => routingGuardHasFamily(p, 6)) ? [4, 6] : [4];
+  }
+
+  private async prepareAll(
+    target: RoutingGuardPlan | null,
+    previous: RoutingGuardPlan | null,
+    repairMissing = false
+  ) {
+    if (target) checked(target);
+    if (previous) checked(previous);
+    const documents: { family: 4 | 6; document: string }[] = [];
+    for (const family of this.families(target, previous)) {
+      const save = await this.observe(family);
+      if (repairMissing) {
+        try {
+          assertRoutingGuardState(save, target, family);
+          continue;
+        } catch {
+          /* Only exact absence permits restoration of a missing family. */
+        }
+        assertRoutingGuardState(save, null, family);
+      }
+      const document = routingGuardRestoreDocument(
+        save,
+        target,
+        repairMissing ? null : previous,
+        family
+      );
+      if (document) documents.push({ family, document });
+    }
+    // Read/validate every family before testing or writing either table.
+    for (const { family, document } of documents)
+      await this.run(
+        family === 4 ? 'iptables-restore' : 'ip6tables-restore',
+        ['--test', '--noflush'],
+        {
+          input: document,
+          log: '<routing-guard-preflight>',
+        }
+      );
+    return documents;
   }
 
   async prepare(
     target: RoutingGuardPlan | null,
     previous: RoutingGuardPlan | null
   ) {
-    const document = routingGuardRestoreDocument(
-      await this.observe(),
-      target,
-      previous
-    );
-    if (document)
-      await this.run('iptables-restore', ['--test', '--noflush'], {
-        input: document,
-        log: 'iptables-restore --test --noflush <routing-guard>',
-      });
-    return document;
+    const documents = await this.prepareAll(target, previous);
+    return documents.find((d) => d.family === 4)?.document ?? null;
   }
 
   async install(
@@ -282,17 +347,34 @@ export class RoutingGuard {
     await this.replace(null, previous);
   }
 
+  /** A crash may leave only one of the two exact known family guards. */
+  async ensure(target: RoutingGuardPlan) {
+    const documents = await this.prepareAll(target, null, true);
+    await this.write(documents);
+    await this.verify(target);
+  }
+
+  private async write(
+    documents: readonly { family: 4 | 6; document: string }[]
+  ) {
+    for (const { family, document } of documents)
+      await this.run(
+        family === 4 ? 'iptables-restore' : 'ip6tables-restore',
+        ['--noflush'],
+        {
+          input: document,
+          log: '<routing-guard-replacement>',
+        }
+      );
+  }
+
   private async replace(
     target: RoutingGuardPlan | null,
     previous: RoutingGuardPlan | null
   ) {
-    const document = await this.prepare(target, previous);
-    if (document)
-      await this.run('iptables-restore', ['--noflush'], {
-        input: document,
-        log: 'iptables-restore --noflush <routing-guard>',
-      });
+    const documents = await this.prepareAll(target, previous);
+    await this.write(documents);
     // Failed observation keeps the guard in place; never silently undo it.
-    await this.verify(target);
+    await this.verify(target, { families: this.families(target, previous) });
   }
 }

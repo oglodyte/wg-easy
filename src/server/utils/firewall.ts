@@ -213,8 +213,7 @@ function buildRestoreDocument({
   existingSave: string;
   guard?: RoutingGuardPlan | null;
 }) {
-  const guardHooks =
-    family === 4 ? routingGuardRepositionRules(existingSave, guard) : [];
+  const guardHooks = routingGuardRepositionRules(existingSave, guard, family);
   const managedInterfaces = new Set(
     states.map(({ wgInterface }) => InterfaceNameSchema.parse(wgInterface.name))
   );
