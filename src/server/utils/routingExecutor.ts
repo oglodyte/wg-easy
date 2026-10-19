@@ -447,26 +447,41 @@ export class RoutingExecutor {
     }
   }
 
-  async #applyOnce(
+  /** Validate complete replacement documents before any guard or peer mutation. */
+  async prepare(
     plan: RoutingPlan,
     {
-      afterPhase,
+      previousPlan,
+      knownPlans = [],
+    }: {
+      previousPlan?: RoutingPlan;
+      knownPlans?: readonly RoutingPlan[];
+    } = {}
+  ) {
+    await this.#preparePlan(plan, {
+      previousNatRules: previousPlan?.natChainRules,
+      previousNatJump: previousPlan?.parentNatJump,
+      knownPlans,
+    });
+  }
+
+  async #preparePlan(
+    plan: RoutingPlan,
+    {
       previousNatRules = [],
       previousNatJump = null,
-      onMutation,
-      guardedTransition,
+      knownPlans,
     }: {
-      afterPhase?: ApplyOptions['afterPhase'];
       previousNatRules?: readonly string[][];
       previousNatJump?: string[] | null;
-      onMutation: () => void;
-      guardedTransition?: ApplyOptions['guardedTransition'];
+      knownPlans?: readonly RoutingPlan[];
     }
   ) {
+    const strict = knownPlans !== undefined;
     await this.capabilityPreflight();
     const before = await this.observe();
     if (
-      !guardedTransition &&
+      !strict &&
       before.chains.some((c) => c.name.startsWith(ROUTING_PROGRAM_CHAIN_PREFIX))
     )
       throw new RoutingOwnershipConflictError(
@@ -487,25 +502,18 @@ export class RoutingExecutor {
       transitionNatRules.length > 0
         ? [plan.parentNatJump ?? previousNatJump!]
         : [];
-    const knownPlans = [plan, ...(guardedTransition?.knownPlans ?? [])];
+    const plans = [plan, ...(knownPlans ?? [])];
     const assertKnown = (state: ObservedRoutingState) => {
-      if (guardedTransition) {
+      if (strict) {
         if (!state.rawIptables)
           throw new Error('Routing policy observation is unavailable');
-        assertRoutingPolicyChains(state.rawIptables, knownPlans, {
+        assertRoutingPolicyChains(state.rawIptables, plans, {
           transitionNatRules,
           transitionNatJumps,
         });
       }
     };
-    const checkpoint = async (phase: RoutingApplyPhase) => {
-      await afterPhase?.(phase);
-      if (guardedTransition)
-        await new RoutingGuard(this.#run).verify(guardedTransition.guard);
-    };
     assertKnown(before);
-    if (guardedTransition)
-      await new RoutingGuard(this.#run).verify(guardedTransition.guard);
     const transitionNatDocument = renderRestoreDocument({
       table: 'nat',
       chain: ROUTING_NAT_CHAIN,
@@ -536,6 +544,38 @@ export class RoutingExecutor {
         observed: before,
       })
     );
+    return { before, transitionNatDocument, assertKnown };
+  }
+
+  async #applyOnce(
+    plan: RoutingPlan,
+    {
+      afterPhase,
+      previousNatRules = [],
+      previousNatJump = null,
+      onMutation,
+      guardedTransition,
+    }: {
+      afterPhase?: ApplyOptions['afterPhase'];
+      previousNatRules?: readonly string[][];
+      previousNatJump?: string[] | null;
+      onMutation: () => void;
+      guardedTransition?: ApplyOptions['guardedTransition'];
+    }
+  ) {
+    const { before, transitionNatDocument, assertKnown } =
+      await this.#preparePlan(plan, {
+        previousNatRules,
+        previousNatJump,
+        knownPlans: guardedTransition?.knownPlans,
+      });
+    const checkpoint = async (phase: RoutingApplyPhase) => {
+      await afterPhase?.(phase);
+      if (guardedTransition)
+        await new RoutingGuard(this.#run).verify(guardedTransition.guard);
+    };
+    if (guardedTransition)
+      await new RoutingGuard(this.#run).verify(guardedTransition.guard);
     await checkpoint('preflight');
 
     for (const route of plan.routes) {
