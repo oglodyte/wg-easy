@@ -5,7 +5,10 @@ import {
   type ManagedHookCounts,
   ManagedServerHookError,
 } from '#server/utils/managedServerHooks';
-import { InterfaceNameSchema } from '#shared/utils/schemas';
+import {
+  InterfaceNameSchema,
+  NetworkDeviceSchema,
+} from '#shared/utils/schemas';
 
 /** Restricted recovery data; identical config bytes do not imply no restart. */
 export type ManagedLifecycleIntent = {
@@ -14,6 +17,8 @@ export type ManagedLifecycleIntent = {
     previousUp: boolean;
     targetUp: boolean;
     restart: boolean;
+    previousDefaultEgress?: string;
+    targetDefaultEgress?: string;
   }[];
   hooks: ManagedHookCounts;
 };
@@ -27,6 +32,8 @@ const schema = z
             previousUp: z.boolean(),
             targetUp: z.boolean(),
             restart: z.boolean(),
+            previousDefaultEgress: NetworkDeviceSchema.optional(),
+            targetDefaultEgress: NetworkDeviceSchema.optional(),
           })
           .strict()
       )

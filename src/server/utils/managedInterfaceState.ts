@@ -52,7 +52,8 @@ const peerFields = new Set([
 export class ManagedInterfaceStateError extends Error {
   constructor(
     readonly code: string,
-    readonly interfaceId?: string
+    readonly interfaceId?: string,
+    readonly verificationScope?: string
   ) {
     super(`Managed interface verification: ${code}`);
     this.name = 'ManagedInterfaceStateError';
@@ -68,7 +69,11 @@ export type ManagedInterfaceConfig = {
 function fail(code: string): never {
   throw new ManagedInterfaceStateError(code);
 }
-function parse(config: string, quick: boolean): ManagedInterfaceConfig {
+function parse(
+  config: string,
+  quick: boolean,
+  allowUninitialized = false
+): ManagedInterfaceConfig {
   const fields = new Map<string, string>(),
     peers: Map<string, string>[] = [];
   let section: Map<string, string> | undefined;
@@ -101,8 +106,9 @@ function parse(config: string, quick: boolean): ManagedInterfaceConfig {
       : match[2]!.split('#')[0]!.trim();
     section.set(name, value);
   }
-  if (!fields.get('privatekey')) fail('invalid_configuration');
-  deriveClientPublicKey(fields.get('privatekey')!);
+  if (!fields.get('privatekey')) {
+    if (!allowUninitialized) fail('invalid_configuration');
+  } else deriveClientPublicKey(fields.get('privatekey')!);
   const identities = new Set<string>();
   for (const peer of peers) {
     const identity = peer.get('publickey');
@@ -367,6 +373,198 @@ export function verifyManagedInterfaceState(
       InterfaceNameSchema.safeParse(interfaceId).success
         ? interfaceId
         : undefined
+    );
+  }
+}
+
+/**
+ * Recovery only: known partial writes may be undone under the retained guard.
+ * This never establishes Applied evidence; full verification is still required.
+ */
+export function verifyRecoverableManagedInterfaceState(
+  interfaceId: string,
+  configs: readonly string[],
+  observed: { showconf: string; addresses: string },
+  { allowPartialStart = false }: { allowPartialStart?: boolean } = {}
+) {
+  let scope = 'parse';
+  try {
+    if (configs.length < 1 || configs.length > 2) fail('unknown_partial_state');
+    const expected = configs.map((config) =>
+      parseManagedInterfaceConfig(interfaceId, config)
+    );
+    for (const config of configs) {
+      try {
+        verifyManagedInterfaceState(interfaceId, config, observed);
+        return;
+      } catch {
+        /* A partial setconf/syncconf or quick startup is not Applied. */
+      }
+    }
+    const actual = parse(observed.showconf, false, allowPartialStart),
+      privateKey = actual.fields.get('privatekey'),
+      publicKey = privateKey ? deriveClientPublicKey(privateKey) : null,
+      links = JSON.parse(observed.addresses),
+      blankUserspace =
+        allowPartialStart &&
+        !publicKey &&
+        Array.isArray(links) &&
+        links.length === 1 &&
+        links[0].ifname === interfaceId &&
+        links[0].linkinfo?.info_kind === 'tun' &&
+        links[0].linkinfo?.info_data?.type === 'tun' &&
+        links[0].linkinfo?.info_data?.persist === false &&
+        Array.isArray(links[0].flags) &&
+        !links[0].flags.includes('UP') &&
+        Array.isArray(links[0].addr_info) &&
+        links[0].addr_info.length === 0 &&
+        links[0].mtu === 1420,
+      keyMatches =
+        publicKey &&
+        expected.some(
+          (e) =>
+            deriveClientPublicKey(e.fields.get('privatekey')!) === publicKey
+        );
+    scope = 'server_identity';
+    if (publicKey && !keyMatches) fail('unknown_partial_state');
+    if (!publicKey && (!allowPartialStart || actual.peers.length > 0))
+      fail('unknown_partial_state');
+    scope = 'listen_port';
+    if (
+      !expected.some(
+        (e) =>
+          integer(e.fields.get('listenport'), 65535) ===
+          integer(actual.fields.get('listenport'), 65535, 0)
+      ) &&
+      !(
+        allowPartialStart &&
+        (integer(actual.fields.get('listenport'), 65535, 0) === 0 ||
+          blankUserspace)
+      )
+    )
+      fail('unknown_partial_state');
+    scope = 'interface_mark';
+    if (
+      !expected.some(
+        (e) =>
+          mark(e.fields.get('fwmark')) === mark(actual.fields.get('fwmark'))
+      ) &&
+      !(allowPartialStart && mark(actual.fields.get('fwmark')) === 0)
+    )
+      fail('unknown_partial_state');
+    scope = 'interface_parameters';
+    for (const name of Object.keys(awgDefaults)) {
+      const value = awgValue(name, actual.fields);
+      if (
+        !expected.some((e) => awgValue(name, e.fields) === value) &&
+        !(allowPartialStart && awgValue(name, new Map()) === value)
+      )
+        fail('unknown_partial_state');
+    }
+    scope = 'uninitialized_parameters';
+    if (
+      !publicKey &&
+      ((!blankUserspace &&
+        integer(actual.fields.get('listenport'), 65535, 0) !== 0) ||
+        mark(actual.fields.get('fwmark')) !== 0 ||
+        Object.keys(awgDefaults).some(
+          (name) => awgValue(name, actual.fields) !== awgValue(name, new Map())
+        ))
+    )
+      fail('unknown_partial_state');
+    const peers = new Map<string, Map<string, string>[]>();
+    for (const config of expected)
+      for (const peer of config.peers) {
+        const key = peer.get('publickey')!;
+        peers.set(key, [...(peers.get(key) ?? []), peer]);
+      }
+    const awgConfigured = expected.some((e) =>
+      Object.keys(awgDefaults).some((name) => e.fields.has(name))
+    );
+    scope = 'peer_state';
+    for (const peer of actual.peers) {
+      const key = peer.get('publickey')!,
+        known = peers.get(key);
+      if (!known) fail('unknown_partial_state');
+      const prefixes = new Set(
+        known.flatMap((p) => canonicalPrefixes(p.get('allowedips') ?? ''))
+      );
+      if (
+        canonicalPrefixes(peer.get('allowedips') ?? '').some(
+          (p) => !prefixes.has(p)
+        )
+      )
+        fail('unknown_partial_state');
+      const keepalive = integer(peer.get('persistentkeepalive'), 65535, 0);
+      if (
+        keepalive !== 0 &&
+        !known.some(
+          (p) => keepalive === integer(p.get('persistentkeepalive'), 65535, 0)
+        )
+      )
+        fail('unknown_partial_state');
+      if (boolean(peer.get('advancedsecurity')) && !awgConfigured)
+        fail('unknown_partial_state');
+      if (peer.has('endpoint')) validateEndpoint(peer.get('endpoint')!, false);
+      const candidates = [
+        undefined,
+        ...known.map((p) => p.get('presharedkey')),
+      ];
+      if (
+        !candidates.some((psk) => {
+          try {
+            verifyPeerSyncPresharedKeys(
+              interfaceId,
+              `[Peer]\nPublicKey = ${key}\n${psk ? `PresharedKey = ${psk}\n` : ''}`,
+              `${key}\t${peer.get('presharedkey') ?? '(none)'}`
+            );
+            return true;
+          } catch {
+            return false;
+          }
+        })
+      )
+        fail('unknown_partial_state');
+    }
+    scope = 'addresses';
+    if (!Array.isArray(links) || links.length !== 1)
+      fail('unknown_partial_state');
+    const link = links[0],
+      allowedAddresses = new Set(
+        expected.flatMap((e) =>
+          e.fields.get('address')!.split(',').map(address)
+        )
+      ),
+      allowedMtus = new Set(
+        expected.map((e) => integer(e.fields.get('mtu'), 65535))
+      );
+    if (allowPartialStart) {
+      allowedMtus.add(1420);
+      allowedMtus.add(1500);
+    }
+    if (
+      link.ifname !== interfaceId ||
+      !Array.isArray(link.flags) ||
+      !allowedMtus.has(link.mtu) ||
+      !Array.isArray(link.addr_info)
+    )
+      fail('unknown_partial_state');
+    for (const entry of link.addr_info) {
+      if (entry.family === 'inet6' && entry.scope === 'link') continue;
+      if (
+        !publicKey ||
+        !['inet', 'inet6'].includes(entry.family) ||
+        !allowedAddresses.has(address(`${entry.local}/${entry.prefixlen}`))
+      )
+        fail('unknown_partial_state');
+    }
+  } catch {
+    throw new ManagedInterfaceStateError(
+      'unknown_partial_state',
+      InterfaceNameSchema.safeParse(interfaceId).success
+        ? interfaceId
+        : undefined,
+      scope
     );
   }
 }

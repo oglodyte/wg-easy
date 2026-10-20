@@ -170,15 +170,23 @@ export class RoutingPolicyBackups {
     {
       candidateConfigurations,
       lifecycleIntent,
+      expectedPreviousConfigurations,
     }: {
       candidateConfigurations?: ReadonlyMap<string, string | null>;
       lifecycleIntent?: ManagedLifecycleIntent;
+      expectedPreviousConfigurations?: ReadonlyMap<string, string | null>;
     } = {}
   ) {
     const ids = [...new Set(interfaceIds)].sort();
     if (ids.some((id) => !InterfaceNameSchema.safeParse(id).success))
       throw new RoutingPolicyBackupError('invalid_interface');
     const knownIds = new Set(ids);
+    if (
+      expectedPreviousConfigurations &&
+      (expectedPreviousConfigurations.size !== ids.length ||
+        ids.some((id) => !expectedPreviousConfigurations.has(id)))
+    )
+      throw new RoutingPolicyBackupError('invalid_expected_previous');
     if (
       candidateConfigurations &&
       [...candidateConfigurations].some(
@@ -218,6 +226,11 @@ export class RoutingPolicyBackups {
           ? { candidate: candidateConfigurations.get(interfaceId)! }
           : {}),
       });
+      if (
+        expectedPreviousConfigurations &&
+        config !== expectedPreviousConfigurations.get(interfaceId)
+      )
+        throw new RoutingPolicyBackupError('baseline_changed', interfaceId);
     }
     const saved = parse({
       owner: OWNER,

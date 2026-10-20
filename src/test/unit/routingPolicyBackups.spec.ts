@@ -20,6 +20,23 @@ const oldConfig = '[Interface]\n# restricted fixture before replacement\n';
 const newConfig = '[Interface]\n# restricted fixture after replacement\n';
 
 describe('private routing configuration recovery backups', () => {
+  test('refuses a private baseline changed since preflight before creating recovery evidence', async () => {
+    const { root, backups } = await setup();
+    await fs.writeFile(path.join(root, 'wg0.conf'), newConfig, { mode: 0o600 });
+    await expect(
+      backups.create(['wg0'], {
+        expectedPreviousConfigurations: new Map([['wg0', oldConfig]]),
+      })
+    ).rejects.toThrow('baseline_changed');
+    expect(
+      (await fs.readdir(backups.directory)).filter((name) =>
+        name.endsWith('.json')
+      )
+    ).toEqual([]);
+    expect(await fs.readFile(path.join(root, 'wg0.conf'), 'utf8')).toBe(
+      newConfig
+    );
+  });
   test('retains explicit restart intent for identical bytes and strictly binds it to both private generations', async () => {
     const { root, backups } = await setup();
     await fs.writeFile(path.join(root, 'wg0.conf'), oldConfig, { mode: 0o600 });

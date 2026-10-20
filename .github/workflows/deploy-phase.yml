@@ -113,6 +113,11 @@ jobs:
             --bundle --platform=node --format=esm --packages=bundle \
             --alias:#server=./server --alias:#shared=./shared --alias:#db=./server/database \
             --outfile="$RUNNER_TEMP/wg-easy-awg-recovery-probe.mjs"
+          pnpm exec prettier --check ../staging/subnet-policy/interface-lifecycle-probe.ts
+          pnpm exec esbuild ../staging/subnet-policy/interface-lifecycle-probe.ts \
+            --bundle --platform=node --format=esm --packages=bundle \
+            --alias:#server=./server --alias:#shared=./shared \
+            --outfile="$RUNNER_TEMP/wg-easy-interface-lifecycle-probe.mjs"
 
   server-build:
     name: Build server (${{ matrix.architecture }})

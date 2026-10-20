@@ -8,7 +8,7 @@ import {
 } from '#shared/utils/schemas';
 
 const phases = ['preup', 'postup', 'predown', 'postdown'] as const;
-type Phase = (typeof phases)[number];
+export type ManagedHookPhase = (typeof phases)[number];
 const DEFAULT_DEVICE = '$OUT_IF';
 // This is the exact read-only lookup recorded in the accepted staging baseline.
 const dynamicLookup =
@@ -36,7 +36,7 @@ export type ManagedHookRule = {
 export type ManagedServerHooks = {
   interfaceId: string;
   dynamic: boolean;
-  phases: Record<Phase, ManagedHookRule[]>;
+  phases: Record<ManagedHookPhase, ManagedHookRule[]>;
 };
 export type ManagedHookCounts = {
   rule: ManagedHookRule;
@@ -54,9 +54,10 @@ function device(value: string, dynamic: boolean) {
   if (!parsed.success || value.includes('+')) fail();
   return parsed.data;
 }
-function ruleKey(rule: ManagedHookRule) {
+export function managedHookRuleKey(rule: ManagedHookRule) {
   return JSON.stringify([rule.family, rule.table, rule.chain, rule.args]);
 }
+const ruleKey = managedHookRuleKey;
 function parseRule(
   words: string[],
   up: boolean,
@@ -214,12 +215,22 @@ export function resolveManagedServerHooks(
   hooks: ManagedServerHooks,
   defaultDevice?: string
 ): ManagedHookRule[] {
+  return [
+    ...resolveManagedServerHookPhase(hooks, 'preup', defaultDevice),
+    ...resolveManagedServerHookPhase(hooks, 'postup', defaultDevice),
+  ];
+}
+export function resolveManagedServerHookPhase(
+  hooks: ManagedServerHooks,
+  phase: ManagedHookPhase,
+  defaultDevice?: string
+): ManagedHookRule[] {
   if (hooks.dynamic && !NetworkDeviceSchema.safeParse(defaultDevice).success)
     throw new ManagedServerHookError(
       'default_egress_unavailable',
       hooks.interfaceId
     );
-  return [...hooks.phases.preup, ...hooks.phases.postup].map((rule) => ({
+  return hooks.phases[phase].map((rule) => ({
     ...rule,
     args: rule.args.map((arg) =>
       arg === DEFAULT_DEVICE ? defaultDevice! : arg
@@ -368,13 +379,18 @@ export class ManagedServerHookEffects {
 
   async capture(
     previous: readonly ManagedHookRule[],
-    target: readonly ManagedHookRule[]
+    target: readonly ManagedHookRule[],
+    retained: readonly ManagedHookRule[] = []
   ): Promise<ManagedHookCounts> {
-    if (previous.length > MAX_TOTAL_RULES || target.length > MAX_TOTAL_RULES)
+    if (
+      previous.length + retained.length > MAX_TOTAL_RULES ||
+      target.length + retained.length > MAX_TOTAL_RULES
+    )
       fail('rule_budget_exceeded');
     const old = multiplicities(previous),
       next = multiplicities(target),
-      all = new Map([...old, ...next]);
+      stable = multiplicities(retained),
+      all = new Map([...old, ...next, ...stable]);
     parseManagedHookCounts(
       [...all.values()].map(({ rule }) => ({
         rule,
@@ -390,7 +406,8 @@ export class ManagedServerHookEffects {
         .map(([key, entry]) => {
           const count = actual.get(key) ?? 0,
             base = count - (old.get(key)?.count ?? 0);
-          if (base < 0) fail('previous_effects_unverified');
+          if (base < (stable.get(key)?.count ?? 0))
+            fail('previous_effects_unverified');
           return {
             rule: entry.rule,
             base,
@@ -411,6 +428,53 @@ export class ManagedServerHookEffects {
       entries.some((e) => (actual.get(ruleKey(e.rule)) ?? 0) !== e[generation])
     )
       fail('effects_unverified');
+  }
+
+  /** Test every admitted old/base/target document before any managed mutation. */
+  async prepare(value: ManagedHookCounts) {
+    const entries = parseManagedHookCounts(value);
+    for (const entry of entries) {
+      const fresh = await this.chainRules(entry.rule),
+        exact = `-A ${entry.rule.chain} ${entry.rule.args.join(' ')}`,
+        indexes = fresh.flatMap((line, i) => (line === exact ? [i] : []));
+      if (indexes.length !== entry.previous)
+        fail('previous_effects_unverified');
+      for (const wanted of new Set([
+        entry.base,
+        entry.previous,
+        entry.target,
+      ])) {
+        const removed = new Set(indexes.slice(wanted)),
+          replacement = fresh.filter((_, i) => !removed.has(i));
+        for (let i = indexes.length; i < wanted; i++) replacement.push(exact);
+        const document = [
+          `*${entry.rule.table}`,
+          `-F ${entry.rule.chain}`,
+          ...replacement,
+          'COMMIT',
+          '',
+        ].join('\n');
+        try {
+          await this.run(
+            entry.rule.family === 4 ? 'iptables-restore' : 'ip6tables-restore',
+            ['--test', '--noflush', '-w', '5'],
+            { input: document, log: false }
+          );
+        } catch {
+          fail('preflight_failed');
+        }
+      }
+    }
+  }
+
+  async verifyRecoverable(value: ManagedHookCounts) {
+    const entries = parseManagedHookCounts(value),
+      actual = await this.counts(entries.map((e) => e.rule));
+    for (const entry of entries) {
+      const count = actual.get(ruleKey(entry.rule)) ?? 0;
+      if (count < entry.base || count > Math.max(entry.previous, entry.target))
+        fail('unknown_effects');
+    }
   }
 
   async reconcile(

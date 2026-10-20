@@ -7,6 +7,7 @@ import {
   managedInterfaceRequiresRestart,
   parseManagedInterfaceConfig,
   verifyManagedInterfaceState,
+  verifyRecoverableManagedInterfaceState,
 } from '#server/utils/managedInterfaceState';
 
 function fixture() {
@@ -42,6 +43,155 @@ function fixture() {
 }
 
 describe('complete private managed-interface verification', () => {
+  test('recognizes only the pinned userspace blank TUN ephemeral listen port during guarded recovery', () => {
+    const f = fixture(),
+      link = {
+        ifname: 'wg0',
+        flags: [],
+        mtu: 1420,
+        linkinfo: {
+          info_kind: 'tun',
+          info_data: { type: 'tun', persist: false },
+        },
+        addr_info: [] as object[],
+      },
+      partial = {
+        showconf:
+          '[Interface]\nListenPort = 58242\nH1 = 1\nH2 = 2\nH3 = 3\nH4 = 4\n',
+        addresses: JSON.stringify([link]),
+      };
+    expect(() =>
+      verifyRecoverableManagedInterfaceState('wg0', [f.config], partial, {
+        allowPartialStart: true,
+      })
+    ).not.toThrow();
+    expect(() =>
+      verifyManagedInterfaceState('wg0', f.config, partial)
+    ).toThrow();
+    expect(() =>
+      verifyRecoverableManagedInterfaceState('wg0', [f.config], partial)
+    ).toThrow('unknown_partial_state');
+    for (const changed of [
+      { ...link, flags: ['UP'] },
+      { ...link, mtu: 1500 },
+      { ...link, linkinfo: { info_kind: 'amneziawg' } },
+      {
+        ...link,
+        linkinfo: {
+          ...link.linkinfo,
+          info_data: { type: 'tun', persist: true },
+        },
+      },
+      {
+        ...link,
+        addr_info: [
+          { family: 'inet', local: '10.8.0.1', prefixlen: 24, scope: 'global' },
+        ],
+      },
+    ])
+      expect(() =>
+        verifyRecoverableManagedInterfaceState(
+          'wg0',
+          [f.config],
+          { ...partial, addresses: JSON.stringify([changed]) },
+          { allowPartialStart: true }
+        )
+      ).toThrow('unknown_partial_state');
+  });
+  test('admits only known partial startup/sync states for guarded recovery, never as Applied', () => {
+    const f = fixture(),
+      target = f.config.replace('62001', '62002'),
+      partial = {
+        showconf: '[Interface]\n',
+        addresses: JSON.stringify([
+          { ifname: 'wg0', flags: [], mtu: 1420, addr_info: [] },
+        ]),
+      };
+    expect(() =>
+      verifyRecoverableManagedInterfaceState(
+        'wg0',
+        [f.config, target],
+        partial,
+        { allowPartialStart: true }
+      )
+    ).not.toThrow();
+    expect(() =>
+      verifyRecoverableManagedInterfaceState('wg0', [f.config, target], partial)
+    ).toThrow('unknown_partial_state');
+    expect(() => verifyManagedInterfaceState('wg0', target, partial)).toThrow();
+    const configured = {
+      showconf: f.showconf.replace('62001', '62002').split('[Peer]')[0]!,
+      addresses: partial.addresses,
+    };
+    expect(() =>
+      verifyRecoverableManagedInterfaceState(
+        'wg0',
+        [f.config, target],
+        configured,
+        { allowPartialStart: true }
+      )
+    ).not.toThrow();
+    expect(() =>
+      verifyRecoverableManagedInterfaceState('wg0', [f.config, target], {
+        ...f.observed,
+        showconf: f.showconf.replace(
+          'AllowedIPs = fd41:1::2/128, 10.8.0.2/32',
+          'AllowedIPs = 10.8.0.2/32'
+        ),
+      })
+    ).not.toThrow();
+  });
+
+  test.each([
+    'server',
+    'peer',
+    'prefix',
+    'psk',
+    'mtu',
+    'address',
+    'parameter',
+    'uninitialized peer',
+  ])('refuses unknown partial %s without leaking private input', (caseName) => {
+    const f = fixture(),
+      secret = randomBytes(32).toString('base64'),
+      state = { ...f.observed };
+    if (caseName === 'server')
+      state.showconf = state.showconf.replace(f.privateKey, secret);
+    if (caseName === 'peer')
+      state.showconf = state.showconf.replace(
+        f.publicKey,
+        deriveClientPublicKey(secret)
+      );
+    if (caseName === 'prefix')
+      state.showconf = state.showconf.replace(
+        'AllowedIPs = fd41:1::2/128, 10.8.0.2/32',
+        'AllowedIPs = 198.51.100.0/24'
+      );
+    if (caseName === 'psk') state.showconf += `PresharedKey = ${secret}\n`;
+    if (caseName === 'mtu')
+      state.addresses = state.addresses.replace('1420', '1401');
+    if (caseName === 'address')
+      state.addresses = state.addresses.replace('10.8.0.1', '10.9.0.1');
+    if (caseName === 'parameter')
+      state.showconf = state.showconf.replace('Jc = 0', 'Jc = 29');
+    if (caseName === 'uninitialized peer')
+      state.showconf = state.showconf.replace(
+        `PrivateKey = ${f.privateKey}\n`,
+        ''
+      );
+    expect(() =>
+      verifyRecoverableManagedInterfaceState('wg0', [f.config], state, {
+        allowPartialStart: true,
+      })
+    ).toThrow('unknown_partial_state');
+    try {
+      verifyRecoverableManagedInterfaceState('wg0', [f.config], state, {
+        allowPartialStart: true,
+      });
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
+  });
   test('preserves address host bits, canonical prefixes, compatibility defaults and authenticated endpoint roaming', () => {
     const f = fixture();
     expect(() =>

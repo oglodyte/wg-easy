@@ -35,6 +35,7 @@ export type PolicyRecoveryDependencies = {
   guard: RoutingGuard;
   protectedPaths: readonly RoutingGuardScope[];
   candidateConfigurations?: ReadonlyMap<string, string | null>;
+  previousConfigurations?: ReadonlyMap<string, string | null>;
   lifecycleIntent?: ManagedLifecycleIntent;
   beforeRestoreManagedState?: (
     previous: AppliedRoutingPolicyPlan,
@@ -238,6 +239,7 @@ export async function applyGuardedRoutingPolicy(
   ];
   const basename = await deps.backups.create(interfaces, {
     candidateConfigurations: deps.candidateConfigurations,
+    expectedPreviousConfigurations: deps.previousConfigurations,
     lifecycleIntent: deps.lifecycleIntent,
   });
   let pending: PendingPolicyTransition;
