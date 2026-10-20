@@ -86,6 +86,7 @@ class WireGuard {
   #cronStarted = false;
   #cronTimer?: ReturnType<typeof setInterval>;
   #routingHealthTimer?: ReturnType<typeof setInterval>;
+  #routingHealthIntervalMs?: number;
   #routingBootstrapped = false;
   #lastSafeRoutingPlan?: RoutingPlan;
   #exitHealthySince = new Map<string, Date>();
@@ -314,19 +315,28 @@ class WireGuard {
   }
 
   async startRoutingHealthMonitor() {
-    if (this.#routingHealthTimer) return;
     const settings = await Database.general.getRoutingHealthSettings();
+    const intervalMs = settings.routingExitHealthCheckIntervalSeconds * 1000;
+    if (
+      this.#routingHealthTimer &&
+      this.#routingHealthIntervalMs === intervalMs
+    )
+      return;
+    if (this.#routingHealthTimer) clearInterval(this.#routingHealthTimer);
+    this.#routingHealthIntervalMs = intervalMs;
     this.#routingHealthTimer = setInterval(() => {
       this.requestReconcile('routing-health-check').catch((error) => {
         WG_DEBUG('Routing health reconciliation failed.');
         console.error(error);
       });
-    }, settings.routingExitHealthCheckIntervalSeconds * 1000);
+    }, intervalMs);
   }
 
   async Shutdown() {
     if (this.#cronTimer) clearInterval(this.#cronTimer);
     if (this.#routingHealthTimer) clearInterval(this.#routingHealthTimer);
+    this.#routingHealthTimer = undefined;
+    this.#routingHealthIntervalMs = undefined;
     const policy = await Database.routingPolicy.get();
     if (policy.version === 2 || policy.pending) {
       try {
@@ -759,6 +769,13 @@ class WireGuard {
 
   async #reconcile(request: ReconcileRequest): Promise<MutationResult> {
     try {
+      // Refresh from the latest saved settings within the sole writer, before
+      // reporting this settings revision as applied. Startup starts it later.
+      if (
+        this.#routingHealthTimer &&
+        request.reasons.includes('routing-health-settings')
+      )
+        await this.startRoutingHealthMonitor();
       const policy = await Database.routingPolicy.get();
       if (policy.pending) await this.#policyApplication.recover(Database);
       const current = await Database.routingPolicy.get();

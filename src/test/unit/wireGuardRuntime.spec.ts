@@ -358,6 +358,28 @@ async function loadRuntime(
 }
 
 describe('interface-scoped WireGuard runtime', () => {
+  test('applies a saved health interval through the sole reconciler without duplicate timers', async () => {
+    vi.useFakeTimers();
+    const { WireGuard, Database } = await loadRuntime();
+    await WireGuard.startRoutingHealthMonitor();
+    await vi.advanceTimersByTimeAsync(5_000);
+    Database.general.getRoutingHealthSettings.mockResolvedValue({
+      routingExitHealthCheckIntervalSeconds: 10,
+    });
+    await WireGuard.requestReconcile('routing-health-settings');
+    const requests = vi.spyOn(WireGuard, 'requestReconcile');
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(requests).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(requests).toHaveBeenCalledExactlyOnceWith('routing-health-check');
+    await WireGuard.startRoutingHealthMonitor();
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(50_000);
+    expect(requests).toHaveBeenCalledTimes(6);
+    await WireGuard.Shutdown();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   test.each([false, true])(
     'admits expanded legacy hook templates and refuses unsafe scripts (unsafe=%s)',
     async (unsafe) => {
