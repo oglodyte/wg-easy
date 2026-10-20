@@ -5,6 +5,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#ifndef SO_NETNS_COOKIE
+#include <asm/socket.h>
+#endif
+
 /* Read only: no bind, connect, namespace switch, or network configuration. */
 int main(void) {
     uint64_t cookie = 0;
