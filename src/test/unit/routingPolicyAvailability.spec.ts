@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'vitest';
 
 import { deriveRoutingAvailabilityWithdrawal } from '#server/utils/routingPolicyAvailability';
-import { readRoutingKernelNamespace } from '#server/utils/routingPolicyKernelContext';
+import {
+  readRoutingKernelNamespace,
+  RoutingKernelNamespaceSchema,
+} from '#server/utils/routingPolicyKernelContext';
 import { specializeRoutingPolicy } from '#server/utils/routingPolicyRuntime';
 import { parseRoutingPolicyJournal } from '#server/utils/routingPolicyJournal';
 import { buildPolicyBootstrapBaseline } from '#server/utils/routingPolicyBootstrap';
@@ -87,10 +90,16 @@ describe('observed kernel availability evidence', () => {
         calls.push(`${binary}:${args?.join(',')}`);
         return binary === 'cat'
           ? '11111111-1111-4111-8111-111111111111'
-          : '4:4026531001';
+          : binary === 'stat'
+            ? '4:4026531001'
+            : '317';
       })
-    ).toBe(namespaceId);
-    expect(calls).toHaveLength(2);
+    ).toBe(`${namespaceId}:317`);
+    expect(calls).toEqual([
+      'cat:/proc/sys/kernel/random/boot_id',
+      'stat:-L,-c,%d:%i,/proc/self/ns/net',
+      '/usr/local/bin/wg-easy-netns-cookie:',
+    ]);
     const secret = 'private-untrusted-output';
     await expect(
       readRoutingKernelNamespace(async () => secret)
@@ -102,6 +111,27 @@ describe('observed kernel availability evidence', () => {
     } catch (error) {
       expect(String(error).includes(secret)).toBe(false);
     }
+  });
+  test('distinguishes reused namespace inodes and retains historical journal parsing', async () => {
+    const observe = (cookie: string) =>
+      readRoutingKernelNamespace(async (binary) =>
+        binary === 'cat'
+          ? namespaceId.split(':')[0]!
+          : binary === 'stat'
+            ? '4:4026531001'
+            : cookie
+      );
+    expect(await observe('317')).not.toBe(await observe('4395'));
+    expect(await observe('317')).toBe(await observe('317'));
+    expect(RoutingKernelNamespaceSchema.parse(namespaceId)).toBe(namespaceId);
+    expect(await observe('18446744073709551615')).toBe(
+      `${namespaceId}:18446744073709551615`
+    );
+    for (const value of ['0', '01', '-1', '18446744073709551616', '', 'bad'])
+      await expect(observe(value)).rejects.toThrow('namespace unavailable');
+    expect(
+      RoutingKernelNamespaceSchema.safeParse(`${namespaceId}:bad`).success
+    ).toBe(false);
   });
   test('withdraws the missing exit, retaining the configured partition and old hook evidence without selecting a backup', () => {
     const { journal } = fixture(),

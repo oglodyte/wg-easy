@@ -25,6 +25,7 @@ RUN pnpm exec nuxt prepare && pnpm build
 # Build amneziawg-tools
 COPY staging/phase0/client-lab/patch-awg-quick.sh /tmp/patch-awg-quick.sh
 RUN apk add linux-headers build-base go git && \
+    cc -std=c11 -Wall -Wextra -Werror -O2 native/network-namespace-cookie.c -o /app/wg-easy-netns-cookie && \
     git clone --depth 1 --branch "${AMNEZIAWG_TOOLS_VERSION}" https://github.com/amnezia-vpn/amneziawg-tools.git && \
     git clone --depth 1 --branch "${AMNEZIAWG_GO_VERSION}" https://github.com/amnezia-vpn/amneziawg-go && \
     test "$(git -C amneziawg-tools rev-parse HEAD)" = "${AMNEZIAWG_TOOLS_COMMIT}" && \
@@ -52,6 +53,7 @@ COPY --from=build /app/cli/cli.sh /usr/local/bin/cli
 RUN chmod +x /usr/local/bin/cli
 # Copy amneziawg-go
 COPY --from=build /app/amneziawg-go/amneziawg-go /usr/bin/amneziawg-go
+COPY --from=build /app/wg-easy-netns-cookie /usr/local/bin/wg-easy-netns-cookie
 RUN chmod +x /usr/bin/amneziawg-go
 # Copy amneziawg-tools
 COPY --from=build /app/amneziawg-tools/src/wg /usr/bin/awg
