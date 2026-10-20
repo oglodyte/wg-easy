@@ -13,6 +13,10 @@ import {
   type ManagedHookRule,
 } from '#server/utils/managedServerHooks';
 import { parseManagedLifecycleIntent } from '#server/utils/managedLifecycleIntent';
+import {
+  legacyImportHooks,
+  LEGACY_IMPORT_DEFAULT_EGRESS,
+} from '#shared/utils/importHooks';
 
 const dynamic =
   'OUT_IF=$(ip -4 route show default | awk "NR == 1 {print \\$5}"); test -n "$OUT_IF" || exit 1;';
@@ -36,6 +40,47 @@ function ruleId(rule: ManagedHookRule) {
 }
 
 describe('closed guarded server-hook contract', () => {
+  test.each([false, true])(
+    'admits the exact accepted import defaults with IPv6=%s and retains every saved byte',
+    (ipv6) => {
+      const source = legacyImportHooks(ipv6),
+        expanded = new Map(
+          Object.entries(source).map(([phase, script]) => [
+            phase.toLowerCase(),
+            script
+              .replaceAll('{{name}}', 'awg-ins')
+              .replaceAll('{{ipv4Cidr}}', '10.13.0.0/24')
+              .replaceAll('{{ipv6Cidr}}', 'fd41:1::/64')
+              .replaceAll('{{device}}', 'eth0')
+              .replaceAll('{{port}}', '62003'),
+          ])
+        ),
+        before = [...expanded],
+        admitted = admitManagedServerHooks('awg-ins', expanded),
+        resolved = resolveManagedServerHooks(admitted, 'ens160');
+      expect(admitted.dynamic).toBe(true);
+      expect(resolved).toHaveLength(ipv6 ? 8 : 4);
+      expect(
+        resolved.filter((r) => r.table === 'nat').map((r) => r.args[3])
+      ).toEqual(ipv6 ? ['ens160', 'eth0'] : ['ens160']);
+      expect([...expanded]).toEqual(before);
+    }
+  );
+  test.each([
+    LEGACY_IMPORT_DEFAULT_EGRESS.replace('exit', 'system("iptables -F"); exit'),
+    LEGACY_IMPORT_DEFAULT_EGRESS + ' && iptables -F',
+    '"$(ip -4 route show default)"',
+    LEGACY_IMPORT_DEFAULT_EGRESS +
+      '; iptables -t nat -A POSTROUTING -s 10.9.0.0/24 -o "$OUT_IF" -j MASQUERADE',
+  ])(
+    'refuses altered import lookup or unbound-variable syntax (%#)',
+    (lookup) => {
+      const script = `iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o ${lookup} -j MASQUERADE;`;
+      expect(() => admitManagedServerHooks('wg0', fields(script))).toThrow(
+        'unsupported_script'
+      );
+    }
+  );
   test('admits the exact default and recorded dynamic NAT hooks without changing saved text', async () => {
     expect(rules()).toHaveLength(8);
     const script = dynamic + up.replaceAll('-o eth0', '-o "$OUT_IF"'),

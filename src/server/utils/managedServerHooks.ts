@@ -2,6 +2,7 @@ import { normalizeCidr, parseCidr } from 'cidr-tools';
 import z from 'zod';
 
 import { execFile } from '#server/utils/cmd';
+import { LEGACY_IMPORT_DEFAULT_EGRESS } from '#shared/utils/importHooks';
 import {
   InterfaceNameSchema,
   NetworkDeviceSchema,
@@ -168,11 +169,18 @@ export function admitManagedServerHooks(
     for (const phase of phases) {
       let script = fields.get(phase) ?? '';
       if (script.length > 8192 || /[\r\n\0]/.test(script)) fail();
-      const dynamic = script.startsWith(dynamicLookup);
-      if (dynamic) {
+      const assignment = script.startsWith(dynamicLookup);
+      if (assignment) {
         script = script.slice(dynamicLookup.length);
-        result.dynamic = true;
       }
+      // Recognize the accepted import helper byte-for-byte, before splitting
+      // its fixed awk program's semicolons. Never execute the substitution.
+      const inline = script.includes(LEGACY_IMPORT_DEFAULT_EGRESS);
+      if (inline && !assignment && script.includes('$OUT_IF')) fail();
+      if (inline)
+        script = script.replaceAll(LEGACY_IMPORT_DEFAULT_EGRESS, '"$OUT_IF"');
+      const dynamic = assignment || inline;
+      result.dynamic ||= dynamic;
       for (const statement of script.split(';')) {
         const text = statement.trim();
         if (!text) continue;

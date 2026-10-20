@@ -1,5 +1,6 @@
 /** Isolated Linux proof; no application or host firewall is touched. */
 import assert from "node:assert/strict";
+import { legacyImportHooks } from "../../src/shared/utils/importHooks";
 
 import type { execFile } from "../../src/server/utils/cmd";
 import {
@@ -61,10 +62,17 @@ export async function proveManagedHookRecovery({
       compile(up),
       await effects.defaultEgress(),
     ),
-    target = resolveManagedServerHooks(
-      compile(up.replaceAll("62001", "62002")),
-      "lo",
-    );
+    importTarget = legacyImportHooks(true)
+      .postUp.replaceAll("{{ipv4Cidr}}", "10.242.0.0/24")
+      .replaceAll("{{ipv6Cidr}}", "fd42:1::/64")
+      .replaceAll("{{port}}", "62002")
+      .replaceAll("{{name}}", "wg0")
+      .replaceAll("{{device}}", "lo"),
+    target = resolveManagedServerHooks(compile(importTarget), "lo");
+  assert.deepEqual(
+    target,
+    resolveManagedServerHooks(compile(up.replaceAll("62001", "62002")), "lo"),
+  );
   assert.deepEqual(
     old.filter((r) => r.table === "nat").map((r) => r.args[3]),
     ["eth0", "eth0"],
@@ -152,6 +160,7 @@ export async function proveManagedHookRecovery({
   ]);
   return {
     admittedHookRecovery: true,
+    acceptedImportDefaultEgress: true,
     hookPostCommitFaults: postCommitFaults,
     frozenDynamicEgress: true,
     equalForeignHookRuleOrder: true,
