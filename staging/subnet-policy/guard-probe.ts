@@ -4,6 +4,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { provePolicyClassifier } from "./policy-checkpoint";
 import { proveManagedHookRecovery } from "./hook-checkpoint";
+import { proveGuardRebase } from "./guard-rebase-checkpoint";
 
 import { execFile } from "../../src/server/utils/cmd";
 import { firewallTestExports } from "../../src/server/utils/firewall";
@@ -571,6 +572,11 @@ try {
       ),
     management: () => ping(ns.management, "192.0.2.1"),
   });
+  checkpoint("persisted-guard-rebase");
+  const rebaseEvidence = await proveGuardRebase({
+    server, previous: full, protectedPaths,
+    denied: () => denied(), management: () => ping(ns.management, "192.0.2.1"),
+  });
   console.log(
     JSON.stringify({
       guardProbe: "PASS",
@@ -589,6 +595,7 @@ try {
       scopeCount: full.scopes.length,
       ...policyEvidence,
       ...hookEvidence,
+      ...rebaseEvidence,
     }),
   );
 } finally {

@@ -262,4 +262,25 @@ describe('private routing configuration recovery backups', () => {
       fs.stat(path.join(backups.directory, orphan))
     ).rejects.toMatchObject({ code: 'ENOENT' });
   });
+
+  test('cold restoration accepts only exact durable old/candidate bytes and refuses unknown files without writing', async () => {
+    const { root, backups } = await setup(),
+      file = path.join(root, 'wg0.conf');
+    await fs.writeFile(file, oldConfig);
+    const reference = await backups.create(['wg0'], {
+      candidateConfigurations: new Map([['wg0', newConfig]]),
+    });
+    await backups.verifyKnownCurrentConfigurations(reference);
+    await fs.writeFile(file, newConfig);
+    await backups.verifyKnownCurrentConfigurations(reference);
+    await fs.writeFile(file, '# unrelated private file\n');
+    await expect(
+      backups.verifyKnownCurrentConfigurations(reference)
+    ).rejects.toThrow('unknown_configuration');
+    expect(await fs.readFile(file, 'utf8')).toBe('# unrelated private file\n');
+    await fs.unlink(file);
+    await expect(
+      backups.verifyKnownCurrentConfigurations(reference)
+    ).rejects.toThrow('unknown_configuration');
+  });
 });

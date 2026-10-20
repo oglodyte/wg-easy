@@ -11,6 +11,7 @@ import {
   specializeRoutingPolicy,
 } from '#server/utils/routingPolicyRuntime';
 import { buildRoutingPlan } from '#server/utils/routing';
+import { RoutingKernelNamespaceSchema } from '#server/utils/routingPolicyKernelContext';
 import {
   InterfaceNameSchema,
   Ipv4CidrSchema,
@@ -57,6 +58,7 @@ const branch = z.strictObject({
 });
 const planSchema = z.strictObject({
   version: z.literal(2),
+  namespaceId: RoutingKernelNamespaceSchema.optional(),
   clientFirewall: ClientFirewallPolicySchema,
   interfaces: z.array(
     z.strictObject({
@@ -64,6 +66,7 @@ const planSchema = z.strictObject({
       ipv4Cidr: Ipv4CidrSchema,
       enabled: z.boolean(),
       observedUp: z.boolean(),
+      hooksApplied: z.boolean().optional(),
     })
   ),
   siteRoutes: z.array(
@@ -145,6 +148,16 @@ const bootstrapSchema = z.strictObject({
 });
 const pendingSchema = journalSchema.extend({
   bootstrap: bootstrapSchema.optional(),
+  withdrawal: z
+    .strictObject({
+      unavailableInterfaceIds: z.array(InterfaceNameSchema).min(1),
+      resetNamespace: z.boolean(),
+    })
+    .optional(),
+  supersededGuardScopes: z
+    .array(guardScope)
+    .max(POLICY_LIMITS.guardRules)
+    .optional(),
   stage: z.enum([
     'prepared',
     'guarded',
@@ -193,7 +206,12 @@ function validatePlan(plan: AppliedRoutingPolicyPlan) {
   const groups = new Map(plan.groups.map((g) => [g.id, g]));
   const peers = new Map(plan.peers.map((p) => [p.clientId, p]));
   for (const iface of plan.interfaces)
-    if (iface.observedUp && !iface.enabled) fail();
+    if (
+      (iface.observedUp && (!iface.enabled || iface.hooksApplied === false)) ||
+      (iface.hooksApplied && !iface.enabled) ||
+      (plan.namespaceId !== undefined && iface.hooksApplied === undefined)
+    )
+      fail();
   for (const iface of plan.clientFirewall.interfaces)
     if (!interfaces.get(iface.interfaceId)?.observedUp) fail();
   for (const entry of plan.clientFirewall.entries) {
@@ -363,6 +381,18 @@ function validateBootstrap(
       ),
       enableIpv6: target.plan.clientFirewall.enableIpv6,
       clientFirewall: target.plan.clientFirewall,
+      ...(target.plan.namespaceId !== undefined
+        ? { namespaceId: target.plan.namespaceId }
+        : {}),
+      ...(target.plan.interfaces.some((i) => i.hooksApplied !== undefined)
+        ? {
+            hooksAppliedInterfaceIds: new Set(
+              target.plan.interfaces
+                .filter((i) => i.hooksApplied)
+                .map((i) => i.interfaceId)
+            ),
+          }
+        : {}),
     }
   ).plan;
   for (const p of reconstructed.peers) {
@@ -443,6 +473,8 @@ export function parsePendingPolicyTransition(
     if (!result.success) fail();
     const {
       bootstrap,
+      withdrawal,
+      supersededGuardScopes,
       stage,
       guardScopes,
       backupBasenames,
@@ -451,7 +483,38 @@ export function parsePendingPolicyTransition(
     } = result.data;
     const parsed = parseRoutingPolicyJournal(journal);
     if (bootstrap) parsePolicyBootstrapBaseline(bootstrap, parsed);
+    if (withdrawal) {
+      const unavailable = withdrawal.unavailableInterfaceIds;
+      if (
+        bootstrap ||
+        !parsed.plan.namespaceId ||
+        !unique(unavailable) ||
+        JSON.stringify(unavailable) !==
+          JSON.stringify([...unavailable].sort()) ||
+        unavailable.some(
+          (id) =>
+            !parsed.plan.interfaces.some(
+              (i) => i.interfaceId === id && !i.observedUp
+            )
+        ) ||
+        (withdrawal.resetNamespace &&
+          (unavailable.length !== parsed.plan.interfaces.length ||
+            parsed.plan.interfaces.some((i) => i.hooksApplied !== false)))
+      )
+        fail();
+    }
     const guard = buildRoutingGuard(guardScopes, { protectedPaths: [] });
+    if (supersededGuardScopes) {
+      const superseded = buildRoutingGuard(supersededGuardScopes, {
+        protectedPaths: [],
+      });
+      if (
+        !withdrawal?.resetNamespace ||
+        JSON.stringify(superseded.scopes) !==
+          JSON.stringify(supersededGuardScopes)
+      )
+        fail();
+    }
     if (
       JSON.stringify(guard.scopes) !== JSON.stringify(guardScopes) ||
       !unique(backupBasenames) ||
@@ -461,6 +524,8 @@ export function parsePendingPolicyTransition(
     return {
       ...parsed,
       ...(bootstrap ? { bootstrap } : {}),
+      ...(withdrawal ? { withdrawal } : {}),
+      ...(supersededGuardScopes ? { supersededGuardScopes } : {}),
       stage,
       guardScopes,
       backupBasenames,

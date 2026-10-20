@@ -8,6 +8,7 @@ import {
   policyPeerId,
   PolicyValidationError,
 } from '#server/utils/routingPolicy';
+import { RoutingKernelNamespaceSchema } from '#server/utils/routingPolicyKernelContext';
 import type {
   AppliedRoutingPolicyPlan,
   PolicyClientFirewall,
@@ -45,12 +46,16 @@ export function specializeRoutingPolicy(
     upInterfaceIds,
     enableIpv6,
     clientFirewall,
+    namespaceId,
+    hooksAppliedInterfaceIds,
   }: {
     selectedExitClientIds: ReadonlyMap<number, number | null>;
     enabledInterfaceIds: ReadonlySet<string>;
     upInterfaceIds: ReadonlySet<string>;
     enableIpv6: boolean;
     clientFirewall: PolicyClientFirewall;
+    namespaceId?: string;
+    hooksAppliedInterfaceIds?: ReadonlySet<string>;
   }
 ) {
   const compiled = compileRoutingPolicy(snapshot);
@@ -79,6 +84,21 @@ export function specializeRoutingPolicy(
       throw new PolicyValidationError('interface_availability_invalid', {
         interfaceId: interfaces.has(id) ? id : undefined,
       });
+  if (
+    namespaceId !== undefined &&
+    !RoutingKernelNamespaceSchema.safeParse(namespaceId).success
+  )
+    throw new PolicyValidationError('namespace_invalid');
+  if (
+    hooksAppliedInterfaceIds &&
+    [...hooksAppliedInterfaceIds].some((id) => !enabledInterfaceIds.has(id))
+  )
+    throw new PolicyValidationError('hook_availability_invalid');
+  if (
+    hooksAppliedInterfaceIds &&
+    [...upInterfaceIds].some((id) => !hooksAppliedInterfaceIds.has(id))
+  )
+    throw new PolicyValidationError('hook_availability_invalid');
   const peers = compiled.basePeers
     .filter((p) => upInterfaceIds.has(p.interfaceId))
     .map((p) => ({
@@ -146,6 +166,7 @@ export function specializeRoutingPolicy(
   const groupById = new Map(groups.map((g) => [g.id, g]));
   const plan: AppliedRoutingPolicyPlan = {
     version: 2,
+    ...(namespaceId !== undefined ? { namespaceId } : {}),
     clientFirewall: structuredClone(clientFirewall),
     interfaces: [...snapshot.interfaces]
       .sort((a, b) => a.interfaceId.localeCompare(b.interfaceId))
@@ -154,6 +175,13 @@ export function specializeRoutingPolicy(
         ipv4Cidr: normalizeCidr(i.ipv4Cidr),
         enabled: enabledInterfaceIds.has(i.interfaceId),
         observedUp: upInterfaceIds.has(i.interfaceId),
+        ...(namespaceId !== undefined || hooksAppliedInterfaceIds
+          ? {
+              hooksApplied:
+                hooksAppliedInterfaceIds?.has(i.interfaceId) ??
+                upInterfaceIds.has(i.interfaceId),
+            }
+          : {}),
       })),
     siteRoutes: [...snapshot.clients]
       .filter(

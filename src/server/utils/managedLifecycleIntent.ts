@@ -16,6 +16,8 @@ export type ManagedLifecycleIntent = {
     interfaceId: string;
     previousUp: boolean;
     targetUp: boolean;
+    previousHooksApplied?: boolean;
+    targetHooksApplied?: boolean;
     restart: boolean;
     previousDefaultEgress?: string;
     targetDefaultEgress?: string;
@@ -31,6 +33,8 @@ const schema = z
             interfaceId: InterfaceNameSchema,
             previousUp: z.boolean(),
             targetUp: z.boolean(),
+            previousHooksApplied: z.boolean().optional(),
+            targetHooksApplied: z.boolean().optional(),
             restart: z.boolean(),
             previousDefaultEgress: NetworkDeviceSchema.optional(),
             targetDefaultEgress: NetworkDeviceSchema.optional(),
@@ -51,7 +55,12 @@ export function parseManagedLifecycleIntent(
     for (const entry of parsed.interfaces) {
       if (
         ids.has(entry.interfaceId) ||
-        (entry.previousUp !== entry.targetUp && !entry.restart)
+        (entry.previousUp !== entry.targetUp && !entry.restart) ||
+        (entry.previousUp && entry.previousHooksApplied === false) ||
+        (entry.targetUp && entry.targetHooksApplied === false) ||
+        (!(entry.previousHooksApplied ?? entry.previousUp) &&
+          (entry.targetHooksApplied ?? entry.targetUp) &&
+          !entry.targetUp)
       )
         throw new Error();
       ids.add(entry.interfaceId);

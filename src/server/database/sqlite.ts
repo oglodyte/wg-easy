@@ -10,6 +10,8 @@ import { HooksService } from '#db/repositories/hooks/service';
 import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
 import { ClientService } from '#db/repositories/client/service';
 import { RuntimeStateService } from '#db/repositories/runtime/service';
+import { RoutingPolicyRuntimeService } from '#db/repositories/runtime/policyService';
+import { RoutingGenerationSnapshotService } from '#db/repositories/runtime/generationSnapshot';
 import { RoutingGroupService } from '#db/repositories/routingGroup/service';
 import { finalizePhase1DataMigration } from '#db/phase1Migration';
 import { createNodeSqliteDatabase } from '#db/nodeSqlite';
@@ -47,6 +49,8 @@ class DBService {
   hooks: HooksService;
   oneTimeLinks: OneTimeLinkService;
   runtime: RuntimeStateService;
+  routingPolicy: RoutingPolicyRuntimeService;
+  routingGeneration: RoutingGenerationSnapshotService;
   routingGroups: RoutingGroupService;
 
   constructor(db: DBType) {
@@ -59,6 +63,8 @@ class DBService {
     this.hooks = new HooksService(db);
     this.oneTimeLinks = new OneTimeLinkService(db);
     this.runtime = new RuntimeStateService(db);
+    this.routingPolicy = new RoutingPolicyRuntimeService(db);
+    this.routingGeneration = new RoutingGenerationSnapshotService(db);
     this.routingGroups = new RoutingGroupService(db);
   }
 }

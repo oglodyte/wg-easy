@@ -57,6 +57,47 @@ function kernel() {
   };
 }
 describe('dual-family exact transition guards', () => {
+  test('replays a persisted guard rebase across mixed old/new families and removes an obsolete IPv6 guard', async () => {
+    const k = kernel(),
+      target = buildRoutingGuard(
+        [
+          { ...scope, destination: '172.31.0.0/16' },
+          { ...ipv6, destination: '2001:db8::/32' },
+        ],
+        { protectedPaths: [] }
+      );
+    await new RoutingGuard(k.run).install(plan);
+    k.setFailure('6-write');
+    await expect(new RoutingGuard(k.run).ensure(target, plan)).rejects.toThrow(
+      'fixture failure'
+    );
+    assertRoutingGuardState(k.saves.get(4)!, target, 4);
+    assertRoutingGuardState(k.saves.get(6)!, plan, 6);
+    k.setFailure('');
+    await new RoutingGuard(k.run).ensure(target, plan);
+    await new RoutingGuard(k.run).verify(target);
+    const ipv4Only = buildRoutingGuard([scope], { protectedPaths: [] });
+    await new RoutingGuard(k.run).ensure(ipv4Only, target);
+    assertRoutingGuardState(k.saves.get(6)!, null, 6);
+    await new RoutingGuard(k.run).verify(ipv4Only);
+  });
+
+  test('a guard rebase refuses unknown family state before any replacement', async () => {
+    const k = kernel();
+    await new RoutingGuard(k.run).install(plan);
+    k.saves.set(
+      6,
+      k.saves.get(6)!.replace('COMMIT', '-A WG_ROUTE_GUARD -j ACCEPT\nCOMMIT')
+    );
+    k.calls.length = 0;
+    const target = buildRoutingGuard([scope], { protectedPaths: [] });
+    await expect(new RoutingGuard(k.run).ensure(target, plan)).rejects.toThrow(
+      'residual_guard'
+    );
+    expect(k.calls).toEqual([]);
+    assertRoutingGuardState(k.saves.get(4)!, plan, 4);
+  });
+
   test('validates same-family matches and management intersections without cross-family false positives', () => {
     expect(() =>
       buildRoutingGuard([ipv6], { protectedPaths: [scope] })

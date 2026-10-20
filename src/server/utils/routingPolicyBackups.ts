@@ -112,8 +112,10 @@ function parse(value: unknown): SavedConfigurations {
           (i) => i.interfaceId === intent.interfaceId
         )!;
         return (
-          (intent.previousUp && entry.config === null) ||
-          (intent.targetUp && entry.candidate === null)
+          ((intent.previousUp || intent.previousHooksApplied) &&
+            entry.config === null) ||
+          ((intent.targetUp || intent.targetHooksApplied) &&
+            entry.candidate === null)
         );
       }))
   )
@@ -265,6 +267,33 @@ export class RoutingPolicyBackups {
   }
   async readPrivateLifecycleIntent(basename: string) {
     return (await this.read(basename)).lifecycle;
+  }
+  /** Refuse unknown private bytes before cold-namespace file-only restoration. */
+  async verifyKnownCurrentConfigurations(basename: string) {
+    const saved = await this.read(basename);
+    for (const entry of saved.interfaces) {
+      let current: string | null;
+      try {
+        current = await regularFile(
+          path.join(this.configDirectory, `${entry.interfaceId}.conf`)
+        );
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') current = null;
+        else
+          throw new RoutingPolicyBackupError(
+            'source_unavailable',
+            entry.interfaceId
+          );
+      }
+      if (
+        current !== entry.config &&
+        (entry.candidate === undefined || current !== entry.candidate)
+      )
+        throw new RoutingPolicyBackupError(
+          'unknown_configuration',
+          entry.interfaceId
+        );
+    }
   }
   async restore(
     basename: string,

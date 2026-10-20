@@ -112,12 +112,14 @@ export type PolicyClientFirewall = {
 /** Last verified runtime state only; never persist the static candidate proof. */
 export type AppliedRoutingPolicyPlan = {
   version: 2;
+  namespaceId?: string;
   clientFirewall: PolicyClientFirewall;
   interfaces: {
     interfaceId: string;
     ipv4Cidr: string;
     enabled: boolean;
     observedUp: boolean;
+    hooksApplied?: boolean;
   }[];
   siteRoutes: { interfaceId: string; prefixes: string[] }[];
   bypassPrefixes: string[];
@@ -187,6 +189,11 @@ export type PolicyBootstrapBaseline = {
 };
 export type PendingPolicyTransition = RoutingPolicyJournal & {
   bootstrap?: PolicyBootstrapBaseline;
+  withdrawal?: {
+    unavailableInterfaceIds: string[];
+    resetNamespace: boolean;
+  };
+  supersededGuardScopes?: RoutingPolicyGuardScope[];
   stage:
     'prepared' | 'guarded' | 'peers' | 'classified' | 'verified' | 'restoring';
   guardScopes: RoutingPolicyGuardScope[];

@@ -15,6 +15,8 @@ import {
   buildRoutingGuard,
 } from "../../src/server/utils/routingGuard";
 import { specializeRoutingPolicy } from "../../src/server/utils/routingPolicyRuntime";
+import { routingPolicyRuntimeFingerprint } from "../../src/server/utils/routingPolicyRuntime";
+import { readRoutingKernelNamespace } from "../../src/server/utils/routingPolicyKernelContext";
 import { buildRoutingPolicyTransition } from "../../src/server/utils/routingPolicyTransition";
 import type {
   RoutingPolicyJournal,
@@ -43,6 +45,7 @@ type Metadata = {
   target: RoutingPolicyJournal;
   protectedPaths: RoutingPolicyGuardScope[];
   identical: boolean;
+  baselineDown?: boolean;
 };
 async function readMeta(root: string) {
   assert(/^\/tmp\/wge-interface-lifecycle-[A-Za-z0-9]+$/.test(root));
@@ -83,6 +86,10 @@ async function worker(root: string, action: string, failAt: string) {
     crash(`${action}_stopped`);
   };
   devices.up = async (id, config) => {
+    if (action === "recover" && meta.baselineDown && id === "wg0")
+      throw new Error(
+        "withdrawn device must not be restarted during restoration",
+      );
     crash(`${action}_file_before_up`);
     if (failAt === `${action}_blank_device`) {
       // Exact known partial quick startup: device exists before setconf.
@@ -351,6 +358,11 @@ if (process.argv[2] === "--worker") {
     const awg =
         "Jc = 3\nJmin = 20\nJmax = 40\nS1 = 64\nS2 = 32\nH1 = 11111111\nH2 = 22222222\nH3 = 33333333\nH4 = 44444444\n",
       identical = process.env.WG_EASY_LIFECYCLE_IDENTICAL === "1";
+    const baselineDown = process.env.WG_EASY_LIFECYCLE_BASELINE_DOWN === "1",
+      namespaceId = await readRoutingKernelNamespace(
+        (binary, args = [], options = {}) =>
+          inside(ns.server, binary, args, options.input),
+      );
     function serverConfig(id: string, target = false) {
       const index = id === "wg0" ? 1 : 2,
         port = index === 1 ? (target && !identical ? 62003 : 62001) : 62002;
@@ -398,6 +410,7 @@ if (process.argv[2] === "--worker") {
         upInterfaceIds: new Set(["wg0", "awg1"]),
         enableIpv6: true,
         clientFirewall: { enableIpv6: true, interfaces: [], entries: [] },
+        namespaceId,
       }),
       previous = {
         revision: 1,
@@ -419,9 +432,26 @@ if (process.argv[2] === "--worker") {
           destination: "192.0.2.18/32",
         },
       ];
+    if (baselineDown) {
+      previous.plan = structuredClone(specialized.plan);
+      previous.plan.interfaces.find(
+        (i) => i.interfaceId === "wg0",
+      )!.observedUp = false;
+      previous.plan.peers = previous.plan.peers.filter(
+        (p) => p.interfaceId !== "wg0",
+      );
+      previous.fingerprint = routingPolicyRuntimeFingerprint(previous.plan);
+    }
     await fs.writeFile(
       path.join(root, "metadata.json"),
-      JSON.stringify({ ns, previous, target, protectedPaths, identical }),
+      JSON.stringify({
+        ns,
+        previous,
+        target,
+        protectedPaths,
+        identical,
+        baselineDown,
+      }),
       { mode: 0o600 },
     );
     const server: typeof execFile = (binary, args = [], options = {}) =>
@@ -512,9 +542,23 @@ if (process.argv[2] === "--worker") {
       );
     };
     const member = async () => {
+      if (baselineDown) {
+        await assert.rejects(fetchFrom(ns.member, "10.243.1.1"));
+        await assert.rejects(fetchFrom(ns.member, "fd43:1::1"));
+        return;
+      }
       await reachable(ns.member, "10.243.1.1", "10.243.1.2");
       await reachable(ns.member, "fd43:1::1", "fd43:1::2");
     };
+    if (baselineDown) {
+      await reachable(ns.member, "10.243.1.1", "10.243.1.2");
+      await reachable(ns.member, "fd43:1::1", "fd43:1::2");
+      // A vanished device does not execute the admitted PostDown effects.
+      await devices.down(
+        "wg0",
+        await fs.readFile(path.join(root, "app", "wg0.conf"), "utf8"),
+      );
+    }
     await member();
     await survivors();
     const diagnosticOnly =
@@ -524,7 +568,7 @@ if (process.argv[2] === "--worker") {
       : [
           "apply_backup",
           "apply_guarded",
-          "apply_stopped",
+          ...(!baselineDown ? ["apply_stopped"] : []),
           "apply_file_before_up",
           "apply_blank_device",
           "apply_started",
@@ -570,8 +614,10 @@ if (process.argv[2] === "--worker") {
       : [
           "recover_hook_1",
           "recover_files",
-          "recover_file_before_up",
-          "recover_started",
+          "recover_stopped",
+          ...(!baselineDown
+            ? ["recover_file_before_up", "recover_started"]
+            : []),
         ]) {
       checkpoint(failure);
       assert.equal((await child("apply", "apply_hook_9")).signal, "SIGKILL");
@@ -614,7 +660,8 @@ if (process.argv[2] === "--worker") {
           process.env.AWG_FORCE_USERSPACE === "true"
             ? "pinned-userspace"
             : "kernel-first",
-        identicalBytesManualRestart: identical,
+        identicalBytesManualRestart: identical && !baselineDown,
+        restoredDownBaselineWithoutStart: baselineDown,
         sigkillCases: kills,
         oldStopBeforeCandidateFile: true,
         knownBlankDeviceRecovery: true,

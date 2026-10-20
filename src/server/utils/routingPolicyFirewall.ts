@@ -108,6 +108,19 @@ function assertHookOrder(
 export class RoutingPolicyFirewall {
   constructor(private readonly run: typeof execFile = execFile) {}
 
+  /** A new kernel namespace cannot inherit ownership of a matching old chain. */
+  async verifyAbsent() {
+    await this.safe('ownership_unknown', async () => {
+      for (const binary of ['iptables-save', 'ip6tables-save']) {
+        const state = observe(
+          await this.run(binary, ['-t', 'filter'], { log: false })
+        );
+        if (state.exists)
+          throw new RoutingPolicyFirewallError('ownership_unknown');
+      }
+    });
+  }
+
   private async safe<T>(code: string, work: () => Promise<T>): Promise<T> {
     try {
       return await work();

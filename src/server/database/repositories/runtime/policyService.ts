@@ -5,6 +5,8 @@ import { general } from '../general/schema';
 import { routingPolicyRuntime, runtimeReconciliationState } from './schema';
 
 import type { DBType } from '#db/sqlite';
+import { assertRoutingAvailabilityWithdrawal } from '#server/utils/routingPolicyAvailability';
+import { RoutingKernelNamespaceSchema } from '#server/utils/routingPolicyKernelContext';
 import {
   parsePendingPolicyTransition,
   parseRoutingPolicyJournal,
@@ -57,7 +59,9 @@ function requireIdentity(
 
 async function readState(db: Database) {
   try {
-    const settings = await db.query.general.findFirst().execute();
+    const settings = await db.query.general
+      .findFirst({ columns: { routingPolicyVersion: true } })
+      .execute();
     if (!settings || ![1, 2].includes(settings.routingPolicyVersion))
       fail('version_unavailable');
     const row = await db.query.routingPolicyRuntime
@@ -71,6 +75,8 @@ async function readState(db: Database) {
       row.applied !== null ? parseRoutingPolicyJournal(row.applied) : null;
     const pending =
       row.pending !== null ? parsePendingPolicyTransition(row.pending) : null;
+    if (pending?.withdrawal)
+      assertRoutingAvailabilityWithdrawal(applied, pending);
     if (
       (settings.routingPolicyVersion === 1 &&
         (applied || (pending && !pending.bootstrap))) ||
@@ -103,12 +109,17 @@ async function readState(db: Database) {
   }
 }
 
+/** Read inside the caller's existing transaction; never start a nested reader. */
+export const readRoutingPolicyStateInTransaction = readState;
+
 /** Policy health cannot make an unverified interface configuration Applied. */
 async function configurationsConverged(
   tx: PolicyPublicationTransaction,
   plan: RoutingPolicyJournal['plan']
 ) {
-  const interfaces = await tx.query.wgInterface.findMany().execute();
+  const interfaces = await tx.query.wgInterface
+    .findMany({ columns: { name: true, enabled: true, pendingDelete: true } })
+    .execute();
   const runtime = await tx.query.interfaceRuntimeState.findMany().execute();
   const states = new Map(runtime.map((i) => [i.interfaceId, i]));
   const planned = new Map(plan.interfaces.map((i) => [i.interfaceId, i]));
@@ -169,7 +180,9 @@ export class RoutingPolicyRuntimeService {
         } else if (state.version !== 2) fail('version_unavailable');
         if (state.pending) fail('recovery_required');
         if (!sameJournal(state.applied, expected)) fail('applied_changed');
-        if (state.runtime.desiredRevision !== pending.revision)
+        if (pending.withdrawal)
+          assertRoutingAvailabilityWithdrawal(state.applied, pending);
+        else if (state.runtime.desiredRevision !== pending.revision)
           fail('desired_changed');
         await tx
           .update(routingPolicyRuntime)
@@ -224,6 +237,106 @@ export class RoutingPolicyRuntimeService {
     );
   }
 
+  /** Restart completion of a safety withdrawal; never restore the lost device. */
+  async resumeWithdrawal(expected: TransitionIdentity) {
+    return this.db.transaction(
+      async (tx) => {
+        const state = await readState(tx);
+        const pending = requireIdentity(state.pending, expected);
+        assertRoutingAvailabilityWithdrawal(state.applied, pending);
+        const next = { ...pending, stage: 'guarded' as const, errorCode: null };
+        await tx
+          .update(routingPolicyRuntime)
+          .set({ pending: next })
+          .where(eq(routingPolicyRuntime.id, 1))
+          .execute();
+        return next;
+      },
+      { behavior: 'immediate' }
+    );
+  }
+
+  /** CAS rebase after old private files and a fresh down-baseline backup are durable. */
+  async rebasePendingToWithdrawal(
+    expected: TransitionIdentity,
+    value: PendingPolicyTransition
+  ) {
+    const next = parsePendingPolicyTransition(value);
+    if (
+      !next.withdrawal?.resetNamespace ||
+      next.stage !== 'prepared' ||
+      next.errorCode !== null
+    )
+      fail('invalid_preparation');
+    return this.db.transaction(
+      async (tx) => {
+        const state = await readState(tx);
+        const pending = requireIdentity(state.pending, expected);
+        if (
+          state.version !== 2 ||
+          !state.applied ||
+          next.backupBasenames[0] === pending.backupBasenames[0] ||
+          JSON.stringify(next.supersededGuardScopes) !==
+            JSON.stringify(pending.guardScopes)
+        )
+          fail('invalid_namespace_rebase');
+        assertRoutingAvailabilityWithdrawal(state.applied, next);
+        await tx
+          .update(routingPolicyRuntime)
+          .set({ pending: next })
+          .where(eq(routingPolicyRuntime.id, 1))
+          .execute();
+        await tx
+          .update(runtimeReconciliationState)
+          .set({ status: 'degraded', lastError: 'namespace_recovery_pending' })
+          .where(eq(runtimeReconciliationState.id, 1))
+          .execute();
+        return next;
+      },
+      { behavior: 'immediate' }
+    );
+  }
+
+  /** A lost first-promotion namespace has no v2 Applied generation to restore. */
+  async cancelLostBootstrap(
+    expected: TransitionIdentity,
+    namespaceId: string,
+    verifyUnavailable: (tx: PolicyPublicationTransaction) => Promise<void>
+  ) {
+    if (!RoutingKernelNamespaceSchema.safeParse(namespaceId).success)
+      fail('namespace_evidence_required');
+    await this.db.transaction(
+      async (tx) => {
+        const state = await readState(tx),
+          pending = requireIdentity(state.pending, expected);
+        if (
+          state.version !== 1 ||
+          state.applied ||
+          !pending.bootstrap ||
+          !pending.plan.namespaceId ||
+          namespaceId === pending.plan.namespaceId
+        )
+          fail('bootstrap_cancellation_unavailable');
+        try {
+          await verifyUnavailable(tx);
+        } catch {
+          fail('final_verification_failed');
+        }
+        await tx
+          .update(routingPolicyRuntime)
+          .set({ applied: null, pending: null })
+          .where(eq(routingPolicyRuntime.id, 1))
+          .execute();
+        await tx
+          .update(runtimeReconciliationState)
+          .set({ status: 'pending', lastError: 'bootstrap_namespace_reset' })
+          .where(eq(runtimeReconciliationState.id, 1))
+          .execute();
+      },
+      { behavior: 'immediate' }
+    );
+  }
+
   /**
    * Hold the desired-state writer lock across final guard removal, complete
    * verification and group evidence writes. If any fail, the durable pending
@@ -256,7 +369,13 @@ export class RoutingPolicyRuntimeService {
         const pending = requireIdentity(state.pending, expected);
         if (pending.stage !== (restoring ? 'restoring' : 'verified'))
           fail('stage_changed');
-        if (!restoring && state.runtime.desiredRevision !== pending.revision)
+        if (pending.withdrawal && restoring)
+          fail('withdrawal_requires_completion');
+        if (
+          !restoring &&
+          !pending.withdrawal &&
+          state.runtime.desiredRevision !== pending.revision
+        )
           fail('desired_changed');
         try {
           await verifyAndPublishGroups(tx);
@@ -271,7 +390,9 @@ export class RoutingPolicyRuntimeService {
               plan: pending.plan,
             });
         const complete =
-          !restoring && (await configurationsConverged(tx, pending.plan));
+          !restoring &&
+          !pending.withdrawal &&
+          (await configurationsConverged(tx, pending.plan));
         if (pending.bootstrap && !restoring) {
           if (!complete) fail('bootstrap_not_converged');
           await tx.update(general).set({ routingPolicyVersion: 2 }).execute();

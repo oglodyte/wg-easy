@@ -17,6 +17,7 @@ import {
   type PolicyRecoveryDependencies,
 } from '#server/utils/routingPolicyRecovery';
 import { routingPolicyRuntimeFingerprint } from '#server/utils/routingPolicyRuntime';
+import { deriveRoutingAvailabilityWithdrawal } from '#server/utils/routingPolicyAvailability';
 import { buildRoutingPolicyTransition } from '#server/utils/routingPolicyTransition';
 import type {
   AppliedRoutingPolicyPlan,
@@ -240,6 +241,110 @@ async function fixture({ bootstrap = false } = {}) {
 }
 
 describe('inactive guarded peer-aware orchestration', () => {
+  test.each(['guard', 'peers', 'linux', 'remove', 'publish'])(
+    'completes a durable withdrawal down after %s failure, without restoring the historical up-device',
+    async (failure) => {
+      const f = await fixture();
+      f.previous.plan.namespaceId =
+        '11111111-1111-4111-8111-111111111111:4:4026531001';
+      f.previous.plan.interfaces[0]!.hooksApplied = true;
+      f.previous.fingerprint = routingPolicyRuntimeFingerprint(f.previous.plan);
+      await f.store.db
+        .update(schema.routingPolicyRuntime)
+        .set({ applied: f.previous })
+        .execute();
+      f.state.peer = f.previous.fingerprint;
+      f.state.linux = f.previous.fingerprint;
+      const down = deriveRoutingAvailabilityWithdrawal(
+        f.previous,
+        new Set(['wg0']),
+        {
+          namespaceId: f.previous.plan.namespaceId,
+        }
+      );
+      const restore = f.deps.restoreManagedState;
+      f.deps.restoreManagedState = async (plan, backup, guard) => {
+        expect(plan.interfaces[0]).toMatchObject({
+          observedUp: false,
+          hooksApplied: true,
+        });
+        await restore(plan, backup, guard);
+      };
+      f.deps.beforeRestoreManagedState = async (previous, target) => {
+        expect(previous).toEqual(down.plan);
+        expect(target).toEqual(down.plan);
+      };
+      f.state.failAt = failure;
+      f.state.bumpDesired = true;
+      expect(
+        await applyGuardedRoutingPolicy(f.deps, down, {
+          withdrawal: {
+            unavailableInterfaceIds: ['wg0'],
+            resetNamespace: false,
+          },
+        })
+      ).toEqual({ status: 'applied', cleanupPending: false });
+      expect(await f.deps.journal.get()).toMatchObject({
+        applied: down,
+        pending: null,
+        runtime: { appliedRevision: 1, status: 'degraded' },
+      });
+      expect(f.state.peer).toBe(down.fingerprint);
+      expect(f.state.activeGuard).toBeNull();
+    }
+  );
+
+  test('an interrupted withdrawal retains private evidence and resumes forward after reopening storage', async () => {
+    const f = await fixture();
+    f.previous.plan.namespaceId =
+      '11111111-1111-4111-8111-111111111111:4:4026531001';
+    f.previous.plan.interfaces[0]!.hooksApplied = true;
+    f.previous.fingerprint = routingPolicyRuntimeFingerprint(f.previous.plan);
+    await f.store.db
+      .update(schema.routingPolicyRuntime)
+      .set({ applied: f.previous })
+      .execute();
+    f.state.linux = f.previous.fingerprint;
+    const down = deriveRoutingAvailabilityWithdrawal(
+      f.previous,
+      new Set(['wg0']),
+      {
+        namespaceId: f.previous.plan.namespaceId,
+      }
+    );
+    f.state.failAt = 'linux';
+    f.state.restoreFails = true;
+    expect(
+      await applyGuardedRoutingPolicy(f.deps, down, {
+        withdrawal: { unavailableInterfaceIds: ['wg0'], resetNamespace: false },
+      })
+    ).toMatchObject({ status: 'failed', guarded: true });
+    const pending = (await f.deps.journal.get()).pending!;
+    expect(pending).toMatchObject({
+      withdrawal: { unavailableInterfaceIds: ['wg0'] },
+      stage: 'restoring',
+    });
+    await f.deps.backups.readPrivateConfigurations(pending.backupBasenames[0]!);
+    await f.store.close();
+    const reopened = createNodeSqliteDatabase(f.databasePath, schema);
+    stores.push(reopened);
+    f.deps.journal = new RoutingPolicyRuntimeService(reopened.db);
+    f.state.restoreFails = false;
+    const restore = f.deps.restoreManagedState;
+    f.deps.restoreManagedState = async (plan, backup, guard) => {
+      expect(plan).toEqual(down.plan);
+      await restore(plan, backup, guard);
+    };
+    expect(await restorePendingRoutingPolicy(f.deps)).toEqual({
+      status: 'applied',
+      cleanupPending: false,
+    });
+    expect(await f.deps.journal.get()).toMatchObject({
+      applied: down,
+      pending: null,
+    });
+  });
+
   test('stops candidate runtime under the guard using durable candidate bytes before old files are restored', async () => {
     const f = await fixture();
     f.deps.candidateConfigurations = new Map([

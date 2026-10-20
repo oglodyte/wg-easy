@@ -56,7 +56,17 @@ export function resolveClientConfigFormat(
 
 export const wg = {
   generateServerPeer: (
-    client: Omit<ClientType, 'createdAt' | 'updatedAt'>,
+    client: Pick<
+      ClientType,
+      | 'id'
+      | 'name'
+      | 'publicKey'
+      | 'preSharedKey'
+      | 'ipv4Address'
+      | 'ipv6Address'
+      | 'serverAllowedIps'
+      | 'serverEndpoint'
+    >,
     options: Options = {}
   ) => {
     const { enableIpv6 = true, additionalAllowedIps = [] } = options;

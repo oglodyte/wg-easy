@@ -232,6 +232,122 @@ async function fixture(
 }
 
 describe('private guarded interface lifecycle orchestration', () => {
+  test('a failed bring-up restores the down-device baseline and its retained hooks without restarting the failed device', async () => {
+    const f = await fixture();
+    f.runtime.delete('wg0');
+    const down = structuredClone(f.previousPlan);
+    down.interfaces.find((i) => i.interfaceId === 'wg0')!.observedUp = false;
+    down.interfaces.find((i) => i.interfaceId === 'wg0')!.hooksApplied = true;
+    down.peers = down.peers.filter((p) => p.interfaceId !== 'wg0');
+    const transition = await ManagedInterfaceTransition.prepare(
+        f.deps,
+        down,
+        f.targetPlan,
+        f.target
+      ),
+      reference = await f.backups.create([...f.target.keys()], {
+        candidateConfigurations: transition.candidateConfigurations,
+        expectedPreviousConfigurations: transition.previousConfigurations,
+        lifecycleIntent: transition.intent,
+      });
+    f.failAt(1);
+    await expect(transition.apply(f.guard)).rejects.toThrow(
+      'injected lifecycle failure'
+    );
+    f.failAt(-1);
+    const reopened = await ManagedInterfaceTransition.reopen(
+      f.deps,
+      reference,
+      down,
+      f.targetPlan
+    );
+    await reopened.beforeRestore(f.guard);
+    await f.backups.restore(reference);
+    await reopened.restorePrevious(f.guard);
+    expect(f.runtime.has('wg0')).toBe(false);
+    expect(f.events.filter((e) => e === 'before-up-wg0')).toHaveLength(1);
+    expect(f.events.some((e) => e.includes('other0'))).toBe(false);
+    await reopened.verify('previous');
+  });
+
+  test('preserves inactive unsupported hook text while allowing a safe start, then restores it without execution', async () => {
+    const f = await fixture();
+    f.runtime.delete('wg0');
+    const old = f.previous
+      .get('wg0')!
+      .replace('PreUp = : safe-marker', 'PreUp = opaque preserved script');
+    await fs.writeFile(path.join(f.root, 'wg0.conf'), old);
+    const down = structuredClone(f.previousPlan);
+    down.interfaces.find((i) => i.interfaceId === 'wg0')!.observedUp = false;
+    down.interfaces.find((i) => i.interfaceId === 'wg0')!.hooksApplied = false;
+    down.peers = down.peers.filter((p) => p.interfaceId !== 'wg0');
+    // No old effect exists in this namespace. Equal unrelated rules, if any,
+    // are preserved as baseline by the typed effect capture.
+    const previous = f.firewall.entries.filter(
+      (l) => l.includes('wg0') || l.includes('--dport 62001')
+    );
+    for (const line of previous)
+      f.firewall.entries.splice(f.firewall.entries.indexOf(line), 1);
+    const transition = await ManagedInterfaceTransition.prepare(
+        f.deps,
+        down,
+        f.targetPlan,
+        f.target
+      ),
+      reference = await f.backups.create([...f.target.keys()], {
+        candidateConfigurations: transition.candidateConfigurations,
+        lifecycleIntent: transition.intent,
+      });
+    await transition.apply(f.guard);
+    const reopened = await ManagedInterfaceTransition.reopen(
+      f.deps,
+      reference,
+      down,
+      f.targetPlan
+    );
+    await reopened.beforeRestore(f.guard);
+    await f.backups.restore(reference);
+    await reopened.restorePrevious(f.guard);
+    expect(f.runtime.has('wg0')).toBe(false);
+    expect(
+      (await fs.readFile(path.join(f.root, 'wg0.conf'), 'utf8')).includes(
+        'opaque preserved script'
+      )
+    ).toBe(true);
+    await reopened.verify('previous');
+  });
+
+  test('refuses a newly present interface when neither side of a file-only transition owns a device', async () => {
+    const f = await fixture();
+    f.runtime.delete('wg0');
+    const down = structuredClone(f.previousPlan);
+    down.interfaces.find((i) => i.interfaceId === 'wg0')!.observedUp = false;
+    down.interfaces.find((i) => i.interfaceId === 'wg0')!.hooksApplied = false;
+    down.peers = down.peers.filter((p) => p.interfaceId !== 'wg0');
+    const target = structuredClone(down);
+    const transition = await ManagedInterfaceTransition.prepare(
+        f.deps,
+        down,
+        target,
+        f.target
+      ),
+      reference = await f.backups.create([...f.target.keys()], {
+        candidateConfigurations: transition.candidateConfigurations,
+        lifecycleIntent: transition.intent,
+      });
+    f.runtime.set('wg0', f.previous.get('wg0')!);
+    const before = [...f.events],
+      reopened = await ManagedInterfaceTransition.reopen(
+        f.deps,
+        reference,
+        down,
+        target
+      );
+    await expect(reopened.beforeRestore(f.guard)).rejects.toThrow(
+      'unknown_device'
+    );
+    expect(f.events).toEqual(before);
+  });
   test('keeps an applied dynamic egress binding during peer sync and refreshes it only on a requested restart', async () => {
     const f = await fixture('credentials'),
       prefix =

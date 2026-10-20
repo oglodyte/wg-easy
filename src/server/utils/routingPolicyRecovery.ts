@@ -19,6 +19,7 @@ import {
 import { renderRoutingPolicyLinux } from '#server/utils/routingPolicyLinux';
 import { buildRoutingPlan } from '#server/utils/routing';
 import { routingPolicyRuntimeFingerprint } from '#server/utils/routingPolicyRuntime';
+import { assertRoutingAvailabilityWithdrawal } from '#server/utils/routingPolicyAvailability';
 import { buildRoutingPolicyTransition } from '#server/utils/routingPolicyTransition';
 import type {
   AppliedRoutingPolicyPlan,
@@ -76,15 +77,20 @@ export type PolicyTransitionResult =
 
 async function ensureGuard(
   deps: PolicyRecoveryDependencies,
-  guard: RoutingGuardPlan
+  guard: RoutingGuardPlan,
+  superseded: RoutingGuardPlan | null = null
 ) {
+  if (superseded) {
+    await deps.guard.ensure(guard, superseded);
+    return;
+  }
   try {
     await deps.guard.verify(guard);
     return;
   } catch {
     /* Inspect absence before installing; unknown state stays untouched. */
   }
-  await deps.guard.ensure(guard);
+  await deps.guard.ensure(guard, superseded);
 }
 async function cleanup(
   deps: PolicyRecoveryDependencies,
@@ -135,6 +141,8 @@ export async function restorePendingRoutingPolicy(
   const guard = buildRoutingGuard(pending.guardScopes, {
     protectedPaths: deps.protectedPaths,
   });
+  if (pending.withdrawal)
+    return completePendingWithdrawal(deps, pending, previous, guard);
   try {
     await ensureGuard(deps, guard);
     await deps.journal.markRestoring(
@@ -187,6 +195,74 @@ export async function restorePendingRoutingPolicy(
   return { status: 'restored', cleanupPending: await cleanup(deps, pending) };
 }
 
+/** A safety withdrawal always finishes down; old up-state is not recoverable. */
+async function completePendingWithdrawal(
+  deps: PolicyRecoveryDependencies,
+  pending: PendingPolicyTransition,
+  previous: RoutingPolicyJournal,
+  guard: RoutingGuardPlan
+): Promise<PolicyTransitionResult> {
+  assertRoutingAvailabilityWithdrawal(previous, pending);
+  const targetLinux = renderRoutingPolicyLinux(pending.plan),
+    previousLinux = renderRoutingPolicyLinux(previous.plan),
+    superseded = pending.supersededGuardScopes
+      ? buildRoutingGuard(pending.supersededGuardScopes, {
+          protectedPaths: deps.protectedPaths,
+        })
+      : null;
+  try {
+    await ensureGuard(deps, guard, superseded);
+    await deps.journal.resumeWithdrawal(pending);
+    // The private intent is bound to the down-device baseline on both sides.
+    // It may retain completed old hook effects without recreating the device.
+    await deps.beforeRestoreManagedState?.(
+      pending.plan,
+      pending.plan,
+      pending.backupBasenames[0]!,
+      guard
+    );
+    await deps.guard.verify(guard);
+    await deps.backups.restore(
+      pending.backupBasenames[0]!,
+      deps.validateConfig
+    );
+    await deps.guard.verify(guard);
+    await deps.restoreManagedState(
+      pending.plan,
+      pending.backupBasenames[0]!,
+      guard
+    );
+    await deps.verifyManagedState(pending.plan, guard);
+    await deps.journal.advance(pending, 'guarded', 'peers');
+    await deps.executor.apply(targetLinux, {
+      previousPlan: previousLinux,
+      guardedTransition: { guard, knownPlans: [previousLinux] },
+    });
+    await deps.journal.advance(pending, 'peers', 'classified');
+    await deps.verifyManagedState(pending.plan, guard);
+    await deps.executor.verify(targetLinux, guard);
+    await deps.journal.advance(pending, 'classified', 'verified');
+    await deps.journal.finishApplied(pending, async (tx) => {
+      await deps.guard.remove(guard);
+      await deps.executor.verify(targetLinux, null);
+      await deps.verifyManagedState(pending.plan, null);
+      await deps.publishGroups(tx, pending, false);
+    });
+  } catch (error) {
+    let guarded = false;
+    try {
+      await ensureGuard(deps, guard, superseded);
+      guarded = true;
+    } catch {
+      /* Unknown state remains untouched and Pending remains durable. */
+    }
+    const errorCode = safeFailure(error);
+    await deps.journal.markRestoring(pending, errorCode).catch(() => {});
+    return { status: 'failed', guarded, errorCode };
+  }
+  return { status: 'applied', cleanupPending: await cleanup(deps, pending) };
+}
+
 /** Inactive until all application activation prerequisites have passed. */
 export async function applyGuardedRoutingPolicy(
   deps: PolicyRecoveryDependencies,
@@ -194,9 +270,11 @@ export async function applyGuardedRoutingPolicy(
   {
     forcePeerIds = new Set<string>(),
     bootstrap,
+    withdrawal,
   }: {
     forcePeerIds?: ReadonlySet<string>;
     bootstrap?: PolicyBootstrapBaseline;
+    withdrawal?: PendingPolicyTransition['withdrawal'];
   } = {}
 ): Promise<PolicyTransitionResult> {
   const target = parseRoutingPolicyJournal(value);
@@ -212,6 +290,15 @@ export async function applyGuardedRoutingPolicy(
     throw new RoutingPolicyJournalError('version_unavailable');
   const previous =
     state.applied ?? bootstrapPrevious(target, validatedBootstrap!);
+  if (withdrawal)
+    assertRoutingAvailabilityWithdrawal(state.applied, {
+      ...target,
+      withdrawal,
+      stage: 'prepared',
+      guardScopes: [],
+      backupBasenames: [],
+      errorCode: null,
+    });
   const guard = buildRoutingPolicyTransition(previous.plan, target.plan, {
     protectedPaths: deps.protectedPaths,
     forcePeerIds,
@@ -248,6 +335,7 @@ export async function applyGuardedRoutingPolicy(
       {
         ...target,
         ...(validatedBootstrap ? { bootstrap: validatedBootstrap } : {}),
+        ...(withdrawal ? { withdrawal } : {}),
         stage: 'prepared',
         guardScopes: guard.scopes,
         backupBasenames: [basename],

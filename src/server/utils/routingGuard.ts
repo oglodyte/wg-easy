@@ -298,6 +298,7 @@ export class RoutingGuard {
     const documents: { family: 4 | 6; document: string }[] = [];
     for (const family of this.families(target, previous)) {
       const save = await this.observe(family);
+      let observedPrevious = previous;
       if (repairMissing) {
         try {
           assertRoutingGuardState(save, target, family);
@@ -305,12 +306,20 @@ export class RoutingGuard {
         } catch {
           /* Only exact absence permits restoration of a missing family. */
         }
-        assertRoutingGuardState(save, null, family);
+        // A namespace rebase may have committed either family's old or new
+        // guard. Only an exact persisted previous body or absence is admitted.
+        try {
+          if (!previous) throw new Error();
+          assertRoutingGuardState(save, previous, family);
+        } catch {
+          assertRoutingGuardState(save, null, family);
+          observedPrevious = null;
+        }
       }
       const document = routingGuardRestoreDocument(
         save,
         target,
-        repairMissing ? null : previous,
+        observedPrevious,
         family
       );
       if (document) documents.push({ family, document });
@@ -348,10 +357,13 @@ export class RoutingGuard {
   }
 
   /** A crash may leave only one of the two exact known family guards. */
-  async ensure(target: RoutingGuardPlan) {
-    const documents = await this.prepareAll(target, null, true);
+  async ensure(
+    target: RoutingGuardPlan,
+    previous: RoutingGuardPlan | null = null
+  ) {
+    const documents = await this.prepareAll(target, previous, true);
     await this.write(documents);
-    await this.verify(target);
+    await this.verify(target, { families: this.families(target, previous) });
   }
 
   private async write(

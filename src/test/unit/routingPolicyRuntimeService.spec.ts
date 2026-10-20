@@ -10,6 +10,7 @@ import { createNodeSqliteDatabase } from '#db/nodeSqlite';
 import { RoutingPolicyRuntimeService } from '#db/repositories/runtime/policyService';
 import * as schema from '#db/schema';
 import { routingPolicyRuntimeFingerprint } from '#server/utils/routingPolicyRuntime';
+import { deriveRoutingAvailabilityWithdrawal } from '#server/utils/routingPolicyAvailability';
 import type {
   AppliedRoutingPolicyPlan,
   PendingPolicyTransition,
@@ -177,6 +178,150 @@ function deferred() {
 }
 
 describe('inactive durable policy transition service', () => {
+  test('cold-namespace rebase CAS replaces the single pending backup without advancing any revision', async () => {
+    const { db, service } = await fixture();
+    const previous = record();
+    previous.plan.namespaceId =
+      '11111111-1111-4111-8111-111111111111:4:4026531001';
+    previous.plan.interfaces[0]!.hooksApplied = true;
+    previous.fingerprint = routingPolicyRuntimeFingerprint(previous.plan);
+    await db
+      .update(schema.routingPolicyRuntime)
+      .set({ applied: previous })
+      .execute();
+    const pending = await service.prepare(transition(), previous);
+    const target = deriveRoutingAvailabilityWithdrawal(
+      previous,
+      new Set(['wg0']),
+      {
+        namespaceId: '11111111-1111-4111-8111-111111111111:4:4026531002',
+        resetHooks: true,
+      }
+    );
+    const next: PendingPolicyTransition = {
+      ...pending,
+      ...target,
+      withdrawal: { unavailableInterfaceIds: ['wg0'], resetNamespace: true },
+      supersededGuardScopes: pending.guardScopes,
+      backupBasenames: ['policy-00000000-0000-0000-0000-000000000002.json'],
+    };
+    await expect(
+      service.rebasePendingToWithdrawal(pending, {
+        ...next,
+        backupBasenames: pending.backupBasenames,
+      })
+    ).rejects.toThrow('invalid_namespace_rebase');
+    await expect(
+      service.rebasePendingToWithdrawal(pending, {
+        ...next,
+        supersededGuardScopes: undefined,
+      })
+    ).rejects.toThrow('invalid_namespace_rebase');
+    await service.rebasePendingToWithdrawal(pending, next);
+    expect(await service.get()).toMatchObject({
+      applied: previous,
+      pending: next,
+      runtime: { desiredRevision: 2, appliedRevision: 1, status: 'degraded' },
+    });
+    await expect(
+      service.rebasePendingToWithdrawal(pending, next)
+    ).rejects.toThrow('transition_changed');
+  });
+
+  test('a safety withdrawal completes at the old revision despite newer desired state and cannot roll back up', async () => {
+    const { db, service } = await fixture();
+    const previous = record();
+    previous.plan.namespaceId =
+      '11111111-1111-4111-8111-111111111111:4:4026531001';
+    previous.plan.interfaces[0]!.hooksApplied = true;
+    previous.fingerprint = routingPolicyRuntimeFingerprint(previous.plan);
+    await db
+      .update(schema.routingPolicyRuntime)
+      .set({ applied: previous })
+      .execute();
+    const target = deriveRoutingAvailabilityWithdrawal(
+      previous,
+      new Set(['wg0']),
+      {
+        namespaceId: previous.plan.namespaceId,
+      }
+    );
+    const pending = await service.prepare(
+      {
+        ...transition(),
+        ...target,
+        withdrawal: { unavailableInterfaceIds: ['wg0'], resetNamespace: false },
+      },
+      previous
+    );
+    await service.markRestoring(pending, 'interrupted_transition');
+    await expect(
+      service.finishRestored(pending, async () => {})
+    ).rejects.toThrow('withdrawal_requires_completion');
+    await service.resumeWithdrawal(pending);
+    for (const [from, to] of [
+      ['guarded', 'peers'],
+      ['peers', 'classified'],
+      ['classified', 'verified'],
+    ] as const)
+      await service.advance(pending, from, to);
+    await service.finishApplied(pending, async () => {});
+    expect(await service.get()).toMatchObject({
+      applied: target,
+      pending: null,
+      runtime: { desiredRevision: 2, appliedRevision: 1, status: 'degraded' },
+    });
+  });
+
+  test('withdrawal evidence cannot change policy semantics, raise the revision or take ownership across the wrong namespace', async () => {
+    const { db, service } = await fixture();
+    const previous = record();
+    previous.plan.namespaceId =
+      '11111111-1111-4111-8111-111111111111:4:4026531001';
+    previous.plan.interfaces[0]!.hooksApplied = true;
+    previous.fingerprint = routingPolicyRuntimeFingerprint(previous.plan);
+    await db
+      .update(schema.routingPolicyRuntime)
+      .set({ applied: previous })
+      .execute();
+    const target = deriveRoutingAvailabilityWithdrawal(
+      previous,
+      new Set(['wg0']),
+      {
+        namespaceId: previous.plan.namespaceId,
+      }
+    );
+    const pending = {
+      ...transition(),
+      ...target,
+      withdrawal: { unavailableInterfaceIds: ['wg0'], resetNamespace: false },
+    };
+    const changed = structuredClone(pending);
+    changed.plan.groups[0]!.natEnabled = false;
+    changed.fingerprint = routingPolicyRuntimeFingerprint(changed.plan);
+    for (const invalid of [
+      changed,
+      { ...pending, revision: 2 },
+      {
+        ...pending,
+        withdrawal: { ...pending.withdrawal, resetNamespace: true },
+      },
+    ]) {
+      await expect(service.prepare(invalid, previous)).rejects.toThrow(
+        /invalid_|namespace_reset_mismatch/
+      );
+      expect((await service.get()).pending).toBeNull();
+    }
+    // Persisted corruption is also refused on read, before any recovery callback.
+    await db
+      .update(schema.routingPolicyRuntime)
+      .set({ pending: changed })
+      .execute();
+    await expect(service.get()).rejects.toThrow(
+      'invalid_availability_withdrawal'
+    );
+  });
+
   test('first activation commits version 2 only after whole-state verification under the writer lock', async () => {
     const { service, db } = await bootstrapFixture();
     const pending = await service.prepare(bootstrap(), null);

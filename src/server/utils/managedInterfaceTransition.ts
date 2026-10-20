@@ -18,6 +18,7 @@ import {
   type ManagedHookRule,
   type ManagedServerHookEffects,
   type ManagedServerHooks,
+  ManagedServerHookError,
 } from '#server/utils/managedServerHooks';
 import {
   parseManagedLifecycleIntent,
@@ -57,6 +58,7 @@ type Generation = {
   parsed: ManagedInterfaceConfig | null;
   hooks: ManagedServerHooks | null;
   defaultEgress?: string;
+  hookError?: ManagedServerHookError;
 };
 const EGRESS_MARKER = '# wg-easy managed hook egress: ';
 type Entry = {
@@ -111,14 +113,22 @@ function generation(interfaceId: string, config: string | null): Generation {
     if (!checked.success) fail('invalid_hook_binding', interfaceId);
     defaultEgress = checked.data;
   }
-  const hooks = admitManagedServerHooks(interfaceId, parsed.fields);
-  if (defaultEgress && !hooks.dynamic)
+  let hooks: ManagedServerHooks | null = null,
+    hookError: ManagedServerHookError | undefined;
+  try {
+    hooks = admitManagedServerHooks(interfaceId, parsed.fields);
+  } catch (error) {
+    if (!(error instanceof ManagedServerHookError)) throw error;
+    hookError = error;
+  }
+  if (defaultEgress && hooks && !hooks.dynamic)
     fail('invalid_hook_binding', interfaceId);
   return {
     config,
     parsed,
     hooks,
     ...(defaultEgress ? { defaultEgress } : {}),
+    ...(hookError ? { hookError } : {}),
   };
 }
 function sameConfig(a: Generation, b: Generation) {
@@ -229,7 +239,16 @@ export class ManagedInterfaceTransition {
       (i) => i.interfaceId === interfaceId
     );
     if (!result) fail('invalid_lifecycle_intent', interfaceId);
-    return result;
+    const previousHooksApplied =
+        result.previousHooksApplied ?? result.previousUp,
+      targetHooksApplied = result.targetHooksApplied ?? result.targetUp;
+    return {
+      ...result,
+      previousHooksApplied,
+      targetHooksApplied,
+      hooksChanged:
+        result.restart || previousHooksApplied !== targetHooksApplied,
+    };
   }
   private rules(
     entry: Entry,
@@ -290,9 +309,24 @@ export class ManagedInterfaceTransition {
         targetUp = target.interfaces.some(
           (i) => i.interfaceId === entry.interfaceId && i.observedUp
         );
+      const previousHooksApplied =
+          previous.interfaces.find((i) => i.interfaceId === entry.interfaceId)
+            ?.hooksApplied ?? previousUp,
+        targetHooksApplied =
+          target.interfaces.find((i) => i.interfaceId === entry.interfaceId)
+            ?.hooksApplied ?? targetUp;
       if (
-        (previousUp && !entry.previous.parsed) ||
-        (targetUp && !entry.target.parsed)
+        (previousUp && !previousHooksApplied) ||
+        (targetUp && !targetHooksApplied)
+      )
+        fail('invalid_hook_availability', entry.interfaceId);
+      if (previousHooksApplied && entry.previous.hookError)
+        throw entry.previous.hookError;
+      if (targetHooksApplied && entry.target.hookError)
+        throw entry.target.hookError;
+      if (
+        ((previousUp || previousHooksApplied) && !entry.previous.parsed) ||
+        ((targetUp || targetHooksApplied) && !entry.target.parsed)
       )
         fail('missing_configuration', entry.interfaceId);
       const restart =
@@ -304,17 +338,24 @@ export class ManagedInterfaceTransition {
             entry.previous.parsed,
             entry.target.parsed
           ));
+      if (!previousHooksApplied && targetHooksApplied && !targetUp)
+        fail('invalid_hook_availability', entry.interfaceId);
       return {
         interfaceId: entry.interfaceId,
         previousUp,
         targetUp,
+        previousHooksApplied,
+        targetHooksApplied,
         restart,
       };
     });
     const needsEgress = entries.some(
         (entry, i) =>
-          (entry.previous.hooks?.dynamic && !entry.previous.defaultEgress) ||
-          (entry.target.hooks?.dynamic &&
+          (basicActions[i]!.previousHooksApplied &&
+            entry.previous.hooks?.dynamic &&
+            !entry.previous.defaultEgress) ||
+          (basicActions[i]!.targetHooksApplied &&
+            entry.target.hooks?.dynamic &&
             (basicActions[i]!.restart || !entry.previous.hooks?.dynamic))
       ),
       egress = needsEgress ? await deps.hooks.defaultEgress() : undefined;
@@ -324,11 +365,13 @@ export class ManagedInterfaceTransition {
           ? (entry.previous.defaultEgress ?? egress)
           : undefined,
         targetDefaultEgress = entry.target.hooks?.dynamic
-          ? basic.restart || !entry.previous.hooks?.dynamic
-            ? egress
-            : previousDefaultEgress
+          ? !basic.targetHooksApplied
+            ? entry.target.defaultEgress
+            : basic.restart || !entry.previous.hooks?.dynamic
+              ? egress
+              : previousDefaultEgress
           : undefined;
-      if (entry.target.hooks?.dynamic) {
+      if (entry.target.hooks?.dynamic && targetDefaultEgress) {
         if (!targetDefaultEgress)
           fail('invalid_hook_binding', entry.interfaceId);
         const text =
@@ -367,12 +410,12 @@ export class ManagedInterfaceTransition {
       for (const which of ['previous', 'target'] as const)
         if (entry[which].config !== null)
           await deps.devices.validate(entry.interfaceId, entry[which].config!);
-      if (action.restart) {
-        if (action.previousUp)
+      if (action.hooksChanged) {
+        if (action.previousHooksApplied)
           movingOld.push(...transition.rules(entry, 'previous'));
-        if (action.targetUp)
+        if (action.targetHooksApplied)
           movingTarget.push(...transition.rules(entry, 'target'));
-      } else if (action.previousUp) {
+      } else if (action.previousHooksApplied) {
         if (
           !sameRules(
             transition.rules(entry, 'previous'),
@@ -428,14 +471,30 @@ export class ManagedInterfaceTransition {
         expectedTargetUp = target.interfaces.some(
           (i) => i.interfaceId === entry.interfaceId && i.observedUp
         );
+      const expectedOldHooks =
+          previous.interfaces.find((i) => i.interfaceId === entry.interfaceId)
+            ?.hooksApplied ?? expectedOldUp,
+        expectedTargetHooks =
+          target.interfaces.find((i) => i.interfaceId === entry.interfaceId)
+            ?.hooksApplied ?? expectedTargetUp;
+      if (action.previousHooksApplied && entry.previous.hookError)
+        throw entry.previous.hookError;
+      if (action.targetHooksApplied && entry.target.hookError)
+        throw entry.target.hookError;
       if (
         action.previousUp !== expectedOldUp ||
         action.targetUp !== expectedTargetUp ||
-        !!entry.previous.hooks?.dynamic !== !!action.previousDefaultEgress ||
-        !!entry.target.hooks?.dynamic !== !!action.targetDefaultEgress ||
-        (entry.previous.defaultEgress &&
+        action.previousHooksApplied !== expectedOldHooks ||
+        action.targetHooksApplied !== expectedTargetHooks ||
+        (action.previousHooksApplied &&
+          !!entry.previous.hooks?.dynamic !== !!action.previousDefaultEgress) ||
+        (action.targetHooksApplied &&
+          !!entry.target.hooks?.dynamic !== !!action.targetDefaultEgress) ||
+        (action.previousHooksApplied &&
+          entry.previous.defaultEgress &&
           entry.previous.defaultEgress !== action.previousDefaultEgress) ||
-        (entry.target.defaultEgress &&
+        (action.targetHooksApplied &&
+          entry.target.defaultEgress &&
           entry.target.defaultEgress !== action.targetDefaultEgress) ||
         (!action.restart &&
           entry.previous.parsed &&
@@ -446,10 +505,13 @@ export class ManagedInterfaceTransition {
           ))
       )
         fail('invalid_lifecycle_intent', entry.interfaceId);
-      if (action.restart) {
-        if (action.previousUp) old.push(...result.rules(entry, 'previous'));
-        if (action.targetUp) next.push(...result.rules(entry, 'target'));
+      if (action.hooksChanged) {
+        if (action.previousHooksApplied)
+          old.push(...result.rules(entry, 'previous'));
+        if (action.targetHooksApplied)
+          next.push(...result.rules(entry, 'target'));
       } else if (
+        action.previousHooksApplied &&
         !sameRules(
           result.rules(entry, 'previous'),
           result.rules(entry, 'target')
@@ -494,8 +556,10 @@ export class ManagedInterfaceTransition {
     return ruleCounts(
       this.entries.flatMap((entry) => {
         const action = this.action(entry.interfaceId);
-        return action.restart &&
-          (which === 'previous' ? action.previousUp : action.targetUp)
+        return action.hooksChanged &&
+          (which === 'previous'
+            ? action.previousHooksApplied
+            : action.targetHooksApplied)
           ? this.rules(entry, which)
           : [];
       })
@@ -549,11 +613,12 @@ export class ManagedInterfaceTransition {
     // Old quick settings remain on disk until every required old stop finishes.
     for (const entry of this.entries) {
       const action = this.action(entry.interfaceId);
-      if (!action.restart || !action.previousUp) continue;
+      if (!action.hooksChanged || !action.previousHooksApplied) continue;
       await this.phase(cursor, entry, 'previous', 'predown', verifyGuard);
-      await this.mutate(verifyGuard, () =>
-        this.deps.devices.down(entry.interfaceId, entry.previous.config!)
-      );
+      if (action.previousUp)
+        await this.mutate(verifyGuard, () =>
+          this.deps.devices.down(entry.interfaceId, entry.previous.config!)
+        );
       await this.phase(cursor, entry, 'previous', 'postdown', verifyGuard);
     }
     await this.deps.hooks.verify(this.intent.hooks, 'base');
@@ -579,14 +644,17 @@ export class ManagedInterfaceTransition {
     }
     for (const entry of this.entries) {
       const action = this.action(entry.interfaceId);
-      if (!action.targetUp) continue;
-      if (action.restart) {
-        await this.phase(cursor, entry, 'target', 'preup', verifyGuard);
-        await this.mutate(verifyGuard, () =>
-          this.deps.devices.up(entry.interfaceId, entry.target.config!)
-        );
-        await this.phase(cursor, entry, 'target', 'postup', verifyGuard);
-      } else if (!sameConfig(entry.previous, entry.target))
+      if (!action.targetUp && !action.targetHooksApplied) continue;
+      if (action.hooksChanged) {
+        if (action.targetHooksApplied)
+          await this.phase(cursor, entry, 'target', 'preup', verifyGuard);
+        if (action.targetUp && action.restart)
+          await this.mutate(verifyGuard, () =>
+            this.deps.devices.up(entry.interfaceId, entry.target.config!)
+          );
+        if (action.targetHooksApplied)
+          await this.phase(cursor, entry, 'target', 'postup', verifyGuard);
+      } else if (action.targetUp && !sameConfig(entry.previous, entry.target))
         await this.mutate(verifyGuard, () =>
           this.deps.devices.sync(entry.interfaceId, entry.target.config!)
         );
@@ -601,13 +669,17 @@ export class ManagedInterfaceTransition {
     // Complete read-only recovery preflight; no first-device cleanup on a later
     // unknown file, interface, peer, address, credential or hook manifest.
     for (const entry of this.entries) {
+      const action = this.action(entry.interfaceId),
+        observed = await this.deps.devices.observe(entry.interfaceId);
+      if (observed && !action.previousUp && !action.targetUp)
+        fail('unknown_device', entry.interfaceId);
       const configs = [entry.previous.config, entry.target.config].filter(
         (c): c is string => c !== null
       );
       await this.deps.devices.verifyRecoverable(
         entry.interfaceId,
         configs,
-        this.action(entry.interfaceId).restart
+        action.restart && (action.previousUp || action.targetUp)
       );
       const current = await readConfig(
         this.deps.configDirectory,
@@ -643,14 +715,17 @@ export class ManagedInterfaceTransition {
     const cursor = new Map<string, number>();
     for (const entry of this.entries) {
       const action = this.action(entry.interfaceId);
-      if (!action.previousUp) continue;
-      if (action.restart) {
-        await this.phase(cursor, entry, 'previous', 'preup', verifyGuard);
-        await this.mutate(verifyGuard, () =>
-          this.deps.devices.up(entry.interfaceId, entry.previous.config!)
-        );
-        await this.phase(cursor, entry, 'previous', 'postup', verifyGuard);
-      } else if (!sameConfig(entry.previous, entry.target))
+      if (!action.previousUp && !action.previousHooksApplied) continue;
+      if (action.hooksChanged) {
+        if (action.previousHooksApplied)
+          await this.phase(cursor, entry, 'previous', 'preup', verifyGuard);
+        if (action.previousUp && action.restart)
+          await this.mutate(verifyGuard, () =>
+            this.deps.devices.up(entry.interfaceId, entry.previous.config!)
+          );
+        if (action.previousHooksApplied)
+          await this.phase(cursor, entry, 'previous', 'postup', verifyGuard);
+      } else if (action.previousUp && !sameConfig(entry.previous, entry.target))
         await this.mutate(verifyGuard, () =>
           this.deps.devices.sync(entry.interfaceId, entry.previous.config!)
         );
