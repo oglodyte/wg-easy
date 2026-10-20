@@ -6,7 +6,7 @@
           {{ $t('admin.routing.description') }}
         </p>
         <p class="mt-1 text-xs text-gray-500 dark:text-neutral-300">
-          {{ $t('admin.routing.revisions', routingRevision) }}
+          {{ $t('admin.routing.revisions', [routingRevision]) }}
         </p>
       </div>
       <BasePrimaryButton @click="startCreate">
@@ -14,6 +14,12 @@
       </BasePrimaryButton>
     </div>
 
+    <div
+      v-if="routingData?.pendingTransition"
+      class="rounded border border-yellow-400 bg-yellow-50 p-3 text-sm dark:bg-yellow-950"
+    >
+      {{ $t('admin.routing.transitionPending') }}
+    </div>
     <div
       v-if="routingData?.lastError"
       class="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950 dark:text-red-100"
@@ -68,7 +74,7 @@
       </section>
 
       <section
-        v-if="form"
+        v-if="form && selectedGroup?.baselineEditable !== false"
         class="min-w-0 rounded border border-gray-200 p-4 dark:border-neutral-600"
       >
         <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -353,6 +359,38 @@
         </FormElement>
       </section>
       <section
+        v-else-if="selectedGroup && !selectedGroup.baselineEditable"
+        class="space-y-4 rounded border p-6 dark:border-neutral-600"
+      >
+        <h2 class="font-semibold">{{ selectedGroup.name }}</h2>
+        <p class="text-sm">{{ $t('admin.routing.advancedReadOnly') }}</p>
+        <dl class="space-y-3 text-sm">
+          <div>
+            <dt class="font-medium">{{ $t('admin.routing.prefixes') }}</dt>
+            <dd>{{ selectedGroup.routedIpv4Prefixes.join(', ') }}</dd>
+          </div>
+          <div>
+            <dt class="font-medium">
+              {{ $t('admin.routing.excludedPrefixes') }}
+            </dt>
+            <dd>{{ selectedGroup.excludedIpv4Prefixes.join(', ') || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="font-medium">{{ $t('admin.routing.members') }}</dt>
+            <dd v-for="member in selectedGroup.members" :key="member.clientId">
+              {{ member.client.name }} · {{ member.client.interfaceId }}
+            </dd>
+          </div>
+          <div>
+            <dt class="font-medium">{{ $t('admin.routing.exits') }}</dt>
+            <dd v-for="exit in selectedGroup.exits" :key="exit.clientId">
+              {{ exit.priority }} · {{ exit.client.name }} ·
+              {{ exit.client.interfaceId }}
+            </dd>
+          </div>
+        </dl>
+      </section>
+      <section
         v-else
         class="rounded border border-dashed p-6 text-sm text-gray-500 dark:border-neutral-600 dark:text-neutral-300"
       >
@@ -385,6 +423,8 @@ type Group = {
   natEnabled: boolean;
   allExitsDownPolicy: 'block' | 'host';
   routedIpv4Prefixes: string[];
+  excludedIpv4Prefixes: string[];
+  baselineEditable: boolean;
   exits: Array<Exit & { client: ClientSummary }>;
   members: Array<{ clientId: number; client: ClientSummary }>;
   validationWarnings: string[];
@@ -401,11 +441,19 @@ type RoutingData = {
   desiredRevision: number;
   appliedRevision: number;
   lastError?: string | null;
+  desiredFingerprint?: string | null;
+  pendingTransition?: boolean;
   groups: Group[];
 };
 type Form = Omit<
   Group,
-  'id' | 'exits' | 'members' | 'runtime' | 'validationWarnings'
+  | 'id'
+  | 'exits'
+  | 'members'
+  | 'runtime'
+  | 'validationWarnings'
+  | 'excludedIpv4Prefixes'
+  | 'baselineEditable'
 > & {
   exits: Exit[];
   memberClientIds: number[];
@@ -445,6 +493,9 @@ const routingSettings = ref<RoutingSettings | null>(
     : null
 );
 const selectedGroupId = ref<number | null>(null);
+const selectedGroup = computed(() =>
+  groups.value.find((group) => group.id === selectedGroupId.value)
+);
 const form = ref<Form | null>(null);
 const formError = ref('');
 
@@ -510,6 +561,10 @@ function fromApiRoutingSettings(settings: ApiRoutingSettings): RoutingSettings {
 function selectGroup(group: Group) {
   selectedGroupId.value = group.id;
   formError.value = '';
+  if (!group.baselineEditable) {
+    form.value = null;
+    return;
+  }
   form.value = {
     name: group.name,
     enabled: group.enabled,
@@ -652,9 +707,13 @@ function statusClass(group: Group) {
 
 async function save() {
   if (!form.value) return;
+  if (selectedGroup.value && !selectedGroup.value.baselineEditable) return;
   formError.value = '';
   const body = {
     ...form.value,
+    expectedDesiredRevision: routingData.value?.desiredRevision,
+    expectedDesiredFingerprint:
+      routingData.value?.desiredFingerprint ?? undefined,
     routedIpv4Prefixes: form.value.routedIpv4Prefixes
       .map((value) => value.trim())
       .filter(Boolean),

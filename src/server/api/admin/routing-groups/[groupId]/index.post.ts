@@ -1,13 +1,14 @@
-import { createError, getValidatedRouterParams, readValidatedBody } from 'h3';
+import { getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
-import { RoutingValidationError } from '#server/utils/routing';
 import { validateZod } from '#server/utils/types';
-import { RoutingGroupNotFoundError } from '#db/repositories/routingGroup/service';
-import { RoutingGroupGetSchema } from '#db/repositories/routingGroup/types';
-import { RoutingGroupSchema } from '#shared/utils/schemas';
+import {
+  RoutingGroupGetSchema,
+  RoutingGroupSaveSchema,
+} from '#db/repositories/routingGroup/types';
+import { routingMutationHttpError } from '#server/utils/routingMutationRequest';
 
 export default definePermissionEventHandler(
   'admin',
@@ -17,14 +18,16 @@ export default definePermissionEventHandler(
       event,
       validateZod(RoutingGroupGetSchema, event)
     );
-    const input = await readValidatedBody(
-      event,
-      validateZod(RoutingGroupSchema, event)
-    );
+    const { expectedDesiredRevision, expectedDesiredFingerprint, ...input } =
+      await readValidatedBody(
+        event,
+        validateZod(RoutingGroupSaveSchema, event)
+      );
     try {
       const { group, revision } = await Database.routingGroups.updateAggregate(
         groupId,
-        input
+        input,
+        { expectedDesiredRevision, expectedDesiredFingerprint }
       );
       const reconciled = await WireGuard.requestReconcile(
         'routing-group-update'
@@ -37,17 +40,7 @@ export default definePermissionEventHandler(
         group: await Database.routingGroups.get(group.id),
       };
     } catch (error) {
-      if (error instanceof RoutingGroupNotFoundError) {
-        throw createError({ statusCode: 404, statusMessage: error.message });
-      }
-      if (error instanceof RoutingValidationError) {
-        throw createError({
-          statusCode: 409,
-          statusMessage: error.message,
-          data: { issues: error.issues },
-        });
-      }
-      throw error;
+      return routingMutationHttpError(event, error);
     }
   }
 );

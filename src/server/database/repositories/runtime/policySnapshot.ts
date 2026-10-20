@@ -1,4 +1,7 @@
+import { eq } from 'drizzle-orm';
+
 import type { DBType } from '#db/sqlite';
+import { wgInterface } from '#db/repositories/interface/schema';
 import type { PolicySnapshot } from '#shared/types/routingPolicy';
 
 /** Call inside the caller's transaction so validation sees the final generation. */
@@ -9,7 +12,10 @@ export async function readProposedRoutingState(db: Pick<DBType, 'query'>) {
         .findFirst({ columns: { routingPolicyVersion: true } })
         .execute(),
       db.query.wgInterface
-        .findMany({ columns: { name: true, ipv4Cidr: true, publicKey: true } })
+        .findMany({
+          columns: { name: true, ipv4Cidr: true, publicKey: true },
+          where: eq(wgInterface.pendingDelete, false),
+        })
         .execute(),
       db.query.client
         .findMany({

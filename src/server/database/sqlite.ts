@@ -9,7 +9,10 @@ import { InterfaceService } from '#db/repositories/interface/service';
 import { HooksService } from '#db/repositories/hooks/service';
 import { OneTimeLinkService } from '#db/repositories/oneTimeLink/service';
 import { ClientService } from '#db/repositories/client/service';
-import { RuntimeStateService } from '#db/repositories/runtime/service';
+import {
+  RuntimeStateService,
+  bumpDesiredRevision,
+} from '#db/repositories/runtime/service';
 import { RoutingPolicyRuntimeService } from '#db/repositories/runtime/policyService';
 import { RoutingGenerationSnapshotService } from '#db/repositories/runtime/generationSnapshot';
 import { RoutingGroupService } from '#db/repositories/routingGroup/service';
@@ -204,5 +207,10 @@ async function disableIpv6(db: DBType) {
     } else {
       DB_DEBUG('IPv6 Post Down hooks already disabled, skipping...');
     }
+    if (
+      hooks.postUp.includes(postUpMatch) ||
+      hooks.postDown.includes(postDownMatch)
+    )
+      await bumpDesiredRevision(tx, [interfaceId]);
   });
 }

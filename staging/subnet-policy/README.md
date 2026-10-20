@@ -4,6 +4,34 @@ These checks use only the dedicated staging host and restored application-volume
 clones. Preserve the immutable Phase 0 golden archive and the live volume. Keep
 management and console recovery independent of the tunnels under test.
 
+## Phase 2 application-service integration
+
+`application-probe.ts` uses the actual application policy coordinator operations,
+SQLite services, private backups, device lifecycle, filter and routing executors.
+It creates only synthetic data inside a disposable privileged `--network none`
+container, using the immutable candidate image for its Node/AWG tools and
+migrations. Build from `src`:
+
+```sh
+pnpm exec esbuild ../staging/subnet-policy/application-probe.ts \
+  --bundle --platform=node --format=esm --packages=bundle \
+  --alias:#server=./server --alias:#shared=./shared \
+  --alias:#db=./server/database --alias:@@=. \
+  --outfile=/private/tmp/application-probe.mjs
+```
+
+Mount only this bundle read-only as `/probe.mjs`; set
+`WG_EASY_RUN_PRIVILEGED_TESTS=1` and `DEBUG=`. Run `node /probe.mjs`, then repeat
+with `AWG_FORCE_USERSPACE=true`. It verifies actual v1-to-v2 promotion, a real
+SIGKILL after a controlled stop, forward recovery to Down, failed-start rollback,
+an unaffected obfuscated device, credential replacement, PSK clearing and
+same-identity PSK rollback, shutdown/restart, and interrupted recovery in a new
+network namespace. The old fixture runtime is retired before replacement so its
+userspace socket paths cannot be mistaken for a fresh container filesystem.
+It prints only stages and safe results. This is an application-service proof;
+the full HTTP application, preserved-volume promotion, migration/rollback,
+browser, traversal matrix and independent external-client gates remain separate.
+
 Phase 1 retains policy version 1. Exclusions and multiple membership writes remain
 unavailable, and the pure version 2 compiler does not apply Linux state. The
 policy journal starts with null applied/pending evidence. Supplied-key and full
@@ -46,7 +74,8 @@ same-device default/LAN paths, terminal block/host, per-group NAT, all eight
 executor fault boundaries, fresh-executor restoration under a retained guard,
 stale-child cleanup and foreign-body refusal. These are veth/Linux proofs;
 AWG peer ownership, durable coordinator recovery and version 2 activation have
-separate required gates. Normal application paths still use version 1.
+separate required gates. These early checkpoints do not establish application
+promotion; the application uses version 1 only as its temporary migration bridge.
 
 Build from `src` with the locked dependencies:
 

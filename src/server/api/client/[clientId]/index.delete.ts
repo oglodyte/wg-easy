@@ -5,6 +5,7 @@ import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { ClientRoutingReferenceError } from '#db/repositories/client/service';
+import { clientMutationHttpError } from '#server/utils/clientMutationRequest';
 import {
   ClientDeleteQuerySchema,
   ClientGetSchema,
@@ -37,7 +38,7 @@ export default definePermissionEventHandler(
           data: { kind: error.kind, groupIds: error.groupIds },
         });
       }
-      throw error;
+      return clientMutationHttpError(event, error);
     }
     return WireGuard.requestReconcile('delete-client', [
       { interfaceId: client!.interfaceId, action: 'sync' },

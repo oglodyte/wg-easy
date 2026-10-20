@@ -217,7 +217,23 @@ async function loadRuntime(
       }),
     },
     oneTimeLinks: { delete: vi.fn(async () => {}) },
-    hooks: { get: vi.fn(async () => ({})) },
+    hooks: {
+      get: vi.fn(async () => ({
+        preUp: '',
+        postUp: '',
+        preDown: '',
+        postDown: '',
+      })),
+    },
+    routingPolicy: {
+      get: vi.fn(async () => ({ version: 1, pending: null, applied: null })),
+    },
+    general: {
+      getSetupStep: vi.fn(async () => ({ step: 1, done: false })),
+      getRoutingHealthSettings: vi.fn(async () => ({
+        routingExitHealthCheckIntervalSeconds: 60,
+      })),
+    },
     userConfigs: { get: vi.fn(async () => ({})) },
     routingGroups: {
       hasDeferredRoutingState: vi.fn(async () => withRouting),
@@ -237,7 +253,11 @@ async function loadRuntime(
   const existingDevices = new Set(interfaces.map(({ name }) => name));
   const wg = {
     generateServerInterface: vi.fn(
-      (wgInterface: { name: string }) => `interface:${wgInterface.name}`
+      (
+        wgInterface: { name: string },
+        hooks: { postUp: string; postDown: string }
+      ) =>
+        `[Interface]\nPrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nListenPort = 51820\nAddress = 10.8.0.1/24\nMTU = 1420\nTable = off\nPostUp = ${hooks.postUp.replaceAll('{{name}}', wgInterface.name)}\nPostDown = ${hooks.postDown.replaceAll('{{name}}', wgInterface.name)}\n`
     ),
     generateServerPeer: vi.fn(
       (client: { name: string }) => `peer:${client.name}`
@@ -308,6 +328,19 @@ async function loadRuntime(
     OLD_ENV: {},
     WG_ENV: { DISABLE_IPV6: false },
   }));
+  vi.doMock('node:fs/promises', async (importOriginal) => {
+    const original = await importOriginal<typeof import('node:fs/promises')>();
+    return {
+      ...original,
+      default: {
+        ...original.default,
+        readFile: vi.fn(
+          async () =>
+            '[Interface]\nPrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nListenPort = 51820\nAddress = 10.8.0.1/24\nMTU = 1420\nTable = off\n'
+        ),
+      },
+    };
+  });
 
   const WireGuard = (await import('#server/utils/WireGuard')).default;
   return {
@@ -325,6 +358,25 @@ async function loadRuntime(
 }
 
 describe('interface-scoped WireGuard runtime', () => {
+  test.each([false, true])(
+    'admits expanded legacy hook templates and refuses unsafe scripts (unsafe=%s)',
+    async (unsafe) => {
+      const { WireGuard, Database, wg } = await loadRuntime();
+      Database.hooks.get.mockResolvedValue({
+        preUp: '',
+        preDown: '',
+        postUp: unsafe
+          ? 'iptables -F'
+          : 'iptables -A FORWARD -i {{name}} -j ACCEPT;',
+        postDown: unsafe ? '' : 'iptables -D FORWARD -i {{name}} -j ACCEPT;',
+      });
+      const result = await WireGuard.requestReconcile('hook-template', [
+        { interfaceId: 'wg0', action: 'restart' },
+      ]);
+      expect(result.runtime.status).toBe(unsafe ? 'degraded' : 'applied');
+      expect(wg.down.mock.calls.some(([id]) => id === 'wg0')).toBe(!unsafe);
+    }
+  );
   test('evaluates a handshake observed during the dump using the completed observation time', async () => {
     const { WireGuard, wg, routingGroupRuntime } = await loadRuntime(
       undefined,

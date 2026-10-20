@@ -124,16 +124,18 @@ async function configurationsConverged(
   const states = new Map(runtime.map((i) => [i.interfaceId, i]));
   const planned = new Map(plan.interfaces.map((i) => [i.interfaceId, i]));
   return (
-    interfaces.length === planned.size &&
+    interfaces.filter((i) => !i.pendingDelete).length === planned.size &&
     interfaces.every((iface) => {
       const state = states.get(iface.name),
         intended = planned.get(iface.name),
         enabled = iface.enabled && !iface.pendingDelete;
       return (
         state &&
-        intended &&
-        intended.enabled === enabled &&
-        intended.observedUp === enabled &&
+        (iface.pendingDelete
+          ? !intended
+          : intended &&
+            intended.enabled === enabled &&
+            intended.observedUp === enabled) &&
         state.observedUp === enabled &&
         state.status === (enabled ? 'up' : 'disabled') &&
         state.appliedRevision === state.desiredRevision &&
@@ -163,6 +165,7 @@ export class RoutingPolicyRuntimeService {
     if (
       pending.stage !== 'prepared' ||
       pending.errorCode !== null ||
+      pending.supersededGuardScopes !== undefined ||
       pending.backupBasenames.length !== 1
     )
       fail('invalid_preparation');

@@ -1,10 +1,10 @@
-import { createError, getValidatedRouterParams } from 'h3';
+import { getValidatedRouterParams } from 'h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
-import { RoutingGroupNotFoundError } from '#db/repositories/routingGroup/service';
+import { routingMutationHttpError } from '#server/utils/routingMutationRequest';
 import { RoutingGroupGetSchema } from '#db/repositories/routingGroup/types';
 
 export default definePermissionEventHandler(
@@ -29,10 +29,7 @@ export default definePermissionEventHandler(
         routingSlotTombstone: routingSlot,
       };
     } catch (error) {
-      if (error instanceof RoutingGroupNotFoundError) {
-        throw createError({ statusCode: 404, statusMessage: error.message });
-      }
-      throw error;
+      return routingMutationHttpError(event, error);
     }
   }
 );

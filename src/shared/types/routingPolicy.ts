@@ -192,6 +192,7 @@ export type PendingPolicyTransition = RoutingPolicyJournal & {
   withdrawal?: {
     unavailableInterfaceIds: string[];
     resetNamespace: boolean;
+    stopInterfaceIds?: string[];
   };
   supersededGuardScopes?: RoutingPolicyGuardScope[];
   stage:

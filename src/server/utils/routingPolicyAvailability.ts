@@ -22,6 +22,7 @@ export function assertRoutingAvailabilityWithdrawal(
     {
       namespaceId: pending.plan.namespaceId,
       resetHooks: pending.withdrawal.resetNamespace,
+      stopInterfaceIds: new Set(pending.withdrawal.stopInterfaceIds ?? []),
     }
   );
   if (
@@ -42,7 +43,12 @@ export function deriveRoutingAvailabilityWithdrawal(
   {
     namespaceId,
     resetHooks = false,
-  }: { namespaceId: string; resetHooks?: boolean }
+    stopInterfaceIds = new Set<string>(),
+  }: {
+    namespaceId: string;
+    resetHooks?: boolean;
+    stopInterfaceIds?: ReadonlySet<string>;
+  }
 ): RoutingPolicyJournal {
   const previous = parseRoutingPolicyJournal(value);
   if (
@@ -62,20 +68,27 @@ export function deriveRoutingAvailabilityWithdrawal(
   if (
     unavailableInterfaceIds.size === 0 ||
     [...unavailableInterfaceIds].some((id) => !known.has(id)) ||
-    (resetHooks && unavailableInterfaceIds.size !== known.size)
+    (resetHooks && unavailableInterfaceIds.size !== known.size) ||
+    (resetHooks && stopInterfaceIds.size > 0) ||
+    [...stopInterfaceIds].some((id) => !unavailableInterfaceIds.has(id))
   )
     throw new RoutingPolicyJournalError('invalid_availability_withdrawal');
   if (
     !resetHooks &&
-    [...unavailableInterfaceIds].some((id) => !known.get(id)!.observedUp)
+    [...unavailableInterfaceIds].some(
+      (id) =>
+        !known.get(id)!.observedUp &&
+        !(stopInterfaceIds.has(id) && known.get(id)!.hooksApplied)
+    )
   )
     throw new RoutingPolicyJournalError('invalid_availability_withdrawal');
   const plan = structuredClone(previous.plan);
   plan.namespaceId = namespaceId;
   for (const iface of plan.interfaces) {
-    iface.hooksApplied = resetHooks
-      ? false
-      : (iface.hooksApplied ?? iface.observedUp);
+    iface.hooksApplied =
+      resetHooks || stopInterfaceIds.has(iface.interfaceId)
+        ? false
+        : (iface.hooksApplied ?? iface.observedUp);
     if (unavailableInterfaceIds.has(iface.interfaceId))
       iface.observedUp = false;
   }
@@ -108,4 +121,28 @@ export function deriveRoutingAvailabilityWithdrawal(
     plan,
     fingerprint: routingPolicyRuntimeFingerprint(plan),
   });
+}
+
+/** Device preflight accounts for disappearance; controlled stops still own the old device. */
+export function routingWithdrawalDeviceBaseline(
+  previous: RoutingPolicyJournal,
+  pending: PendingPolicyTransition
+) {
+  assertRoutingAvailabilityWithdrawal(previous, pending);
+  if (pending.withdrawal!.resetNamespace)
+    return parseRoutingPolicyJournal({
+      revision: pending.revision,
+      fingerprint: pending.fingerprint,
+      plan: pending.plan,
+    });
+  const missing = new Set(
+    pending.withdrawal!.unavailableInterfaceIds.filter(
+      (id) => !pending.withdrawal!.stopInterfaceIds?.includes(id)
+    )
+  );
+  return missing.size
+    ? deriveRoutingAvailabilityWithdrawal(previous, missing, {
+        namespaceId: previous.plan.namespaceId!,
+      })
+    : previous;
 }

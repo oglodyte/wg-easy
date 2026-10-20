@@ -90,6 +90,20 @@
     "loginExpired": "Login expired. Try again"
   },
   "client": {
+    "configurationErrors": {
+      "invalid_key": "Enter a valid VPN key. Existing credentials remain unchanged.",
+      "key_mismatch": "The public key does not match the private key.",
+      "credential_conflict": "This VPN identity belongs to a server or a profile on another interface. Use distinct credentials.",
+      "invalid_configuration": "Check the client settings. No changes were saved.",
+      "invalid_server_prefixes": "Server Allowed IPs must contain non-default CIDRs. Use a routing group for default routing.",
+      "invalid_address": "Choose a client address inside its interface network, excluding reserved addresses.",
+      "format_unavailable": "WireGuard format is unavailable while this interface uses AWG parameters.",
+      "policy_version_required": "Full configuration editing is waiting for guarded routing activation.",
+      "interface_unavailable": "This interface is pending deletion. Choose another interface.",
+      "routing_conflict": "These settings conflict with the routing policy. Review the conflict details.",
+      "write_failed": "The client could not be saved. Existing settings and credentials remain unchanged."
+    },
+    "interfaceDisabledWarning": "Interface {0} is disabled. This profile can connect after the interface is enabled.",
     "enabledConflict": "An enabled client already uses this tunnel address or VPN identity. Disable that client before enabling this version.",
     "empty": "There are no clients yet.",
     "newShort": "New",
@@ -234,6 +248,13 @@
       "hookReviewAcknowledgement": "I reviewed the copied hooks, including any source-interface literals."
     },
     "routing": {
+      "notFound": "Routing group not found.",
+      "previewStale": "Routing settings changed. Refresh the preview before saving.",
+      "policyInvalid": "These settings create an unsafe or unsupported routing policy. Review the conflict details.",
+      "operationFailed": "The routing operation could not be completed. Refresh the saved state before trying again.",
+      "transitionPending": "A routing transition is pending verification. Saved settings may not yet be active.",
+      "advancedReadOnly": "This group uses subnet exclusions or shared memberships. Advanced editing is unavailable in this version. Its saved settings are preserved.",
+      "excludedPrefixes": "Excluded IPv4 prefixes",
       "description": "Route selected member profiles through ordered exit profiles across any managed interface.",
       "revisions": "Applied / desired revision: {0}",
       "add": "Add routing group",

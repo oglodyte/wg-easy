@@ -143,17 +143,34 @@ const ClientCredentialFields = {
   preSharedKey: VpnKeySchema.nullable().optional(),
   preferredConfigFormat: ConfigFormatSchema.optional(),
 };
+const ClientOperationalFields = {
+  mtu: MtuSchema.int(),
+  persistentKeepalive: PersistentKeepaliveSchema.int(),
+  jC: JcSchema.unwrap().int().nullable(),
+  jMin: JminSchema.unwrap().int().min(0).nullable(),
+  jMax: JmaxSchema.unwrap().int().min(0).nullable(),
+};
 
-export const ClientConfigurationUpdateSchema = ClientUpdateSchema.extend(
-  ClientCredentialFields
-);
-export const ClientConfigurationCreateSchema =
-  ClientUpdateSchema.partial().extend({
+export const ClientConfigurationUpdateSchema = ClientUpdateSchema.extend({
+  ...ClientOperationalFields,
+  ...ClientCredentialFields,
+});
+export const ClientConfigurationCreateSchema = ClientUpdateSchema.extend(
+  ClientOperationalFields
+)
+  .partial()
+  .extend({
     ...ClientCredentialFields,
     name,
     expiresAt: expiresAt.optional(),
     interfaceId: InterfaceNameSchema.optional(),
   });
+export type ClientConfigurationCreateType = z.infer<
+  typeof ClientConfigurationCreateSchema
+>;
+export type ClientConfigurationUpdateType = z.infer<
+  typeof ClientConfigurationUpdateSchema
+>;
 
 const clientId = z.coerce.number({ message: t('zod.client.id') });
 

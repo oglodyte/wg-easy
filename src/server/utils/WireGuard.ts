@@ -25,6 +25,9 @@ import {
   type RoutingPlan,
 } from '#server/utils/routing';
 import { RoutingExecutor } from '#server/utils/routingExecutor';
+import { RoutingPolicyApplication } from '#server/utils/routingPolicyApplication';
+import { admitManagedServerHooks } from '#server/utils/managedServerHooks';
+import { parseManagedInterfaceConfig } from '#server/utils/managedInterfaceState';
 import type { ID } from '#server/utils/types';
 import { wg } from '#server/utils/wgHelper';
 import { setIntervalImmediately } from '#shared/utils/time';
@@ -87,6 +90,10 @@ class WireGuard {
   #lastSafeRoutingPlan?: RoutingPlan;
   #exitHealthySince = new Map<string, Date>();
   #routingExecutor = new RoutingExecutor();
+  #policyApplication = new RoutingPolicyApplication(
+    undefined,
+    !WG_ENV.DISABLE_IPV6
+  );
   #reconciler = new RuntimeReconciler((request) => this.#reconcile(request));
 
   requestReconcile(
@@ -308,18 +315,27 @@ class WireGuard {
 
   async startRoutingHealthMonitor() {
     if (this.#routingHealthTimer) return;
-    const { settings } = await Database.routingGroups.getPlannerSnapshot();
+    const settings = await Database.general.getRoutingHealthSettings();
     this.#routingHealthTimer = setInterval(() => {
       this.requestReconcile('routing-health-check').catch((error) => {
         WG_DEBUG('Routing health reconciliation failed.');
         console.error(error);
       });
-    }, settings.healthCheckIntervalSeconds * 1000);
+    }, settings.routingExitHealthCheckIntervalSeconds * 1000);
   }
 
   async Shutdown() {
     if (this.#cronTimer) clearInterval(this.#cronTimer);
     if (this.#routingHealthTimer) clearInterval(this.#routingHealthTimer);
+    const policy = await Database.routingPolicy.get();
+    if (policy.version === 2 || policy.pending) {
+      try {
+        await this.requestReconcile('shutdown-policy');
+      } finally {
+        await this.#reconciler.stop();
+      }
+      return;
+    }
     await this.#reconciler.stop();
     const [interfaces, runtimeStates] = await Promise.all([
       Database.interfaces.getAll(),
@@ -741,7 +757,58 @@ class WireGuard {
     }
   }
 
-  async #reconcile({
+  async #reconcile(request: ReconcileRequest): Promise<MutationResult> {
+    try {
+      const policy = await Database.routingPolicy.get();
+      if (policy.pending) await this.#policyApplication.recover(Database);
+      const current = await Database.routingPolicy.get();
+      if (current.version === 2)
+        return await this.#policyApplication.reconcile(
+          Database,
+          request.impacts,
+          request.reasons.includes('shutdown-policy')
+        );
+      if (request.reasons.includes('shutdown-policy')) {
+        const state = await Database.runtime.getGlobal();
+        return {
+          success: true,
+          revision: state.desiredRevision,
+          runtime: {
+            status: 'degraded',
+            appliedRevision: state.appliedRevision,
+            error: 'bootstrap_namespace_reset',
+          },
+        };
+      }
+      // Initialize generated identities before capturing any revision/baseline.
+      for (const iface of await Database.interfaces.getAll())
+        if (!iface.pendingDelete && iface.enabled)
+          await this.#prepareInterface(iface);
+      const result = await this.#reconcileVersion1(request);
+      if (
+        result.runtime.status === 'applied' &&
+        (await Database.general.getSetupStep()).done
+      )
+        await this.#policyApplication.promote(Database);
+      return result;
+    } catch {
+      // Never echo private configs, command output, SQL binds or parser input.
+      const state = await Database.runtime.markGlobalFailed(
+        new Error('routing_policy_reconciliation_failed')
+      );
+      return {
+        success: true,
+        revision: state.desiredRevision,
+        runtime: {
+          status: 'degraded',
+          appliedRevision: state.appliedRevision,
+          error: 'routing_policy_reconciliation_failed',
+        },
+      };
+    }
+  }
+
+  async #reconcileVersion1({
     reasons,
     impacts,
   }: ReconcileRequest): Promise<MutationResult> {
@@ -1135,6 +1202,12 @@ class WireGuard {
   async #downInterface(interfaceId: string) {
     if (!(await wg.interfaceExists(interfaceId))) return;
 
+    const prior = parseManagedInterfaceConfig(
+      interfaceId,
+      await fs.readFile(`/etc/wireguard/${interfaceId}.conf`, 'utf8')
+    );
+    admitManagedServerHooks(interfaceId, prior.fields);
+
     const awgError = await wg.down(interfaceId).then(
       () => undefined,
       (error) => error
@@ -1196,10 +1269,17 @@ class WireGuard {
       Database.clients.getAllForInterface(wgInterface.name),
       Database.hooks.get(wgInterface.name),
     ]);
+    const serverSection = wg.generateServerInterface(wgInterface, hooks, {
+      enableIpv6: !WG_ENV.DISABLE_IPV6,
+    });
+    // Admit the expanded settings that quick will execute, including copied
+    // defaults using {{name}}, {{port}} and other validated placeholders.
+    admitManagedServerHooks(
+      wgInterface.name,
+      parseManagedInterfaceConfig(wgInterface.name, serverSection).fields
+    );
     const sections = [
-      wg.generateServerInterface(wgInterface, hooks, {
-        enableIpv6: !WG_ENV.DISABLE_IPV6,
-      }),
+      serverSection,
       ...clients
         .filter(({ enabled }) => enabled)
         .map((client) =>

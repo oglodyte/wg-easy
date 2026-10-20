@@ -232,6 +232,41 @@ async function fixture(
 }
 
 describe('private guarded interface lifecycle orchestration', () => {
+  test('an interrupted controlled stop completes forward without any old-device up or unrelated restart', async () => {
+    const f = await fixture(),
+      down = structuredClone(f.previousPlan);
+    const iface = down.interfaces.find((i) => i.interfaceId === 'wg0')!;
+    iface.observedUp = false;
+    iface.hooksApplied = false;
+    down.peers = down.peers.filter((p) => p.interfaceId !== 'wg0');
+    const transition = await ManagedInterfaceTransition.prepare(
+        f.deps,
+        f.previousPlan,
+        down,
+        f.previous
+      ),
+      reference = await f.backups.create([...f.previous.keys()], {
+        candidateConfigurations: transition.candidateConfigurations,
+        expectedPreviousConfigurations: transition.previousConfigurations,
+        lifecycleIntent: transition.intent,
+      });
+    f.firewall.setFailure(1);
+    await expect(transition.completeWithdrawal(f.guard)).rejects.toThrow(
+      'effect_repair_failed'
+    );
+    f.firewall.setFailure(-1);
+    const reopened = await ManagedInterfaceTransition.reopen(
+      f.deps,
+      reference,
+      f.previousPlan,
+      down
+    );
+    await reopened.completeWithdrawal(f.guard);
+    expect(f.runtime.has('wg0')).toBe(false);
+    expect(f.events.some((e) => e.startsWith('before-up'))).toBe(false);
+    expect(f.events.some((e) => e.includes('other0'))).toBe(false);
+    await reopened.verify('target');
+  });
   test('a failed bring-up restores the down-device baseline and its retained hooks without restarting the failed device', async () => {
     const f = await fixture();
     f.runtime.delete('wg0');

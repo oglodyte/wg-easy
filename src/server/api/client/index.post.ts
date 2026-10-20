@@ -1,45 +1,44 @@
-import { createError, readValidatedBody } from 'h3';
+import { readValidatedBody } from 'h3';
+import { useTranslation } from '@intlify/h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
-import { InterfaceUnavailableForClientCreationError } from '#db/repositories/client/service';
-import { ClientCreateSchema } from '#db/repositories/client/types';
+import { ClientConfigurationCreateSchema } from '#db/repositories/client/types';
+import { clientMutationHttpError } from '#server/utils/clientMutationRequest';
 
 export default definePermissionEventHandler(
   'clients',
   'create',
   async ({ event }) => {
-    const { name, expiresAt, interfaceId } = await readValidatedBody(
+    const input = await readValidatedBody(
       event,
-      validateZod(ClientCreateSchema, event)
+      validateZod(ClientConfigurationCreateSchema, event)
     );
 
     let result: Awaited<ReturnType<typeof Database.clients.create>>;
     try {
-      result = await Database.clients.create({ name, expiresAt, interfaceId });
+      result = await Database.clients.create(input);
     } catch (error) {
-      if (error instanceof InterfaceUnavailableForClientCreationError) {
-        throw createError({ statusCode: 409, statusMessage: error.message });
-      }
-      throw error;
+      return clientMutationHttpError(event, error);
     }
-
+    const clientId = result[0]!.clientId,
+      created = (await Database.clients.get(clientId))!;
     const selectedInterface = await Database.interfaces.getByName(
-      interfaceId ?? (await Database.interfaces.getDefault()).name
+      created.interfaceId
     );
     const runtimeResult = await WireGuard.requestReconcile('create-client', [
       { interfaceId: selectedInterface.name, action: 'sync' },
     ]);
 
-    const clientId = result[0]!.clientId;
+    const t = await useTranslation(event);
     return {
       ...runtimeResult,
       clientId,
       warning: selectedInterface.enabled
         ? undefined
-        : `Interface ${selectedInterface.name} is disabled; this profile will not connect until the interface is enabled.`,
+        : t('client.interfaceDisabledWarning', [selectedInterface.name]),
     };
   }
 );

@@ -5,6 +5,7 @@ import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { ClientGetSchema } from '#db/repositories/client/types';
+import { clientMutationHttpError } from '#server/utils/clientMutationRequest';
 
 export default definePermissionEventHandler(
   'clients',
@@ -18,7 +19,11 @@ export default definePermissionEventHandler(
     const client = await Database.clients.get(clientId);
     checkPermissions(client);
 
-    await Database.clients.toggle(clientId, false);
+    try {
+      await Database.clients.toggle(clientId, false);
+    } catch (error) {
+      return clientMutationHttpError(event, error);
+    }
     return WireGuard.requestReconcile('disable-client', [
       { interfaceId: client!.interfaceId, action: 'sync' },
     ]);

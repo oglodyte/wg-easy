@@ -52,7 +52,12 @@ export function prepareClientCredentials(
     input.privateKey ??
     existing?.privateKey ??
     randomBytes(32).toString('base64');
-  const publicKey = deriveClientPublicKey(privateKey);
+  // An edit that omits identity must retain the exact accepted pair. Derive
+  // only a newly supplied identity or an explicitly requested pair check.
+  const publicKey =
+    existing && input.privateKey === undefined && input.publicKey === undefined
+      ? existing.publicKey
+      : deriveClientPublicKey(privateKey);
   if (input.publicKey !== undefined && input.publicKey !== publicKey)
     throw new ClientCredentialError('key_mismatch');
   const preSharedKey =

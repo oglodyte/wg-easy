@@ -11,6 +11,15 @@ import type {
 import { nextIPFromUsedAddresses } from '#server/utils/ip';
 import { wg } from '#server/utils/wgHelper';
 import { bumpDesiredRevision } from '#db/repositories/runtime/service';
+import { readRoutingPolicyStateInTransaction } from '#db/repositories/runtime/policyService';
+import { readProposedRoutingState } from '#db/repositories/runtime/policySnapshot';
+import { validateProposedRoutingState } from '#server/utils/routingPolicyValidation';
+import {
+  deriveClientPublicKey,
+  ClientCredentialError,
+} from '#server/utils/clientCredentials';
+import { PolicyValidationError } from '#server/utils/routingPolicy';
+import { RoutingValidationError } from '#server/utils/routing';
 import {
   client as clientSchema,
   general,
@@ -28,14 +37,6 @@ function createPreparedStatement(db: DBType) {
   return {
     get: db.query.wgInterface
       .findFirst({ where: eq(wgInterface.name, sql.placeholder('interface')) })
-      .prepare(),
-    updateKeyPair: db
-      .update(wgInterface)
-      .set({
-        privateKey: sql.placeholder('privateKey') as never as string,
-        publicKey: sql.placeholder('publicKey') as never as string,
-      })
-      .where(eq(wgInterface.name, sql.placeholder('interface')))
       .prepare(),
   };
 }
@@ -92,23 +93,67 @@ export class InterfaceService {
     return this.getDefault();
   }
 
-  updateKeyPair(interfaceId: string, privateKey: string, publicKey: string) {
-    return this.#statements.updateKeyPair.execute({
-      interface: interfaceId,
-      privateKey,
-      publicKey,
-    });
+  async updateKeyPair(
+    interfaceId: string,
+    privateKey: string,
+    publicKey: string
+  ) {
+    if (deriveClientPublicKey(privateKey) !== publicKey)
+      throw new ClientCredentialError('key_mismatch');
+    try {
+      return await this.#db.transaction(async (tx) => {
+        const [clients, interfaces] = await Promise.all([
+          tx.query.client
+            .findMany({
+              columns: { id: true },
+              where: eq(clientSchema.publicKey, publicKey),
+            })
+            .execute(),
+          tx.query.wgInterface
+            .findMany({
+              columns: { name: true },
+              where: eq(wgInterface.publicKey, publicKey),
+            })
+            .execute(),
+        ]);
+        if (clients.length || interfaces.some((i) => i.name !== interfaceId))
+          throw new PolicyValidationError('credential_conflict', {
+            interfaceId,
+          });
+        const result = await tx
+          .update(wgInterface)
+          .set({ privateKey, publicKey })
+          .where(eq(wgInterface.name, interfaceId))
+          .execute();
+        await bumpDesiredRevision(tx, [interfaceId]);
+        return result;
+      });
+    } catch (error) {
+      if (
+        error instanceof PolicyValidationError ||
+        error instanceof RoutingValidationError ||
+        error instanceof ClientCredentialError
+      )
+        throw error;
+      // Driver causes can contain private key SQL binds.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error('Interface credential update failed');
+    }
   }
 
   updateAwgHeaders(
     interfaceId: string,
     headers: { h1: string; h2: string; h3: string; h4: string }
   ) {
-    return this.#db
-      .update(wgInterface)
-      .set(headers)
-      .where(eq(wgInterface.name, interfaceId))
-      .execute();
+    return this.#db.transaction(async (tx) => {
+      const result = await tx
+        .update(wgInterface)
+        .set(headers)
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      await bumpDesiredRevision(tx, [interfaceId]);
+      return result;
+    });
   }
 
   async update(interfaceId: string, data: InterfaceUpdateType) {
@@ -383,9 +428,49 @@ export class InterfaceService {
   }
 
   finalizeDelete(interfaceId: string) {
-    return this.#db
-      .delete(wgInterface)
-      .where(eq(wgInterface.name, interfaceId))
-      .execute();
+    return this.#db.transaction(async (tx) => {
+      const [iface, runtime, dependent, policy] = await Promise.all([
+        tx.query.wgInterface
+          .findFirst({ where: eq(wgInterface.name, interfaceId) })
+          .execute(),
+        tx.query.interfaceRuntimeState
+          .findFirst({
+            where: eq(interfaceRuntimeState.interfaceId, interfaceId),
+          })
+          .execute(),
+        tx.query.client
+          .findFirst({
+            columns: { id: true },
+            where: eq(clientSchema.interfaceId, interfaceId),
+          })
+          .execute(),
+        readRoutingPolicyStateInTransaction(tx),
+      ]);
+      if (
+        !iface?.pendingDelete ||
+        dependent ||
+        !runtime ||
+        runtime.observedUp ||
+        runtime.status !== 'disabled' ||
+        runtime.restartRequired ||
+        runtime.appliedRevision !== runtime.desiredRevision ||
+        (policy.version === 2 &&
+          (policy.pending ||
+            !policy.applied ||
+            policy.applied.plan.interfaces.some(
+              (i) => i.interfaceId === interfaceId
+            )))
+      )
+        throw new InterfaceDeletionBlockedError(
+          'Interface deletion requires verified staged runtime cleanup'
+        );
+      const result = await tx
+        .delete(wgInterface)
+        .where(eq(wgInterface.name, interfaceId))
+        .execute();
+      const proposed = await readProposedRoutingState(tx);
+      validateProposedRoutingState(proposed.version, proposed.snapshot);
+      return result;
+    });
   }
 }

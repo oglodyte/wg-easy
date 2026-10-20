@@ -78,7 +78,10 @@ export class ManagedInterfaceTransitionError extends Error {
 function fail(code: string, interfaceId?: string): never {
   throw new ManagedInterfaceTransitionError(code, interfaceId);
 }
-async function readConfig(root: string, interfaceId: string) {
+export async function readManagedInterfaceConfig(
+  root: string,
+  interfaceId: string
+) {
   if (!InterfaceNameSchema.safeParse(interfaceId).success)
     fail('invalid_interface');
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
@@ -98,6 +101,7 @@ async function readConfig(root: string, interfaceId: string) {
     await handle?.close();
   }
 }
+const readConfig = readManagedInterfaceConfig;
 function generation(interfaceId: string, config: string | null): Generation {
   if (config === null) return { config, parsed: null, hooks: null };
   const parsed = parseManagedInterfaceConfig(interfaceId, config);
@@ -731,6 +735,22 @@ export class ManagedInterfaceTransition {
         );
     }
     await this.verify('previous');
+  }
+  /** Forward-only safety withdrawal: unchanged private bytes and no up action. */
+  async completeWithdrawal(verifyGuard: () => Promise<void>) {
+    if (
+      this.entries.some((entry) => {
+        const action = this.action(entry.interfaceId);
+        return (
+          entry.previous.config !== entry.target.config ||
+          (action.restart && action.targetUp) ||
+          (!action.previousHooksApplied && action.targetHooksApplied)
+        );
+      })
+    )
+      fail('invalid_withdrawal');
+    await this.beforeRestore(verifyGuard);
+    await this.verify('target');
   }
   async verify(which: 'previous' | 'target') {
     await this.verifyFiles(which);

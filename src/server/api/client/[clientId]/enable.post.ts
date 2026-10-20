@@ -1,5 +1,3 @@
-import { useTranslation } from '@intlify/h3';
-import { ClientConflictError } from '#db/repositories/client/service';
 import { createError, getValidatedRouterParams } from 'h3';
 
 import Database from '#server/utils/Database';
@@ -7,6 +5,7 @@ import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
 import { ClientGetSchema } from '#db/repositories/client/types';
+import { clientMutationHttpError } from '#server/utils/clientMutationRequest';
 
 export default definePermissionEventHandler(
   'clients',
@@ -36,14 +35,7 @@ export default definePermissionEventHandler(
     try {
       await Database.clients.toggle(clientId, true);
     } catch (error) {
-      if (error instanceof ClientConflictError) {
-        const t = await useTranslation(event);
-        throw createError({
-          statusCode: 409,
-          message: t('client.enabledConflict'),
-        });
-      }
-      throw error;
+      return clientMutationHttpError(event, error);
     }
     return WireGuard.requestReconcile('enable-client', [
       { interfaceId: client!.interfaceId, action: 'sync' },

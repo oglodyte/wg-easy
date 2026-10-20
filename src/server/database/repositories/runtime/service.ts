@@ -1,9 +1,11 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 
 import { interfaceRuntimeState, runtimeReconciliationState } from './schema';
+import { readProposedRoutingState } from './policySnapshot';
 
 import type { DBType } from '#db/sqlite';
-import { assertRoutingPolicyVersion1 } from '#server/utils/routingPolicyValidation';
+import { validateProposedRoutingState } from '#server/utils/routingPolicyValidation';
+import { RoutingValidationError } from '#server/utils/routing';
 
 type DesiredStateDatabase = Pick<DBType, 'update' | 'query'>;
 
@@ -19,9 +21,40 @@ export async function bumpDesiredRevision(
   db: DesiredStateDatabase,
   interfaceIds: readonly string[]
 ) {
-  const settings = await db.query.general.findFirst().execute();
+  // Every caller supplies its existing write transaction after the final row
+  // mutations. Invalid ownership/exposure rolls back rows and all revisions.
+  const proposed = await readProposedRoutingState(db);
+  validateProposedRoutingState(proposed.version, proposed.snapshot);
+  const settings = await db.query.general
+    .findFirst({ columns: { routingExitHealthTimeoutSeconds: true } })
+    .execute();
   if (!settings) throw new Error('General Config not found');
-  assertRoutingPolicyVersion1(settings.routingPolicyVersion);
+  const maximumKeepalive = Math.floor(
+      settings.routingExitHealthTimeoutSeconds / 3
+    ),
+    exits = new Set(
+      proposed.snapshot.groups
+        .filter((g) => g.enabled)
+        .flatMap((g) =>
+          g.exits.filter((exit) => exit.enabled).map((exit) => exit.clientId)
+        )
+    ),
+    clients = await db.query.client
+      .findMany({ columns: { id: true, persistentKeepalive: true } })
+      .execute();
+  const invalid = clients.filter(
+    (c) =>
+      exits.has(c.id) &&
+      (c.persistentKeepalive <= 0 || c.persistentKeepalive > maximumKeepalive)
+  );
+  if (invalid.length)
+    throw new RoutingValidationError(
+      invalid.map((c) => ({
+        code: 'exit_keepalive_invalid',
+        clientIds: [c.id],
+        message: `Exit client ${c.id} persistent keepalive must be between 1 and ${maximumKeepalive} seconds`,
+      }))
+    );
   const [runtime] = await db
     .update(runtimeReconciliationState)
     .set({

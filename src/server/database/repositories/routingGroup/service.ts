@@ -12,10 +12,15 @@ import type {
   RoutingGroupInput,
   RoutingGroupRuntimeStateType,
   RoutingGroupType,
+  RoutingGroupSaveConditions,
+  RoutingGroupPreviewInput,
 } from './types';
+import { RoutingGroupPreviewSchema } from './types';
 
 import type { ClientType } from '#db/repositories/client/types';
 import { bumpDesiredRevision } from '#db/repositories/runtime/service';
+import { readProposedRoutingState } from '#db/repositories/runtime/policySnapshot';
+import { readRoutingPolicyStateInTransaction } from '#db/repositories/runtime/policyService';
 import type { DBType } from '#db/sqlite';
 import {
   ROUTING_SLOT_MAX,
@@ -28,6 +33,14 @@ import {
 } from '#server/utils/routing';
 import { RoutingGroupSchema, schemaLimits } from '#shared/utils/schemas';
 import { assertRoutingPolicyVersion1 } from '#server/utils/routingPolicyValidation';
+import {
+  compileRoutingPolicy,
+  PolicyValidationError,
+} from '#server/utils/routingPolicy';
+import {
+  explainCompiledRoutingPolicy,
+  compiledRoutingWinnerExamples,
+} from '#server/utils/routingPolicyPreview';
 
 const ROUTING_EXECUTION_PENDING =
   'Routing execution is waiting for runtime reconciliation and verification.';
@@ -35,6 +48,39 @@ const ROUTING_EXECUTION_PENDING =
 type QueryDatabase = Pick<DBType, 'query'>;
 
 type ValidationState = Awaited<ReturnType<typeof loadValidationState>>;
+
+export class RoutingPolicyRevisionConflictError extends Error {
+  constructor(readonly desiredRevision: number) {
+    super('Routing policy changed; refresh the preview before saving');
+  }
+}
+async function assertSaveConditions(
+  database: QueryDatabase,
+  conditions: RoutingGroupSaveConditions
+) {
+  if (
+    conditions.expectedDesiredRevision === undefined &&
+    conditions.expectedDesiredFingerprint === undefined
+  )
+    return;
+  const runtime = await database.query.runtimeReconciliationState
+    .findFirst()
+    .execute();
+  if (!runtime) throw new Error('Runtime reconciliation state not found');
+  if (
+    conditions.expectedDesiredRevision !== undefined &&
+    conditions.expectedDesiredRevision !== runtime.desiredRevision
+  )
+    throw new RoutingPolicyRevisionConflictError(runtime.desiredRevision);
+  if (conditions.expectedDesiredFingerprint !== undefined) {
+    const { snapshot } = await readProposedRoutingState(database);
+    if (
+      compileRoutingPolicy(snapshot).fingerprint !==
+      conditions.expectedDesiredFingerprint
+    )
+      throw new RoutingPolicyRevisionConflictError(runtime.desiredRevision);
+  }
+}
 
 async function loadValidationState(database: QueryDatabase) {
   const [groups, exits, members, clients, interfaces, runtime, tombstones] =
@@ -49,10 +95,14 @@ async function loadValidationState(database: QueryDatabase) {
     ]);
   const general = await database.query.general.findFirst().execute();
   if (!general) throw new Error('General Config not found');
-  assertRoutingPolicyVersion1(general.routingPolicyVersion);
+  if (general.routingPolicyVersion !== 2)
+    assertRoutingPolicyVersion1(general.routingPolicyVersion);
   // The Phase 1 runtime cannot safely interpret advanced rows written by a
   // different image or manual SQL. Fail before constructing a baseline plan.
-  if (groups.some((group) => group.excludedIpv4Prefixes.length > 0)) {
+  if (
+    general.routingPolicyVersion === 1 &&
+    groups.some((group) => group.excludedIpv4Prefixes.length > 0)
+  ) {
     throw new RoutingValidationError([
       {
         code: 'routing_policy_unavailable',
@@ -62,7 +112,7 @@ async function loadValidationState(database: QueryDatabase) {
   }
   const assigned = new Set<number>();
   for (const member of members) {
-    if (assigned.has(member.clientId))
+    if (general.routingPolicyVersion === 1 && assigned.has(member.clientId))
       throw new RoutingValidationError([
         {
           code: 'routing_policy_unavailable',
@@ -189,7 +239,10 @@ function validationIssues(
 ) {
   const issues: RoutingValidationIssue[] = [];
   const blockingIssues: RoutingValidationIssue[] = [];
-  if (input.excludedIpv4Prefixes?.length) {
+  if (
+    state.general.routingPolicyVersion === 1 &&
+    input.excludedIpv4Prefixes?.length
+  ) {
     const issue: RoutingValidationIssue = {
       code: 'routing_policy_unavailable',
       message: 'Excluded routing policies are unavailable in this image.',
@@ -216,6 +269,7 @@ function validationIssues(
   }
 
   for (const memberClientId of input.memberClientIds) {
+    if (state.general.routingPolicyVersion === 2) break;
     const assignment = state.members.find(
       ({ groupId: existingGroupId, clientId }) =>
         clientId === memberClientId && existingGroupId !== groupId
@@ -271,12 +325,13 @@ function validationIssues(
       toConflictGroup(group.id, persistedGroupInput(group, state))
     );
   const prospectiveGroup = toConflictGroup(groupId ?? 0, input, true);
-  issues.push(
-    ...findRoutingPrefixConflicts({
-      clients: state.clients,
-      groups: [...existingGroups, prospectiveGroup],
-    })
-  );
+  if (state.general.routingPolicyVersion === 1)
+    issues.push(
+      ...findRoutingPrefixConflicts({
+        clients: state.clients,
+        groups: [...existingGroups, prospectiveGroup],
+      })
+    );
 
   const serverAllowedIssues = findServerAllowedIpConflicts(state.clients);
   issues.push(...serverAllowedIssues);
@@ -294,8 +349,9 @@ function validationIssues(
   const prospectiveRuleCount =
     input.memberClientIds.length * input.routedIpv4Prefixes.length;
   if (
+    state.general.routingPolicyVersion === 1 &&
     existingRuleCount + prospectiveRuleCount >
-    schemaLimits.routingGlobalRuleLimit
+      schemaLimits.routingGlobalRuleLimit
   ) {
     issues.push({
       code: 'global_rule_limit',
@@ -344,6 +400,12 @@ function clientSummary(client: ClientType) {
 }
 
 function buildAggregates(state: ValidationState): RoutingGroupAggregate[] {
+  const membershipCounts = new Map<number, number>();
+  for (const member of state.members)
+    membershipCounts.set(
+      member.clientId,
+      (membershipCounts.get(member.clientId) ?? 0) + 1
+    );
   const clientById = new Map(
     state.clients.map((client) => [client.id, client])
   );
@@ -389,12 +451,14 @@ function buildAggregates(state: ValidationState): RoutingGroupAggregate[] {
     }
   }
   const aggregateIssues = [
-    ...findRoutingPrefixConflicts({
-      clients: state.clients,
-      groups: state.groups.map((group) =>
-        toConflictGroup(group.id, inputByGroup.get(group.id)!, true)
-      ),
-    }),
+    ...(state.general.routingPolicyVersion === 1
+      ? findRoutingPrefixConflicts({
+          clients: state.clients,
+          groups: state.groups.map((group) =>
+            toConflictGroup(group.id, inputByGroup.get(group.id)!, true)
+          ),
+        })
+      : []),
     ...findServerAllowedIpConflicts(state.clients),
   ];
   for (const issue of aggregateIssues) {
@@ -409,7 +473,10 @@ function buildAggregates(state: ValidationState): RoutingGroupAggregate[] {
       total + input.memberClientIds.length * input.routedIpv4Prefixes.length
     );
   }, 0);
-  if (enabledTogetherRuleCount > schemaLimits.routingGlobalRuleLimit) {
+  if (
+    state.general.routingPolicyVersion === 1 &&
+    enabledTogetherRuleCount > schemaLimits.routingGlobalRuleLimit
+  ) {
     for (const group of state.groups) {
       addWarning(
         group.id,
@@ -444,6 +511,12 @@ function buildAggregates(state: ValidationState): RoutingGroupAggregate[] {
           }),
         runtime: runtimeByGroup.get(group.id) ?? null,
         validationWarnings: warningsByGroup.get(group.id) ?? [],
+        baselineEditable:
+          group.excludedIpv4Prefixes.length === 0 &&
+          !state.members.some(
+            (m) =>
+              m.groupId === group.id && membershipCounts.get(m.clientId)! > 1
+          ),
         execution: {
           available: true,
           active: runtimeByGroup.get(group.id)?.status === 'active',
@@ -467,7 +540,48 @@ export class RoutingGroupService {
   }
 
   async getAll() {
-    return buildAggregates(await loadValidationState(this.#db));
+    return this.#db.transaction(async (tx) =>
+      buildAggregates(await loadValidationState(tx))
+    );
+  }
+
+  async getStatus() {
+    return this.#db.transaction(async (tx) => {
+      const state = await loadValidationState(tx),
+        policy = await readRoutingPolicyStateInTransaction(tx);
+      let desiredFingerprint: string | null = null;
+      if (policy.version === 2) {
+        try {
+          desiredFingerprint = compileRoutingPolicy(
+            (await readProposedRoutingState(tx)).snapshot
+          ).fingerprint;
+        } catch {
+          /* Keep an invalid desired generation truthfully unavailable. */
+        }
+      }
+      return {
+        executionAvailable: true,
+        executionReason: null,
+        policyVersion: policy.version,
+        desiredFingerprint,
+        capabilities: {
+          subnetPolicies: policy.version === 2,
+          fullClientConfiguration: policy.version === 2,
+          advancedGroupEditing: false,
+        },
+        desiredRevision: policy.runtime.desiredRevision,
+        appliedRevision: policy.runtime.appliedRevision,
+        policyAppliedRevision: policy.applied?.revision ?? null,
+        pendingTransition: policy.pending !== null,
+        pendingStage: policy.pending?.stage ?? null,
+        guardStatus: policy.pending
+          ? ('verification_pending' as const)
+          : ('no_pending_transition' as const),
+        status: policy.runtime.status,
+        lastError: policy.runtime.lastError,
+        groups: buildAggregates(state),
+      };
+    });
   }
 
   async get(id: number) {
@@ -484,9 +598,13 @@ export class RoutingGroupService {
     );
   }
 
-  async createAggregate(rawInput: RoutingGroupInput) {
+  async createAggregate(
+    rawInput: RoutingGroupInput,
+    conditions: RoutingGroupSaveConditions = {}
+  ) {
     const input = RoutingGroupSchema.parse(rawInput);
     const { id, revision } = await this.#db.transaction(async (tx) => {
+      await assertSaveConditions(tx, conditions);
       const state = await loadValidationState(tx);
       const { blockingIssues } = validationIssues(state, input, undefined);
       if (blockingIssues.length > 0) {
@@ -539,9 +657,14 @@ export class RoutingGroupService {
     return { group: await this.get(id), revision };
   }
 
-  async updateAggregate(id: number, rawInput: RoutingGroupInput) {
+  async updateAggregate(
+    id: number,
+    rawInput: RoutingGroupInput,
+    conditions: RoutingGroupSaveConditions = {}
+  ) {
     const input = RoutingGroupSchema.parse(rawInput);
     const revision = await this.#db.transaction(async (tx) => {
+      await assertSaveConditions(tx, conditions);
       const state = await loadValidationState(tx);
       if (!state.groups.some(({ id: groupId }) => groupId === id)) {
         throw new RoutingGroupNotFoundError('Routing group not found');
@@ -612,12 +735,112 @@ export class RoutingGroupService {
     return { group: await this.get(id), revision };
   }
 
+  async previewAggregate(rawInput: RoutingGroupPreviewInput) {
+    const request = RoutingGroupPreviewSchema.parse(rawInput);
+    return this.#db.transaction(async (tx) => {
+      const state = await loadValidationState(tx),
+        proposed = await readProposedRoutingState(tx),
+        policy = await readRoutingPolicyStateInTransaction(tx);
+      if (proposed.version !== 2)
+        throw new PolicyValidationError('policy_version_required');
+      const existing =
+        request.groupId === undefined
+          ? undefined
+          : state.groups.find((g) => g.id === request.groupId);
+      if (request.groupId !== undefined && !existing)
+        throw new RoutingGroupNotFoundError('Routing group not found');
+      const canonicalInput = {
+        ...request.group,
+        excludedIpv4Prefixes:
+          request.group.excludedIpv4Prefixes ??
+          existing?.excludedIpv4Prefixes ??
+          [],
+      };
+      const { blockingIssues } = validationIssues(
+        state,
+        canonicalInput,
+        existing?.id
+      );
+      if (blockingIssues.length)
+        throw new RoutingValidationError(blockingIssues);
+      // This identity is explicitly preview-only; save allocates its real ID.
+      let proposalGroupId = existing?.id ?? Number.MAX_SAFE_INTEGER;
+      while (!existing && state.groups.some((g) => g.id === proposalGroupId))
+        proposalGroupId--;
+      const snapshot = {
+          ...proposed.snapshot,
+          groups: [
+            ...proposed.snapshot.groups.filter((g) => g.id !== existing?.id),
+            {
+              ...canonicalInput,
+              id: proposalGroupId,
+              routingSlot: existing?.routingSlot ?? allocateRoutingSlot(state),
+            },
+          ],
+        },
+        compiled = compileRoutingPolicy(snapshot);
+      let desiredFingerprint: string | null = null;
+      try {
+        desiredFingerprint = compileRoutingPolicy(
+          proposed.snapshot
+        ).fingerprint;
+      } catch {
+        /* A safe proposal can repair an invalid saved generation. */
+      }
+      if (
+        request.memberClientId !== undefined &&
+        !snapshot.clients.some((c) => c.id === request.memberClientId)
+      )
+        throw new PolicyValidationError('client_not_found', {
+          clientIds: [request.memberClientId],
+        });
+      return {
+        desiredRevision: policy.runtime.desiredRevision,
+        desiredFingerprint,
+        proposedFingerprint: compiled.fingerprint,
+        proposalGroupId,
+        newGroup: !existing,
+        canonicalInput,
+        counts: compiled.counts,
+        bypassPrefixes: compiled.bypassPrefixes,
+        groups: compiled.groups,
+        winnerExamples: compiledRoutingWinnerExamples(compiled),
+        explanation:
+          request.memberClientId !== undefined &&
+          request.destinationIpv4 !== undefined
+            ? explainCompiledRoutingPolicy(
+                compiled,
+                request.memberClientId,
+                request.destinationIpv4
+              )
+            : null,
+        observed: {
+          appliedRevision: policy.applied?.revision ?? null,
+          appliedFingerprint: policy.applied?.fingerprint ?? null,
+          guardStatus: policy.pending
+            ? ('verification_pending' as const)
+            : ('no_pending_transition' as const),
+          pendingStage: policy.pending?.stage ?? null,
+          groups: state.runtime.map((g) => ({
+            groupId: g.groupId,
+            status: g.status,
+            selectedExitClientId: g.selectedExitClientId,
+            appliedExitClientId: g.appliedExitClientId,
+            evaluatedRevision: g.evaluatedRevision,
+            appliedRevision: g.appliedRevision,
+          })),
+        },
+      };
+    });
+  }
+
   async delete(id: number) {
     const result = await this.#db.transaction(async (tx) => {
       const state = await loadValidationState(tx);
       const group = state.groups.find(({ id: groupId }) => groupId === id);
       if (!group)
         throw new RoutingGroupNotFoundError('Routing group not found');
+      await tx.delete(routingGroup).where(eq(routingGroup.id, id)).execute();
       const revision = await bumpDesiredRevision(tx, []);
       await tx
         .insert(routingSlotTombstone)
@@ -626,7 +849,6 @@ export class RoutingGroupService {
           releasedAfterRevision: revision,
         })
         .execute();
-      await tx.delete(routingGroup).where(eq(routingGroup.id, id)).execute();
       return { routingSlot: group.routingSlot, revision };
     });
     return result;
@@ -707,6 +929,8 @@ export class RoutingGroupService {
 
   async getPlannerSnapshot() {
     const state = await loadValidationState(this.#db);
+    // The v1 bridge is never an advanced-policy runtime engine.
+    assertRoutingPolicyVersion1(state.general.routingPolicyVersion);
     const runtimeByInterface = new Map(
       (await this.#db.query.interfaceRuntimeState.findMany().execute()).map(
         (runtime) => [runtime.interfaceId, runtime]

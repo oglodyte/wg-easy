@@ -1,15 +1,13 @@
-import { useTranslation } from '@intlify/h3';
-import { ClientConflictError } from '#db/repositories/client/service';
 import { createError, getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
-import { RoutingValidationError } from '#server/utils/routing';
+import { clientMutationHttpError } from '#server/utils/clientMutationRequest';
 import {
   ClientGetSchema,
-  ClientUpdateSchema,
+  ClientConfigurationUpdateSchema,
 } from '#db/repositories/client/types';
 
 export default definePermissionEventHandler(
@@ -23,31 +21,18 @@ export default definePermissionEventHandler(
 
     const data = await readValidatedBody(
       event,
-      validateZod(ClientUpdateSchema, event)
+      validateZod(ClientConfigurationUpdateSchema, event)
     );
 
     const client = await Database.clients.get(clientId);
     checkPermissions(client);
+    if (!client)
+      throw createError({ statusCode: 404, statusMessage: 'Client not found' });
 
     try {
       await Database.clients.update(clientId, data);
     } catch (error) {
-      if (error instanceof ClientConflictError) {
-        const t = await useTranslation(event);
-        throw createError({
-          statusCode: 409,
-          message: t('client.enabledConflict'),
-        });
-      }
-
-      if (error instanceof RoutingValidationError) {
-        throw createError({
-          statusCode: 409,
-          statusMessage: error.message,
-          data: { issues: error.issues },
-        });
-      }
-      throw error;
+      return clientMutationHttpError(event, error);
     }
     return WireGuard.requestReconcile('update-client', [
       { interfaceId: client!.interfaceId, action: 'sync' },

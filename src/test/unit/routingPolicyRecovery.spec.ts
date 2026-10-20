@@ -181,13 +181,19 @@ async function fixture({ bootstrap = false } = {}) {
     executor,
     guard,
     protectedPaths: [],
+    previousConfigurations: new Map([['wg0', '# prior fixture bytes\n']]),
+    candidateConfigurations: new Map([['wg0', '# candidate fixture bytes\n']]),
     preflightManagedState: async () => {
       fault('managed_preflight');
     },
     applyManagedState: async (plan) => {
       expect(state.activeGuard).not.toBeNull();
       expect((await deps.journal.get()).pending?.stage).toBe('guarded');
-      await fs.writeFile(configPath, '# candidate fixture bytes\n');
+      await fs.writeFile(
+        configPath,
+        deps.candidateConfigurations?.get('wg0') ??
+          '# candidate fixture bytes\n'
+      );
       state.peer = routingPolicyRuntimeFingerprint(plan);
       fault('peers');
       if (state.bumpDesired)
@@ -245,6 +251,7 @@ describe('inactive guarded peer-aware orchestration', () => {
     'completes a durable withdrawal down after %s failure, without restoring the historical up-device',
     async (failure) => {
       const f = await fixture();
+      f.deps.candidateConfigurations = f.deps.previousConfigurations;
       f.previous.plan.namespaceId =
         '11111111-1111-4111-8111-111111111111:4:4026531001';
       f.previous.plan.interfaces[0]!.hooksApplied = true;
@@ -296,6 +303,7 @@ describe('inactive guarded peer-aware orchestration', () => {
 
   test('an interrupted withdrawal retains private evidence and resumes forward after reopening storage', async () => {
     const f = await fixture();
+    f.deps.candidateConfigurations = f.deps.previousConfigurations;
     f.previous.plan.namespaceId =
       '11111111-1111-4111-8111-111111111111:4:4026531001';
     f.previous.plan.interfaces[0]!.hooksApplied = true;

@@ -34,8 +34,10 @@ export default definePermissionEventHandler(
       ? await WireGuard.dumpClient(result.interfaceId, result.publicKey)
       : undefined;
 
+    const { privateKey: _private, preSharedKey: _psk, ...profile } = result;
     return {
-      ...result,
+      ...profile,
+      hasPreSharedKey: _psk !== null,
       endpoint: data?.endpoint,
       interface: {
         name: wgInterface.name,

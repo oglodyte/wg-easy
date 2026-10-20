@@ -57,9 +57,15 @@ export type PolicyRecoveryDependencies = {
     backup: string,
     guard: RoutingGuardPlan
   ) => Promise<void>;
+  completeWithdrawalManagedState?: (
+    previous: AppliedRoutingPolicyPlan,
+    pending: PendingPolicyTransition,
+    guard: RoutingGuardPlan
+  ) => Promise<void>;
   verifyManagedState: (
     plan: AppliedRoutingPolicyPlan,
-    guard: RoutingGuardPlan | null
+    guard: RoutingGuardPlan | null,
+    configuration: 'previous' | 'target'
   ) => Promise<void>;
   validateConfig: (interfaceId: string, temporaryPath: string) => Promise<void>;
   publishGroups: (
@@ -111,7 +117,7 @@ function safeFailure(error: unknown) {
 
 // This bridge view is never stored as version 2 Applied evidence. The group,
 // filter and interface semantics are unchanged; v1 owns the original prefixes.
-function bootstrapPrevious(
+export function bootstrapPrevious(
   target: RoutingPolicyJournal,
   baseline: PolicyBootstrapBaseline
 ): RoutingPolicyJournal {
@@ -172,12 +178,12 @@ export async function restorePendingRoutingPolicy(
       previousPlan: targetLinux,
       guardedTransition: { guard, knownPlans: [targetLinux] },
     });
-    await deps.verifyManagedState(previous.plan, guard);
+    await deps.verifyManagedState(previous.plan, guard, 'previous');
     await deps.executor.verify(previousLinux, guard);
     await deps.journal.finishRestored(pending, async (tx) => {
       await deps.guard.remove(guard);
       await deps.executor.verify(previousLinux, null);
-      await deps.verifyManagedState(previous.plan, null);
+      await deps.verifyManagedState(previous.plan, null, 'previous');
       await deps.publishGroups(tx, previous, true);
     });
   } catch (error) {
@@ -215,37 +221,45 @@ async function completePendingWithdrawal(
     await deps.journal.resumeWithdrawal(pending);
     // The private intent is bound to the down-device baseline on both sides.
     // It may retain completed old hook effects without recreating the device.
-    await deps.beforeRestoreManagedState?.(
-      pending.plan,
-      pending.plan,
-      pending.backupBasenames[0]!,
-      guard
-    );
-    await deps.guard.verify(guard);
-    await deps.backups.restore(
-      pending.backupBasenames[0]!,
-      deps.validateConfig
-    );
-    await deps.guard.verify(guard);
-    await deps.restoreManagedState(
-      pending.plan,
-      pending.backupBasenames[0]!,
-      guard
-    );
-    await deps.verifyManagedState(pending.plan, guard);
+    if (deps.completeWithdrawalManagedState) {
+      await deps.completeWithdrawalManagedState(previous.plan, pending, guard);
+    } else {
+      if (pending.withdrawal?.stopInterfaceIds?.length)
+        throw new RoutingPolicyJournalError(
+          'withdrawal_completion_unavailable'
+        );
+      await deps.beforeRestoreManagedState?.(
+        pending.plan,
+        pending.plan,
+        pending.backupBasenames[0]!,
+        guard
+      );
+      await deps.guard.verify(guard);
+      await deps.backups.restore(
+        pending.backupBasenames[0]!,
+        deps.validateConfig
+      );
+      await deps.guard.verify(guard);
+      await deps.restoreManagedState(
+        pending.plan,
+        pending.backupBasenames[0]!,
+        guard
+      );
+    }
+    await deps.verifyManagedState(pending.plan, guard, 'target');
     await deps.journal.advance(pending, 'guarded', 'peers');
     await deps.executor.apply(targetLinux, {
       previousPlan: previousLinux,
       guardedTransition: { guard, knownPlans: [previousLinux] },
     });
     await deps.journal.advance(pending, 'peers', 'classified');
-    await deps.verifyManagedState(pending.plan, guard);
+    await deps.verifyManagedState(pending.plan, guard, 'target');
     await deps.executor.verify(targetLinux, guard);
     await deps.journal.advance(pending, 'classified', 'verified');
     await deps.journal.finishApplied(pending, async (tx) => {
       await deps.guard.remove(guard);
       await deps.executor.verify(targetLinux, null);
-      await deps.verifyManagedState(pending.plan, null);
+      await deps.verifyManagedState(pending.plan, null, 'target');
       await deps.publishGroups(tx, pending, false);
     });
   } catch (error) {
@@ -299,6 +313,18 @@ export async function applyGuardedRoutingPolicy(
       backupBasenames: [],
       errorCode: null,
     });
+  if (
+    withdrawal &&
+    (!deps.candidateConfigurations ||
+      !deps.previousConfigurations ||
+      deps.candidateConfigurations.size !== deps.previousConfigurations.size ||
+      [...deps.previousConfigurations].some(
+        ([id, config]) =>
+          !deps.candidateConfigurations!.has(id) ||
+          deps.candidateConfigurations!.get(id) !== config
+      ))
+  )
+    throw new RoutingPolicyJournalError('withdrawal_configuration_changed');
   const guard = buildRoutingPolicyTransition(previous.plan, target.plan, {
     protectedPaths: deps.protectedPaths,
     forcePeerIds,
@@ -356,20 +382,20 @@ export async function applyGuardedRoutingPolicy(
     await deps.guard.verify(guard);
     await deps.applyManagedState(target.plan, guard);
     await deps.guard.verify(guard);
-    await deps.verifyManagedState(target.plan, guard);
+    await deps.verifyManagedState(target.plan, guard, 'target');
     await deps.journal.advance(pending, 'guarded', 'peers');
     await deps.executor.apply(targetLinux, {
       previousPlan: previousLinux,
       guardedTransition: { guard, knownPlans: [previousLinux] },
     });
     await deps.journal.advance(pending, 'peers', 'classified');
-    await deps.verifyManagedState(target.plan, guard);
+    await deps.verifyManagedState(target.plan, guard, 'target');
     await deps.executor.verify(targetLinux, guard);
     await deps.journal.advance(pending, 'classified', 'verified');
     await deps.journal.finishApplied(pending, async (tx) => {
       await deps.guard.remove(guard);
       await deps.executor.verify(targetLinux, null);
-      await deps.verifyManagedState(target.plan, null);
+      await deps.verifyManagedState(target.plan, null, 'target');
       await deps.publishGroups(tx, target, false);
     });
   } catch (error) {

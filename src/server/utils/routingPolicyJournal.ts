@@ -152,6 +152,7 @@ const pendingSchema = journalSchema.extend({
     .strictObject({
       unavailableInterfaceIds: z.array(InterfaceNameSchema).min(1),
       resetNamespace: z.boolean(),
+      stopInterfaceIds: z.array(InterfaceNameSchema).min(1).optional(),
     })
     .optional(),
   supersededGuardScopes: z
@@ -497,8 +498,19 @@ export function parsePendingPolicyTransition(
               (i) => i.interfaceId === id && !i.observedUp
             )
         ) ||
+        (withdrawal.stopInterfaceIds &&
+          (!unique(withdrawal.stopInterfaceIds) ||
+            JSON.stringify(withdrawal.stopInterfaceIds) !==
+              JSON.stringify([...withdrawal.stopInterfaceIds].sort()) ||
+            withdrawal.stopInterfaceIds.some(
+              (id) =>
+                !unavailable.includes(id) ||
+                parsed.plan.interfaces.find((i) => i.interfaceId === id)
+                  ?.hooksApplied !== false
+            ))) ||
         (withdrawal.resetNamespace &&
-          (unavailable.length !== parsed.plan.interfaces.length ||
+          (withdrawal.stopInterfaceIds !== undefined ||
+            unavailable.length !== parsed.plan.interfaces.length ||
             parsed.plan.interfaces.some((i) => i.hooksApplied !== false)))
       )
         fail();

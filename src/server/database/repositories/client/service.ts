@@ -1,12 +1,16 @@
 import { eq, sql, or, like, and, inArray } from 'drizzle-orm';
-import { containsCidr, parseCidr } from 'cidr-tools';
+import { parseCidr } from 'cidr-tools';
 
 import { client } from './schema';
 import type {
   ClientCreateFromExistingType,
-  ClientCreateType,
+  ClientConfigurationCreateType,
+  ClientConfigurationUpdateType,
   ClientQueryType,
-  UpdateClientType,
+} from './types';
+import {
+  ClientConfigurationCreateSchema,
+  ClientConfigurationUpdateSchema,
 } from './types';
 
 import { nextIP } from '#server/utils/ip';
@@ -17,7 +21,11 @@ import {
   findServerAllowedIpConflicts,
 } from '#server/utils/routing';
 import type { ID } from '#server/utils/types';
-import { wg } from '#server/utils/wgHelper';
+import {
+  prepareClientCredentials,
+  ClientCredentialError,
+} from '#server/utils/clientCredentials';
+import { PolicyValidationError } from '#server/utils/routingPolicy';
 import { bumpDesiredRevision } from '#db/repositories/runtime/service';
 import type { DBType } from '#db/sqlite';
 import {
@@ -29,7 +37,37 @@ import {
 } from '#db/schema';
 
 export class InterfaceUnavailableForClientCreationError extends Error {}
-export class ClientConflictError extends Error {}
+export class ClientConflictError extends Error {
+  constructor(
+    message: string,
+    readonly code:
+      | 'credential_conflict'
+      | 'enabled_identity_conflict' = 'enabled_identity_conflict'
+  ) {
+    super(message);
+  }
+}
+export class ClientConfigurationError extends Error {
+  constructor(
+    readonly code:
+      | 'invalid_configuration'
+      | 'invalid_server_prefixes'
+      | 'invalid_address'
+      | 'format_unavailable'
+      | 'policy_version_required'
+      | 'write_failed',
+    readonly field?: 'ipv4Address' | 'ipv6Address'
+  ) {
+    super(
+      code === 'invalid_server_prefixes'
+        ? 'Server allowed IPs must be non-default CIDRs; use a routing group for default routing'
+        : code === 'invalid_address'
+          ? `${field === 'ipv6Address' ? 'IPv6' : 'IPv4'} address is not within the CIDR range or is reserved`
+          : `Client configuration: ${code}`
+    );
+    this.name = 'ClientConfigurationError';
+  }
+}
 
 export class ClientRoutingReferenceError extends Error {
   readonly kind: 'exit' | 'member';
@@ -44,6 +82,94 @@ export class ClientRoutingReferenceError extends Error {
 }
 
 type ClientTransaction = Parameters<Parameters<DBType['transaction']>[0]>[0];
+
+async function assertCredentialIdentityAvailable(
+  tx: ClientTransaction,
+  id: ID,
+  candidate: { interfaceId: string; publicKey: string }
+) {
+  const [servers, reused] = await Promise.all([
+    tx.query.wgInterface.findMany({ columns: { publicKey: true } }).execute(),
+    tx.query.client
+      .findMany({
+        columns: { id: true, interfaceId: true },
+        where: and(
+          eq(client.publicKey, candidate.publicKey),
+          sql`${client.id} <> ${id}`
+        ),
+      })
+      .execute(),
+  ]);
+  if (
+    servers.some((s) => s.publicKey === candidate.publicKey) ||
+    reused.some((c) => c.interfaceId !== candidate.interfaceId)
+  )
+    throw new ClientConflictError(
+      'VPN credentials cannot be reused across managed interfaces or server identities',
+      'credential_conflict'
+    );
+}
+
+function assertClientAddresses(
+  iface: { ipv4Cidr: string; ipv6Cidr: string | null },
+  candidate: { ipv4Address: string; ipv6Address: string | null }
+) {
+  try {
+    const network = parseCidr(iface.ipv4Cidr),
+      address = parseCidr(`${candidate.ipv4Address}/32`);
+    if (address.start <= network.start + 1n || address.start >= network.end)
+      throw new Error();
+  } catch {
+    throw new ClientConfigurationError('invalid_address', 'ipv4Address');
+  }
+  try {
+    if (iface.ipv6Cidr) {
+      if (!candidate.ipv6Address) throw new Error();
+      const network6 = parseCidr(iface.ipv6Cidr),
+        address6 = parseCidr(`${candidate.ipv6Address}/128`);
+      if (
+        address6.start <= network6.start + 1n ||
+        address6.start >= network6.end
+      )
+        throw new Error();
+    } else if (candidate.ipv6Address !== null) throw new Error();
+  } catch {
+    throw new ClientConfigurationError('invalid_address', 'ipv6Address');
+  }
+}
+
+async function assertFullConfigurationAvailable(
+  tx: ClientTransaction,
+  advanced: boolean
+) {
+  const settings = await tx.query.general
+    .findFirst({ columns: { routingPolicyVersion: true } })
+    .execute();
+  if (
+    !settings ||
+    ![1, 2].includes(settings.routingPolicyVersion) ||
+    (advanced && settings.routingPolicyVersion !== 2)
+  )
+    throw new ClientConfigurationError('policy_version_required');
+}
+
+function assertClientFormat(
+  iface: { awgParametersEnabled: boolean },
+  preferred: string
+) {
+  if (preferred === 'wireguard' && iface.awgParametersEnabled)
+    throw new ClientConfigurationError('format_unavailable');
+}
+
+function assertClientAwgOverrides(
+  iface: { jMin: number | null; jMax: number | null },
+  candidate: { jMin: number | null; jMax: number | null }
+) {
+  const minimum = candidate.jMin ?? iface.jMin,
+    maximum = candidate.jMax ?? iface.jMax;
+  if (minimum !== null && maximum !== null && minimum > maximum)
+    throw new ClientConfigurationError('invalid_configuration');
+}
 
 async function assertEnabledIdentityAvailable(
   tx: ClientTransaction,
@@ -114,10 +240,12 @@ async function validateServerAllowedIpsUpdate(
   }));
   const issues = [
     ...findServerAllowedIpConflicts(assignments),
-    ...findRoutingPrefixConflicts({
-      clients: assignments,
-      groups: conflictGroups,
-    }),
+    ...(general.routingPolicyVersion === 1
+      ? findRoutingPrefixConflicts({
+          clients: assignments,
+          groups: conflictGroups,
+        })
+      : []),
   ];
   const enabledGroupIds = new Set(
     groups.filter(({ enabled }) => enabled).map(({ id }) => id)
@@ -301,87 +429,141 @@ export class ClientService {
     return this.#statements.findById.execute({ id });
   }
 
-  async create({ name, expiresAt, interfaceId }: ClientCreateType) {
-    const privateKey = await wg.generatePrivateKey();
-    const publicKey = await wg.getPublicKey(privateKey);
-    const preSharedKey = await wg.generatePreSharedKey();
+  async #write<T>(operation: (tx: ClientTransaction) => Promise<T>) {
+    try {
+      return await this.#db.transaction(operation);
+    } catch (error) {
+      if (
+        error instanceof ClientConfigurationError ||
+        error instanceof ClientConflictError ||
+        error instanceof ClientCredentialError ||
+        error instanceof ClientRoutingReferenceError ||
+        error instanceof InterfaceUnavailableForClientCreationError ||
+        error instanceof RoutingValidationError ||
+        error instanceof PolicyValidationError
+      )
+        throw error;
+      // Drizzle driver messages can contain every private SQL bind. Never retain
+      // the cause on an error returned to API/CLI callers or ordinary logs.
+      throw new ClientConfigurationError('write_failed');
+    }
+  }
 
-    return this.#db.transaction(async (tx) => {
+  async create(input: ClientConfigurationCreateType) {
+    const parsed = ClientConfigurationCreateSchema.safeParse(input);
+    if (!parsed.success)
+      throw new ClientConfigurationError('invalid_configuration');
+    const data = parsed.data,
+      credentials = prepareClientCredentials(data);
+    return this.#write(async (tx) => {
+      await assertFullConfigurationAvailable(
+        tx,
+        Object.entries(data).some(
+          ([key, value]) =>
+            value !== undefined &&
+            !['name', 'expiresAt', 'interfaceId'].includes(key)
+        )
+      );
       const generalConfig = await tx.query.general
         .findFirst({ columns: { defaultInterfaceId: true } })
         .execute();
-      if (!generalConfig) throw new Error('General Config not found');
+      if (!generalConfig) throw new Error();
       const selectedInterfaceId =
-        interfaceId ?? generalConfig.defaultInterfaceId;
-      const clients = await tx.query.client
-        .findMany({ where: eq(client.interfaceId, selectedInterfaceId) })
-        .execute();
-      const clientInterface = await tx.query.wgInterface
-        .findFirst({
-          where: eq(wgInterface.name, selectedInterfaceId),
-        })
-        .execute();
-
-      if (!clientInterface) {
-        throw new Error('WireGuard interface not found');
-      }
-      if (clientInterface.pendingDelete) {
+        data.interfaceId ?? generalConfig.defaultInterfaceId;
+      const [clients, clientInterface, defaults] = await Promise.all([
+        tx.query.client
+          .findMany({ where: eq(client.interfaceId, selectedInterfaceId) })
+          .execute(),
+        tx.query.wgInterface
+          .findFirst({ where: eq(wgInterface.name, selectedInterfaceId) })
+          .execute(),
+        tx.query.userConfig
+          .findFirst({ where: eq(userConfig.id, selectedInterfaceId) })
+          .execute(),
+      ]);
+      if (!clientInterface || !defaults) throw new Error();
+      if (clientInterface.pendingDelete)
         throw new InterfaceUnavailableForClientCreationError(
           'WireGuard interface is pending deletion'
         );
-      }
-
-      const clientConfig = await tx.query.userConfig
-        .findFirst({
-          where: eq(userConfig.id, clientInterface.name),
-        })
-        .execute();
-
-      if (!clientConfig) {
-        throw new Error('WireGuard interface configuration not found');
-      }
-
-      const ipv4Cidr = parseCidr(clientInterface.ipv4Cidr);
-      const ipv4Address = nextIP(4, ipv4Cidr, clients);
-      const ipv6Address = clientInterface.ipv6Cidr
-        ? nextIP(6, parseCidr(clientInterface.ipv6Cidr), clients)
-        : null;
-
+      const ipv4Address =
+          data.ipv4Address ??
+          nextIP(4, parseCidr(clientInterface.ipv4Cidr), clients),
+        ipv6Address =
+          data.ipv6Address === undefined
+            ? clientInterface.ipv6Cidr
+              ? nextIP(6, parseCidr(clientInterface.ipv6Cidr), clients)
+              : null
+            : data.ipv6Address;
+      assertClientAddresses(clientInterface, { ipv4Address, ipv6Address });
+      assertClientFormat(clientInterface, data.preferredConfigFormat ?? 'auto');
+      assertClientAwgOverrides(clientInterface, {
+        jMin: data.jMin === undefined ? defaults.defaultJMin : data.jMin,
+        jMax: data.jMax === undefined ? defaults.defaultJMax : data.jMax,
+      });
+      await assertCredentialIdentityAvailable(tx, 0, {
+        interfaceId: selectedInterfaceId,
+        publicKey: credentials.publicKey,
+      });
+      await assertEnabledIdentityAvailable(tx, 0, {
+        interfaceId: selectedInterfaceId,
+        publicKey: credentials.publicKey,
+        ipv4Address,
+        ipv6Address,
+        enabled: data.enabled ?? true,
+      });
+      const {
+        interfaceId: _interface,
+        privateKey: _private,
+        publicKey: _public,
+        preSharedKey: _psk,
+        ...fields
+      } = data;
+      const overrides = Object.fromEntries(
+        Object.entries(fields).filter(([, value]) => value !== undefined)
+      );
       const result = await tx
         .insert(client)
         .values({
-          name,
-          // TODO: properly assign user id
+          name: data.name,
           userId: 1,
           interfaceId: selectedInterfaceId,
-          expiresAt,
-          privateKey,
-          publicKey,
-          preSharedKey,
+          expiresAt: null,
+          mtu: defaults.defaultMtu,
+          jC: defaults.defaultJC,
+          jMin: defaults.defaultJMin,
+          jMax: defaults.defaultJMax,
+          i1: defaults.defaultI1,
+          i2: defaults.defaultI2,
+          i3: defaults.defaultI3,
+          i4: defaults.defaultI4,
+          i5: defaults.defaultI5,
+          persistentKeepalive: defaults.defaultPersistentKeepalive,
+          enabled: true,
+          ...overrides,
           ipv4Address,
           ipv6Address,
-          mtu: clientConfig.defaultMtu,
-          jC: clientConfig.defaultJC,
-          jMin: clientConfig.defaultJMin,
-          jMax: clientConfig.defaultJMax,
-          i1: clientConfig.defaultI1,
-          i2: clientConfig.defaultI2,
-          i3: clientConfig.defaultI3,
-          i4: clientConfig.defaultI4,
-          i5: clientConfig.defaultI5,
-          persistentKeepalive: clientConfig.defaultPersistentKeepalive,
-          serverAllowedIps: [],
-          enabled: true,
+          ...credentials,
+          serverAllowedIps: canonicalizeServerAllowedIps(
+            data.serverAllowedIps ?? []
+          ),
         })
         .returning({ clientId: client.id })
         .execute();
+      const id = result[0]!.clientId;
+      await validateServerAllowedIpsUpdate(
+        tx,
+        id,
+        data.serverAllowedIps ?? [],
+        data.persistentKeepalive ?? defaults.defaultPersistentKeepalive
+      );
       await bumpDesiredRevision(tx, [selectedInterfaceId]);
       return result;
     });
   }
 
   toggle(id: ID, enabled: boolean) {
-    return this.#db.transaction(async (tx) => {
+    return this.#write(async (tx) => {
       const existing = await tx.query.client
         .findFirst({ where: eq(client.id, id) })
         .execute();
@@ -397,7 +579,7 @@ export class ClientService {
   }
 
   delete(id: ID, { removeRoutingMembership = false } = {}) {
-    return this.#db.transaction(async (tx) => {
+    return this.#write(async (tx) => {
       const existing = await tx.query.client
         .findFirst({ where: eq(client.id, id) })
         .execute();
@@ -457,48 +639,58 @@ export class ClientService {
     });
   }
 
-  update(id: ID, data: UpdateClientType) {
-    return this.#db.transaction(async (tx) => {
+  async update(id: ID, input: ClientConfigurationUpdateType) {
+    const parsed = ClientConfigurationUpdateSchema.safeParse(input);
+    if (!parsed.success)
+      throw new ClientConfigurationError(
+        parsed.error.issues.some(
+          (issue) => issue.path[0] === 'serverAllowedIps'
+        )
+          ? 'invalid_server_prefixes'
+          : 'invalid_configuration'
+      );
+    const data = parsed.data;
+    return this.#write(async (tx) => {
       const existingClient = await tx.query.client
         .findFirst({ where: eq(client.id, id) })
         .execute();
-      if (!existingClient) throw new Error('Client not found');
+      if (!existingClient) throw new Error();
+      await assertFullConfigurationAvailable(
+        tx,
+        (
+          [
+            'privateKey',
+            'publicKey',
+            'preSharedKey',
+            'preferredConfigFormat',
+          ] as const
+        ).some(
+          (key) => data[key] !== undefined && data[key] !== existingClient[key]
+        )
+      );
       const clientInterface = await tx.query.wgInterface
-        .findFirst({
-          where: eq(wgInterface.name, existingClient.interfaceId),
-        })
+        .findFirst({ where: eq(wgInterface.name, existingClient.interfaceId) })
         .execute();
-
-      if (!clientInterface) {
-        throw new Error('WireGuard interface not found');
-      }
-
-      if (!containsCidr(clientInterface.ipv4Cidr, data.ipv4Address)) {
-        throw new Error('IPv4 address is not within the CIDR range');
-      }
-
-      if (
-        clientInterface.ipv6Cidr
-          ? !data.ipv6Address ||
-            !containsCidr(clientInterface.ipv6Cidr, data.ipv6Address)
-          : data.ipv6Address !== null
-      ) {
-        throw new Error('IPv6 address is not within the CIDR range');
-      }
-
+      if (!clientInterface) throw new Error();
+      const credentials = prepareClientCredentials(data, existingClient),
+        candidate = { ...existingClient, ...data, ...credentials };
+      assertClientAddresses(clientInterface, candidate);
+      assertClientFormat(
+        clientInterface,
+        data.preferredConfigFormat ?? existingClient.preferredConfigFormat
+      );
+      assertClientAwgOverrides(clientInterface, candidate);
       const serverAllowedIps = await validateServerAllowedIpsUpdate(
         tx,
         id,
         data.serverAllowedIps,
         data.persistentKeepalive
       );
-      await assertEnabledIdentityAvailable(tx, id, {
-        ...existingClient,
-        ...data,
-      });
+      await assertCredentialIdentityAvailable(tx, id, candidate);
+      await assertEnabledIdentityAvailable(tx, id, candidate);
       await tx
         .update(client)
-        .set({ ...data, serverAllowedIps })
+        .set({ ...data, ...credentials, serverAllowedIps })
         .where(eq(client.id, id))
         .execute();
       await bumpDesiredRevision(tx, [existingClient.interfaceId]);
@@ -515,23 +707,43 @@ export class ClientService {
     publicKey,
     interfaceId,
   }: ClientCreateFromExistingType) {
-    const clientConfig = await this.#db.query.userConfig
-      .findFirst({ where: eq(userConfig.id, interfaceId) })
-      .execute();
-    if (!clientConfig) {
-      throw new Error('WireGuard interface configuration not found');
-    }
-
-    return this.#db.transaction(async (tx) => {
+    const credentials = prepareClientCredentials({
+      privateKey,
+      publicKey,
+      preSharedKey: preSharedKey || null,
+    });
+    return this.#write(async (tx) => {
+      const [clientConfig, iface] = await Promise.all([
+        tx.query.userConfig
+          .findFirst({ where: eq(userConfig.id, interfaceId) })
+          .execute(),
+        tx.query.wgInterface
+          .findFirst({ where: eq(wgInterface.name, interfaceId) })
+          .execute(),
+      ]);
+      if (!clientConfig || !iface || iface.pendingDelete)
+        throw new InterfaceUnavailableForClientCreationError(
+          'Interface is unavailable for legacy client creation'
+        );
+      assertClientAddresses(iface, { ipv4Address, ipv6Address });
+      await assertCredentialIdentityAvailable(tx, 0, {
+        interfaceId,
+        publicKey: credentials.publicKey,
+      });
+      await assertEnabledIdentityAvailable(tx, 0, {
+        interfaceId,
+        enabled,
+        ipv4Address,
+        ipv6Address,
+        publicKey: credentials.publicKey,
+      });
       const result = await tx
         .insert(client)
         .values({
           name,
           userId: 1,
           interfaceId,
-          privateKey,
-          publicKey,
-          preSharedKey,
+          ...credentials,
           ipv4Address,
           ipv6Address,
           mtu: clientConfig.defaultMtu,
@@ -542,6 +754,7 @@ export class ClientService {
           i2: clientConfig.defaultI2,
           i3: clientConfig.defaultI3,
           i4: clientConfig.defaultI4,
+          i5: clientConfig.defaultI5,
           allowedIps: clientConfig.defaultAllowedIps,
           dns: clientConfig.defaultDns,
           persistentKeepalive: clientConfig.defaultPersistentKeepalive,

@@ -10,7 +10,7 @@ import type {
   routingSlotTombstone,
 } from './schema';
 
-import type { RoutingGroupSchema } from '#shared/utils/schemas';
+import { RoutingGroupSchema } from '#shared/utils/schemas';
 
 export type RoutingGroupType = InferSelectModel<typeof routingGroup>;
 export type RoutingGroupExitType = InferSelectModel<typeof routingGroupExit>;
@@ -25,6 +25,53 @@ export type RoutingSlotTombstoneType = InferSelectModel<
 >;
 
 export type RoutingGroupInput = ZodInfer<typeof RoutingGroupSchema>;
+export const RoutingGroupSaveSchema = RoutingGroupSchema.safeExtend({
+  expectedDesiredRevision: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional(),
+  expectedDesiredFingerprint: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
+});
+export const RoutingGroupPreviewSchema = z
+  .strictObject({
+    groupId: z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    group: RoutingGroupSchema,
+    memberClientId: z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .optional(),
+    destinationIpv4: z.ipv4().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      (value.memberClientId === undefined) !==
+      (value.destinationIpv4 === undefined)
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['destinationIpv4'],
+        message: 'Choose both a member and destination for an explanation',
+      });
+  });
+export type RoutingGroupPreviewInput = z.infer<
+  typeof RoutingGroupPreviewSchema
+>;
+export type RoutingGroupSaveConditions = Pick<
+  z.infer<typeof RoutingGroupSaveSchema>,
+  'expectedDesiredRevision' | 'expectedDesiredFingerprint'
+>;
 
 export const RoutingGroupGetSchema = z.object({
   groupId: z.coerce.number().int().positive(),
@@ -51,6 +98,7 @@ export type RoutingGroupAggregate = RoutingGroupType & {
   >;
   runtime: RoutingGroupRuntimeStateType | null;
   validationWarnings: string[];
+  baselineEditable: boolean;
   execution: {
     available: boolean;
     active: boolean;

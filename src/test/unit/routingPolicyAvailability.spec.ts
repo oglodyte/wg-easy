@@ -174,4 +174,28 @@ describe('observed kernel availability evidence', () => {
       deriveRoutingAvailabilityWithdrawal(journal, new Set(), { namespaceId })
     ).toThrow('invalid_availability_withdrawal');
   });
+  test('a controlled stop removes only its old hook ownership and can clean a retained-hook down baseline', () => {
+    const { journal } = fixture(),
+      down = deriveRoutingAvailabilityWithdrawal(journal, new Set(['awg1']), {
+        namespaceId,
+        stopInterfaceIds: new Set(['awg1']),
+      });
+    expect(
+      down.plan.interfaces.find((i) => i.interfaceId === 'awg1')
+    ).toMatchObject({ observedUp: false, hooksApplied: false });
+    expect(
+      down.plan.interfaces.find((i) => i.interfaceId === 'wg0')
+    ).toMatchObject({ observedUp: true, hooksApplied: true });
+    const missing = deriveRoutingAvailabilityWithdrawal(
+      journal,
+      new Set(['awg1']),
+      { namespaceId }
+    );
+    expect(
+      deriveRoutingAvailabilityWithdrawal(missing, new Set(['awg1']), {
+        namespaceId,
+        stopInterfaceIds: new Set(['awg1']),
+      }).plan
+    ).toEqual(down.plan);
+  });
 });
