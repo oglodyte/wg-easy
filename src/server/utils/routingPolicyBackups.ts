@@ -4,6 +4,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { atomicWriteFile } from '#server/utils/atomicFile';
+import {
+  parseManagedLifecycleIntent,
+  type ManagedLifecycleIntent,
+} from '#server/utils/managedLifecycleIntent';
 import { InterfaceNameSchema } from '#shared/utils/schemas';
 
 const OWNER = 'wg-easy routing policy config backup v1';
@@ -14,6 +18,7 @@ export function isRoutingPolicyBackupReference(value: string) {
 }
 type SavedConfigurations = {
   owner: typeof OWNER;
+  lifecycle?: ManagedLifecycleIntent;
   interfaces: {
     interfaceId: string;
     config: string | null;
@@ -60,7 +65,9 @@ function parse(value: unknown): SavedConfigurations {
     value.owner !== OWNER ||
     !('interfaces' in value) ||
     !Array.isArray(value.interfaces) ||
-    Object.keys(value).sort().join(',') !== 'interfaces,owner'
+    !['interfaces,owner', 'interfaces,lifecycle,owner'].includes(
+      Object.keys(value).sort().join(',')
+    )
   )
     throw new RoutingPolicyBackupError('invalid_manifest');
   const ids = new Set<string>();
@@ -91,7 +98,27 @@ function parse(value: unknown): SavedConfigurations {
         : {}),
     };
   });
-  return { owner: OWNER, interfaces };
+  const lifecycle =
+    'lifecycle' in value
+      ? parseManagedLifecycleIntent(value.lifecycle)
+      : undefined;
+  if (
+    lifecycle &&
+    (lifecycle.interfaces.length !== interfaces.length ||
+      lifecycle.interfaces.some((entry) => !ids.has(entry.interfaceId)) ||
+      interfaces.some((entry) => !('candidate' in entry)) ||
+      lifecycle.interfaces.some((intent) => {
+        const entry = interfaces.find(
+          (i) => i.interfaceId === intent.interfaceId
+        )!;
+        return (
+          (intent.previousUp && entry.config === null) ||
+          (intent.targetUp && entry.candidate === null)
+        );
+      }))
+  )
+    throw new RoutingPolicyBackupError('invalid_manifest');
+  return { owner: OWNER, interfaces, ...(lifecycle ? { lifecycle } : {}) };
 }
 
 /** Private durable bytes; recovery needs no surviving desired client/key rows. */
@@ -142,7 +169,11 @@ export class RoutingPolicyBackups {
     interfaceIds: readonly string[],
     {
       candidateConfigurations,
-    }: { candidateConfigurations?: ReadonlyMap<string, string | null> } = {}
+      lifecycleIntent,
+    }: {
+      candidateConfigurations?: ReadonlyMap<string, string | null>;
+      lifecycleIntent?: ManagedLifecycleIntent;
+    } = {}
   ) {
     const ids = [...new Set(interfaceIds)].sort();
     if (ids.some((id) => !InterfaceNameSchema.safeParse(id).success))
@@ -156,6 +187,18 @@ export class RoutingPolicyBackups {
       )
     )
       throw new RoutingPolicyBackupError('invalid_candidate');
+    const lifecycle =
+      lifecycleIntent === undefined
+        ? undefined
+        : parseManagedLifecycleIntent(lifecycleIntent);
+    if (
+      lifecycle &&
+      (lifecycle.interfaces.length !== ids.length ||
+        lifecycle.interfaces.some((i) => !knownIds.has(i.interfaceId)) ||
+        !candidateConfigurations ||
+        ids.some((id) => !candidateConfigurations.has(id)))
+    )
+      throw new RoutingPolicyBackupError('invalid_lifecycle_intent');
     await this.ownedDirectory();
     const interfaces: SavedConfigurations['interfaces'] = [];
     for (const interfaceId of ids) {
@@ -176,10 +219,15 @@ export class RoutingPolicyBackups {
           : {}),
       });
     }
+    const saved = parse({
+      owner: OWNER,
+      interfaces,
+      ...(lifecycle ? { lifecycle } : {}),
+    });
     const basename = `policy-${randomUUID()}.json`;
     const handle = await fs.open(this.reference(basename), 'wx', 0o600);
     try {
-      await handle.writeFile(JSON.stringify({ owner: OWNER, interfaces }));
+      await handle.writeFile(JSON.stringify(saved));
       await handle.sync();
     } finally {
       await handle.close();
@@ -201,6 +249,9 @@ export class RoutingPolicyBackups {
   /** Private in-memory bytes only; never expose through an API or diagnostics. */
   async readPrivateConfigurations(basename: string) {
     return (await this.read(basename)).interfaces;
+  }
+  async readPrivateLifecycleIntent(basename: string) {
+    return (await this.read(basename)).lifecycle;
   }
   async restore(
     basename: string,

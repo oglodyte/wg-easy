@@ -20,6 +20,53 @@ const oldConfig = '[Interface]\n# restricted fixture before replacement\n';
 const newConfig = '[Interface]\n# restricted fixture after replacement\n';
 
 describe('private routing configuration recovery backups', () => {
+  test('retains explicit restart intent for identical bytes and strictly binds it to both private generations', async () => {
+    const { root, backups } = await setup();
+    await fs.writeFile(path.join(root, 'wg0.conf'), oldConfig, { mode: 0o600 });
+    const intent = {
+      interfaces: [
+        { interfaceId: 'wg0', previousUp: true, targetUp: true, restart: true },
+      ],
+      hooks: [],
+    };
+    const reference = await backups.create(['wg0'], {
+      candidateConfigurations: new Map([['wg0', oldConfig]]),
+      lifecycleIntent: intent,
+    });
+    expect(
+      await new RoutingPolicyBackups(root).readPrivateLifecycleIntent(reference)
+    ).toEqual(intent);
+    await backups.restore(reference);
+    expect(await backups.readPrivateLifecycleIntent(reference)).toEqual(intent);
+    for (const options of [
+      { lifecycleIntent: intent },
+      {
+        candidateConfigurations: new Map([['wg0', null]]),
+        lifecycleIntent: intent,
+      },
+      {
+        candidateConfigurations: new Map([['wg0', oldConfig]]),
+        lifecycleIntent: {
+          ...intent,
+          interfaces: [{ ...intent.interfaces[0]!, interfaceId: 'other0' }],
+        },
+      },
+    ])
+      await expect(backups.create(['wg0'], options)).rejects.toThrow(
+        'Routing recovery backup:'
+      );
+    const file = path.join(backups.directory, reference),
+      saved = JSON.parse(await fs.readFile(file, 'utf8'));
+    saved.lifecycle.interfaces[0].command = 'opaque';
+    await fs.writeFile(file, JSON.stringify(saved));
+    await expect(backups.readPrivateLifecycleIntent(reference)).rejects.toThrow(
+      'invalid_or_missing_backup'
+    );
+    expect(await fs.readFile(path.join(root, 'wg0.conf'), 'utf8')).toBe(
+      oldConfig
+    );
+  });
+
   test('retains both private generations after reopen, including new and removed interface files', async () => {
     const { root, backups } = await setup();
     await fs.writeFile(path.join(root, 'wg0.conf'), oldConfig, { mode: 0o600 });

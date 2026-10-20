@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { provePolicyClassifier } from "./policy-checkpoint";
+import { proveManagedHookRecovery } from "./hook-checkpoint";
 
 import { execFile } from "../../src/server/utils/cmd";
 import { firewallTestExports } from "../../src/server/utils/firewall";
@@ -557,6 +558,19 @@ try {
     .filter((line) => foreign.includes(line));
   assert.deepEqual(after, foreign);
   await guard.verify(null);
+  checkpoint("guarded-hook-recovery");
+  const hookEvidence = await proveManagedHookRecovery({
+    server,
+    guard,
+    guardPlan: full,
+    denied: () => denied(),
+    unrelated: async () =>
+      assert.equal(
+        (await fetchFrom(ns.member, "172.31.201.2")).source,
+        "10.240.2.1",
+      ),
+    management: () => ping(ns.management, "192.0.2.1"),
+  });
   console.log(
     JSON.stringify({
       guardProbe: "PASS",
@@ -574,6 +588,7 @@ try {
       unmarkedForwarding: true,
       scopeCount: full.scopes.length,
       ...policyEvidence,
+      ...hookEvidence,
     }),
   );
 } finally {

@@ -10,6 +10,7 @@ import {
   type RoutingGuardScope,
 } from '#server/utils/routingGuard';
 import type { RoutingPolicyBackups } from '#server/utils/routingPolicyBackups';
+import type { ManagedLifecycleIntent } from '#server/utils/managedLifecycleIntent';
 import {
   parseRoutingPolicyJournal,
   parsePolicyBootstrapBaseline,
@@ -34,6 +35,7 @@ export type PolicyRecoveryDependencies = {
   guard: RoutingGuard;
   protectedPaths: readonly RoutingGuardScope[];
   candidateConfigurations?: ReadonlyMap<string, string | null>;
+  lifecycleIntent?: ManagedLifecycleIntent;
   beforeRestoreManagedState?: (
     previous: AppliedRoutingPolicyPlan,
     target: AppliedRoutingPolicyPlan,
@@ -236,6 +238,7 @@ export async function applyGuardedRoutingPolicy(
   ];
   const basename = await deps.backups.create(interfaces, {
     candidateConfigurations: deps.candidateConfigurations,
+    lifecycleIntent: deps.lifecycleIntent,
   });
   let pending: PendingPolicyTransition;
   try {
