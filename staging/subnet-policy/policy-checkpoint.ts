@@ -200,10 +200,16 @@ export async function provePolicyClassifier({
     /ownership is unknown/,
   );
   const after = await server("iptables-save", ["-t", "mangle"]);
-  assert.deepEqual(
-    after.split("\n").filter((l) => !l.startsWith("#")),
-    before.split("\n").filter((l) => !l.startsWith("#")),
-  );
+  // Background probe traffic may advance built-in-chain packet/byte counters.
+  // Retain exact table/chain identity, policy and every ordered rule body.
+  const policyBody = (save: string) =>
+    save
+      .split("\n")
+      .filter((line) => !line.startsWith("#"))
+      .map((line) =>
+        line.startsWith(":") ? line.replace(/\[\d+:\d+\]$/, "[0:0]") : line,
+      );
+  assert.deepEqual(policyBody(after), policyBody(before));
   await server("iptables", ["-t", "mangle", "-D", child, "-j", "ACCEPT"]);
   await guard.remove(closure);
   await new RoutingExecutor(server).verify(currentLinux, null);
