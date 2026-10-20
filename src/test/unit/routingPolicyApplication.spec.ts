@@ -393,6 +393,69 @@ describe('existing-coordinator policy application with real SQLite/private backu
     ).toBe(namespace.replace(':100', ':101'));
   });
 
+  test('a disabled group clears a healthy exit selection without stopping either interface', async () => {
+    const f = await application();
+    await f.app.promote(f.provider);
+    const clients = await f.clients.getAll(),
+      member = clients.find((c) => c.interfaceId === 'wg0')!,
+      exit = clients.find((c) => c.interfaceId === 'awg1')!;
+    await f.clients.update(exit.id, {
+      ...ClientUpdateSchema.parse(exit),
+      persistentKeepalive: 25,
+    });
+    const input = {
+        name: 'LAN',
+        enabled: true,
+        natEnabled: true,
+        allExitsDownPolicy: 'block' as const,
+        routedIpv4Prefixes: ['192.168.44.0/24'],
+        memberClientIds: [member.id],
+        exits: [{ clientId: exit.id, priority: 0, enabled: true }],
+      },
+      { group } = await f.groups.createAggregate(input);
+    f.ports.dump = async (id) =>
+      id === 'awg1'
+        ? [
+            {
+              publicKey: exit.publicKey,
+              preSharedKey: exit.preSharedKey,
+              endpoint: '192.0.2.30:62002',
+              allowedIps: '',
+              latestHandshakeAt: new Date(),
+              transferRx: 1,
+              transferTx: 1,
+              persistentKeepalive: 25,
+            },
+          ]
+        : [];
+    await f.app.reconcile(f.provider, []);
+    expect((await f.groups.get(group.id)).runtime).toMatchObject({
+      status: 'active',
+      appliedExitClientId: exit.id,
+    });
+    f.events.length = 0;
+    await f.groups.updateAggregate(group.id, { ...input, enabled: false });
+    expect((await f.app.reconcile(f.provider, [])).runtime.status).toBe(
+      'applied'
+    );
+    expect((await f.groups.get(group.id)).runtime).toMatchObject({
+      status: 'disabled',
+      selectedExitClientId: null,
+      appliedExitClientId: null,
+    });
+    expect(f.events.some((event) => /^(up|down):/.test(event))).toBe(false);
+    expect([...f.devices.keys()].sort()).toEqual(['awg1', 'wg0']);
+    expect(f.guard()).toBeNull();
+    await f.groups.updateAggregate(group.id, input);
+    expect((await f.app.reconcile(f.provider, [])).runtime.status).toBe(
+      'applied'
+    );
+    expect((await f.groups.get(group.id)).runtime).toMatchObject({
+      status: 'active',
+      appliedExitClientId: exit.id,
+    });
+  });
+
   test('all-down group evidence becomes active only after a fresh healthy observation and whole publication', async () => {
     const f = await application();
     await f.app.promote(f.provider);

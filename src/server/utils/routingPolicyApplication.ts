@@ -148,6 +148,12 @@ export class RoutingPolicyApplication {
       interfaces = new Map(generation.interfaces.map((i) => [i.name, i])),
       selections = new Map<number, number | null>();
     for (const group of generation.snapshot.groups) {
+      if (!group.enabled) {
+        selections.set(group.id, null);
+        for (const key of this.healthySince.keys())
+          if (key.startsWith(`${group.id}:`)) this.healthySince.delete(key);
+        continue;
+      }
       const current = generation.groupRuntime.find(
         (r) => r.groupId === group.id
       );
