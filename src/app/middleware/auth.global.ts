@@ -24,6 +24,13 @@ export default defineNuxtRouteMiddleware(async (to) => {
     return navigateTo('/login', { redirectCode: 302 });
   }
 
+  if (
+    to.path === '/clients/new' &&
+    !hasPermissions(authStore.userData, 'clients', 'create')
+  ) {
+    return abortNavigation(useNuxtApp().$i18n.t('client.creationNotAllowed'));
+  }
+
   // Check for admin access
   if (to.path.startsWith('/admin')) {
     if (!hasPermissions(authStore.userData, 'admin', 'any')) {

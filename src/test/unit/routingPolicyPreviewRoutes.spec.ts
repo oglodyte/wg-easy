@@ -188,7 +188,7 @@ describe('admin preview and fresh save contracts', () => {
     expect(fresh.status).toBe(200);
     expect((await fresh.json()).runtime.status).toBe('pending');
   });
-  test('fresh fingerprint is checked even without a revision and advanced groups remain truthfully read-only', async () => {
+  test('fresh fingerprint is checked even without a revision and complete advanced editor capability is available', async () => {
     const f = await fixture(),
       old = await f.groups.getStatus();
     await f.groups.updateAggregate(f.groupId, {
@@ -209,7 +209,7 @@ describe('admin preview and fresh save contracts', () => {
     expect(status.capabilities).toMatchObject({
       subnetPolicies: true,
       fullClientConfiguration: true,
-      advancedGroupEditing: false,
+      advancedGroupEditing: true,
     });
     expect(status.groups[0].baselineEditable).toBe(false);
     expect(status.groups[0].excludedIpv4Prefixes).toEqual(['192.168.0.0/16']);
@@ -218,6 +218,7 @@ describe('admin preview and fresh save contracts', () => {
   test('ordinary users cannot preview or save admin policy; version 1 reports activation unavailable', async () => {
     const f = await fixture(1),
       before = await f.groups.getStatus();
+    expect(before.capabilities.advancedGroupEditing).toBe(false);
     state.user = { id: 1, role: 2 };
     expect(
       (

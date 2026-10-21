@@ -567,7 +567,7 @@ export class RoutingGroupService {
         capabilities: {
           subnetPolicies: policy.version === 2,
           fullClientConfiguration: policy.version === 2,
-          advancedGroupEditing: false,
+          advancedGroupEditing: policy.version === 2,
         },
         desiredRevision: policy.runtime.desiredRevision,
         appliedRevision: policy.runtime.appliedRevision,

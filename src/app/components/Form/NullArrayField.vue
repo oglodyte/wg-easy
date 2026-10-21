@@ -17,6 +17,17 @@
         </BaseSecondaryButton>
       </div>
     </div>
+    <p v-if="allowEmpty && data?.length === 0" class="text-xs">
+      {{ $t('form.emptyOverride') }}
+    </p>
+    <div v-if="allowEmpty" class="flex flex-wrap gap-2 text-xs">
+      <BaseSecondaryButton type="button" @click="data = null">{{
+        $t('form.inherit')
+      }}</BaseSecondaryButton>
+      <BaseSecondaryButton type="button" @click="data = []">{{
+        $t('form.clearOverride')
+      }}</BaseSecondaryButton>
+    </div>
     <div class="mt-2">
       <BasePrimaryButton type="button" class="rounded-lg" @click="add">
         {{ $t('form.add') }}
@@ -27,7 +38,11 @@
 
 <script lang="ts" setup>
 const data = defineModel<string[] | null>();
-defineProps<{ emptyText?: string[]; name: string }>();
+const props = defineProps<{
+  emptyText?: string[];
+  name: string;
+  allowEmpty?: boolean;
+}>();
 
 function update(e: Event, i: number) {
   const v = (e.target as HTMLInputElement).value;
@@ -53,7 +68,7 @@ function del(i: number) {
     return;
   }
   data.value.splice(i, 1);
-  if (data.value.length === 0) {
+  if (data.value.length === 0 && !props.allowEmpty) {
     data.value = null;
   }
 }

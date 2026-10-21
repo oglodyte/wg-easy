@@ -1,11 +1,12 @@
 <template>
-  <DialogRoot :modal="true" @update:open="updateOpen">
+  <DialogRoot :open="open" :modal="true" @update:open="updateOpen">
     <DialogTrigger :class="triggerClass"><slot name="trigger" /></DialogTrigger>
     <DialogPortal>
       <DialogOverlay
         class="fixed inset-0 z-30 bg-gray-500 opacity-75 dark:bg-black dark:opacity-50"
       />
       <DialogContent
+        :class="contentClass"
         class="fixed left-1/2 top-1/2 z-[100] max-h-[85vh] w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-md bg-white p-6 shadow-2xl focus:outline-none dark:bg-neutral-700"
       >
         <DialogTitle
@@ -14,6 +15,7 @@
           <slot name="title" />
         </DialogTitle>
         <DialogDescription
+          as="div"
           class="mb-5 mt-2 text-sm leading-normal text-gray-500 dark:text-neutral-300"
         >
           <slot name="description" />
@@ -27,7 +29,7 @@
 </template>
 
 <script lang="ts" setup>
-defineProps<{ triggerClass?: string }>();
+defineProps<{ triggerClass?: string; open?: boolean; contentClass?: string }>();
 
 const emit = defineEmits<{
   'update:open': [open: boolean];
