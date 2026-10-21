@@ -366,6 +366,12 @@ try {
   const broadOutput = buildRoutingGuard(
     [
       {
+        direction: "input",
+        inputInterface: "awg1",
+        source: "0.0.0.0/0",
+        destination: "0.0.0.0/0",
+      },
+      {
         direction: "output",
         outputInterface: "awg1",
         source: "0.0.0.0/0",
@@ -664,6 +670,7 @@ try {
       residualGuardVerified: true,
       managementAndLocalBaseReachable: true,
       observedReplyDeviceAndMappedSockets: true,
+      allIndependentIngressDevices: true,
       foreignRulesOrderPreserved: true,
       unrelatedForwarding: true,
       legacyPrefixGuard: true,

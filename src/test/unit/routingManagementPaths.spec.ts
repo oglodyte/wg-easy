@@ -43,10 +43,72 @@ describe('management/control observation', () => {
       })
     ).not.toThrow();
     expect(() =>
+      buildRoutingGuard(
+        [{ ...scope, direction: 'input', inputInterface: 'wg0' }],
+        { protectedPaths: paths }
+      )
+    ).not.toThrow();
+    expect(() =>
       buildRoutingGuard([{ ...scope, outputInterface: 'eth0' }], {
         protectedPaths: paths,
       })
     ).toThrowError('management_collision');
+  });
+
+  test('protects asymmetric independent ingress and refuses managed or unknown control endpoints', async () => {
+    const paths = await observeRoutingManagementPaths(
+      new Set(['wg0']),
+      async (command, args, options) =>
+        command === 'ip' && args.includes('address')
+          ? JSON.stringify([
+              ...JSON.parse(address),
+              {
+                ifname: 'eth1',
+                addr_info: [
+                  { family: 'inet', local: '198.18.0.2', prefixlen: 24 },
+                ],
+              },
+            ])
+          : runner()(command, args, options)
+    );
+    expect(
+      paths
+        .filter(
+          (p) => p.direction === 'input' && p.source === '198.51.100.9/32'
+        )
+        .map((p) => p.inputInterface)
+        .sort()
+    ).toEqual(['eth0', 'eth1']);
+    for (const [local, replyDevice] of [
+      ['10.8.0.1', 'eth0'],
+      ['203.0.113.8', 'eth0'],
+      ['192.0.2.2', 'wg0'],
+    ]) {
+      const guarded = await observeRoutingManagementPaths(
+        new Set(['wg0']),
+        async (command, args, options) =>
+          command === 'ip' && args.includes('route')
+            ? JSON.stringify([{ dev: replyDevice }])
+            : runner(`0 0 ${local}:51821 198.51.100.9:40000`)(
+                command,
+                args,
+                options
+              )
+      );
+      expect(() =>
+        buildRoutingGuard(
+          [
+            {
+              direction: 'input',
+              inputInterface: 'wg0',
+              source: '0.0.0.0/0',
+              destination: '0.0.0.0/0',
+            },
+          ],
+          { protectedPaths: guarded }
+        )
+      ).toThrowError('management_collision');
+    }
   });
 
   test('normalizes mapped IPv4 sockets and refuses missing or ambiguous reply devices', async () => {

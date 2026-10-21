@@ -41,35 +41,37 @@ export async function observeRoutingManagementPaths(
       sockets = await run('ss', ['-H', '-tn', 'state', 'established'], {
         log: false,
       }),
-      scopes: RoutingGuardScope[] = [];
+      scopes: RoutingGuardScope[] = [],
+      independentDevices = new Set<string>(),
+      independentAddresses = new Set<string>();
     if (!Array.isArray(addresses)) throw new Error();
     const pair = (
       local: string,
       remote: string,
-      inputInterface?: string,
-      outputInterface = inputInterface
+      inputInterfaces: readonly (string | undefined)[],
+      outputInterface: string
     ) => {
       const family = parseCidr(local).version;
       if (parseCidr(remote).version !== family) throw new Error();
-      scopes.push(
-        {
+      for (const inputInterface of inputInterfaces)
+        scopes.push({
           direction: 'input',
           ...(inputInterface ? { inputInterface } : {}),
           source: remote,
           destination: local,
-        },
-        {
-          direction: 'output',
-          ...(outputInterface ? { outputInterface } : {}),
-          source: local,
-          destination: remote,
-        }
-      );
+        });
+      scopes.push({
+        direction: 'output',
+        outputInterface,
+        source: local,
+        destination: remote,
+      });
     };
     for (const link of addresses) {
       const device = NetworkDeviceSchema.parse(link.ifname);
       if (!Array.isArray(link.addr_info)) throw new Error();
       if (managed.has(device)) continue;
+      independentDevices.add(device);
       for (const addr of link.addr_info) {
         if (!['inet', 'inet6'].includes(addr.family)) continue;
         const local = host(addr.local),
@@ -80,7 +82,13 @@ export async function observeRoutingManagementPaths(
           addr.prefixlen > maximum
         )
           throw new Error();
-        pair(local, normalizeCidr(`${addr.local}/${addr.prefixlen}`), device);
+        independentAddresses.add(local);
+        pair(
+          local,
+          normalizeCidr(`${addr.local}/${addr.prefixlen}`),
+          [device],
+          device
+        );
       }
     }
     for (const line of sockets.split('\n').filter((l) => l.trim())) {
@@ -111,8 +119,17 @@ export async function observeRoutingManagementPaths(
       );
       if (!Array.isArray(routes) || routes.length !== 1) throw new Error();
       const device = NetworkDeviceSchema.parse(routes[0]?.dev);
-      // The reply route proves OUTPUT's device, not symmetric INPUT ingress.
-      pair(local, remote, undefined, device);
+      // Preserve every independent ingress, including asymmetric paths. The
+      // reply route does not prove a single INPUT device. Managed/unknown
+      // control endpoints retain conservative protection across all devices.
+      const independent =
+        independentAddresses.has(local) && !managed.has(device);
+      pair(
+        local,
+        remote,
+        independent ? [...independentDevices] : [undefined],
+        device
+      );
     }
     if (!scopes.length) throw new Error();
     return scopes;
