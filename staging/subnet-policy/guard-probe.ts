@@ -8,6 +8,7 @@ import { proveGuardRebase } from "./guard-rebase-checkpoint";
 
 import { execFile } from "../../src/server/utils/cmd";
 import { firewallTestExports } from "../../src/server/utils/firewall";
+import { observeRoutingManagementPaths } from "../../src/server/utils/routingManagementPaths";
 import {
   buildRoutingGuard,
   RoutingGuard,
@@ -335,6 +336,77 @@ try {
     .filter((line) => line.startsWith("-A "));
   const sink = start(ns.sink, httpCode);
   await sink.ready();
+  checkpoint("observed-control-reply-device");
+  const controlServer = start(
+    ns.server,
+    `const net=require('node:net');net.createServer(s=>{s.on('error',()=>{});s.on('data',d=>s.write(d));}).listen(18083,'::',()=>console.log(JSON.stringify({ready:true})));`,
+  );
+  await controlServer.ready();
+  const control = start(
+    ns.server,
+    streamCode
+      .replace("8081", "18083")
+      .replace("172.31.200.2", "::ffff:127.0.0.1"),
+  );
+  await control.ready();
+  const observedControl = await observeRoutingManagementPaths(
+    new Set(["wg0", "awg1"]),
+    server,
+  );
+  assert(
+    observedControl.some(
+      (p) =>
+        p.direction === "output" &&
+        p.outputInterface === "lo" &&
+        p.source === "127.0.0.1/32" &&
+        p.destination === "127.0.0.1/32",
+    ),
+    "mapped control socket must use its real IPv4 loopback reply device",
+  );
+  const broadOutput = buildRoutingGuard(
+    [
+      {
+        direction: "output",
+        outputInterface: "awg1",
+        source: "0.0.0.0/0",
+        destination: "0.0.0.0/0",
+      },
+    ],
+    { protectedPaths: observedControl },
+  );
+  assert.throws(
+    () =>
+      buildRoutingGuard(
+        [
+          {
+            direction: "output",
+            outputInterface: "lo",
+            source: "0.0.0.0/0",
+            destination: "0.0.0.0/0",
+          },
+        ],
+        { protectedPaths: observedControl },
+      ),
+    /management_collision/,
+  );
+  const controlBytes = async () => {
+    const before = control.events.length;
+    control.child.stdin.write("snapshot\n");
+    await until(
+      () => control.events.length > before,
+      "control snapshot timeout",
+    );
+    return Number(control.events.at(-1)!.received);
+  };
+  await guard.install(broadOutput);
+  await guard.verify(broadOutput);
+  const controlBefore = await controlBytes();
+  await pause(200);
+  assert((await controlBytes()) > controlBefore, "control stream interrupted");
+  await denied(ns.server);
+  await ping(ns.management, "192.0.2.1");
+  await guard.remove(broadOutput);
+  await guard.verify(null);
   checkpoint("baseline");
   sources.push((await fetchFrom()).source);
   assert.equal(sources.at(-1), "10.240.1.2");
@@ -574,8 +646,11 @@ try {
   });
   checkpoint("persisted-guard-rebase");
   const rebaseEvidence = await proveGuardRebase({
-    server, previous: full, protectedPaths,
-    denied: () => denied(), management: () => ping(ns.management, "192.0.2.1"),
+    server,
+    previous: full,
+    protectedPaths,
+    denied: () => denied(),
+    management: () => ping(ns.management, "192.0.2.1"),
   });
   console.log(
     JSON.stringify({
@@ -588,6 +663,7 @@ try {
       clientFirewallGuardFirst: true,
       residualGuardVerified: true,
       managementAndLocalBaseReachable: true,
+      observedReplyDeviceAndMappedSockets: true,
       foreignRulesOrderPreserved: true,
       unrelatedForwarding: true,
       legacyPrefixGuard: true,

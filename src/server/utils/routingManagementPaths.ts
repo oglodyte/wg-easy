@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 
 import { normalizeCidr, parseCidr } from 'cidr-tools';
+import { stringifyIp } from 'ip-bigint';
 
 import { execFile } from '#server/utils/cmd';
 import { RoutingPolicyJournalError } from '#server/utils/routingPolicyJournal';
@@ -9,8 +10,15 @@ import type { AppliedRoutingPolicyPlan } from '#shared/types/routingPolicy';
 import { NetworkDeviceSchema } from '#shared/utils/schemas';
 
 function host(address: string) {
-  const family = isIP(address);
+  let family = isIP(address);
   if (!family) throw new Error();
+  if (family === 6) {
+    const numeric = parseCidr(`${address}/128`).start;
+    if (numeric >> 32n === 0xffffn) {
+      address = stringifyIp({ number: numeric & 0xffffffffn, version: 4 });
+      family = 4;
+    }
+  }
   return `${address}/${family === 4 ? 32 : 128}`;
 }
 function endpoint(value: string) {
@@ -35,19 +43,24 @@ export async function observeRoutingManagementPaths(
       }),
       scopes: RoutingGuardScope[] = [];
     if (!Array.isArray(addresses)) throw new Error();
-    const pair = (local: string, remote: string, device?: string) => {
+    const pair = (
+      local: string,
+      remote: string,
+      inputInterface?: string,
+      outputInterface = inputInterface
+    ) => {
       const family = parseCidr(local).version;
       if (parseCidr(remote).version !== family) throw new Error();
       scopes.push(
         {
           direction: 'input',
-          ...(device ? { inputInterface: device } : {}),
+          ...(inputInterface ? { inputInterface } : {}),
           source: remote,
           destination: local,
         },
         {
           direction: 'output',
-          ...(device ? { outputInterface: device } : {}),
+          ...(outputInterface ? { outputInterface } : {}),
           source: local,
           destination: remote,
         }
@@ -77,7 +90,29 @@ export async function observeRoutingManagementPaths(
         !fields.slice(0, 2).every((n) => /^[0-9]+$/.test(n))
       )
         throw new Error();
-      pair(host(endpoint(fields[2]!)), host(endpoint(fields[3]!)));
+      const local = host(endpoint(fields[2]!)),
+        remote = host(endpoint(fields[3]!)),
+        family = parseCidr(local).version;
+      if (parseCidr(remote).version !== family) throw new Error();
+      const routes: unknown = JSON.parse(
+        await run(
+          'ip',
+          [
+            '-j',
+            `-${family}`,
+            'route',
+            'get',
+            remote.split('/')[0]!,
+            'from',
+            local.split('/')[0]!,
+          ],
+          { log: false }
+        )
+      );
+      if (!Array.isArray(routes) || routes.length !== 1) throw new Error();
+      const device = NetworkDeviceSchema.parse(routes[0]?.dev);
+      // The reply route proves OUTPUT's device, not symmetric INPUT ingress.
+      pair(local, remote, undefined, device);
     }
     if (!scopes.length) throw new Error();
     return scopes;

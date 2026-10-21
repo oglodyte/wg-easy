@@ -20,9 +20,72 @@ const address = JSON.stringify([
 ]);
 const runner =
   (sockets = '0 0 192.0.2.2:51821 198.51.100.9:40000'): typeof execFile =>
-  async (command) =>
-    command === 'ip' ? address : sockets;
+  async (command, args) =>
+    command === 'ip'
+      ? args.includes('route')
+        ? JSON.stringify([{ dev: 'eth0' }])
+        : address
+      : sockets;
 describe('management/control observation', () => {
+  test('protects the actual control reply device without blocking unrelated managed output', async () => {
+    const paths = await observeRoutingManagementPaths(
+      new Set(['wg0']),
+      runner()
+    );
+    const scope = {
+      direction: 'output' as const,
+      source: '0.0.0.0/0',
+      destination: '0.0.0.0/0',
+    };
+    expect(() =>
+      buildRoutingGuard([{ ...scope, outputInterface: 'wg0' }], {
+        protectedPaths: paths,
+      })
+    ).not.toThrow();
+    expect(() =>
+      buildRoutingGuard([{ ...scope, outputInterface: 'eth0' }], {
+        protectedPaths: paths,
+      })
+    ).toThrowError('management_collision');
+  });
+
+  test('normalizes mapped IPv4 sockets and refuses missing or ambiguous reply devices', async () => {
+    const calls: string[][] = [];
+    const paths = await observeRoutingManagementPaths(
+      new Set(['wg0']),
+      async (command, args) => {
+        if (command === 'ip' && args.includes('route')) {
+          calls.push([...args]);
+          return JSON.stringify([{ dev: 'lo' }]);
+        }
+        return command === 'ip'
+          ? address
+          : '0 0 [::ffff:127.0.0.1]:51821 [::ffff:127.0.0.1]:40000';
+      }
+    );
+    expect(calls).toEqual([
+      ['-j', '-4', 'route', 'get', '127.0.0.1', 'from', '127.0.0.1'],
+    ]);
+    expect(paths.at(-1)).toEqual({
+      direction: 'output',
+      outputInterface: 'lo',
+      source: '127.0.0.1/32',
+      destination: '127.0.0.1/32',
+    });
+    for (const routes of [[], [{}], [{ dev: 'eth0' }, { dev: 'eth1' }]])
+      await expect(
+        observeRoutingManagementPaths(
+          new Set(['wg0']),
+          async (command, args) =>
+            command === 'ip'
+              ? args.includes('route')
+                ? JSON.stringify(routes)
+                : address
+              : '0 0 192.0.2.2:51821 198.51.100.9:40000'
+        )
+      ).rejects.toMatchObject({ code: 'management_observation_unavailable' });
+  });
+
   test('protects non-managed connected networks and remote established TCP endpoints', async () => {
     const paths = await observeRoutingManagementPaths(
       new Set(['wg0']),
