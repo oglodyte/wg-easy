@@ -48,6 +48,34 @@ const fields = {
   preferredConfigFormat: 'amneziawg' as const,
 };
 describe('complete client configuration transactions', () => {
+  test('automatic creation and explicit addresses retain the assigned interface IPv6 policy', async () => {
+    const f = await fixture();
+    await f.db
+      .update(schema.wgInterface)
+      .set({ ipv6Cidr: 'fd42:8::/64' })
+      .execute();
+    const [created] = await f.clients.create({ name: 'automatic addresses' });
+    const row = (await f.clients.get(created!.clientId))!;
+    expect(row.ipv6Address).toBe('fd42:8::2');
+    const before = JSON.stringify(await f.db.query.client.findMany()),
+      revision = (await f.db.query.runtimeReconciliationState.findFirst())!
+        .desiredRevision;
+    await expect(
+      f.clients.create({ name: 'unsupported opt-out', ipv6Address: null })
+    ).rejects.toMatchObject({ code: 'invalid_address', field: 'ipv6Address' });
+    await expect(
+      f.clients.update(row.id, {
+        ...ClientUpdateSchema.parse(row),
+        ipv6Address: null,
+      })
+    ).rejects.toMatchObject({ code: 'invalid_address', field: 'ipv6Address' });
+    expect(JSON.stringify(await f.db.query.client.findMany()) === before).toBe(
+      true
+    );
+    expect(
+      (await f.db.query.runtimeReconciliationState.findFirst())?.desiredRevision
+    ).toBe(revision);
+  });
   test('creates with an independently generated private key and every supported override, preserving explicit nulls', async () => {
     const f = await fixture(),
       privateKey = syntheticKey(),

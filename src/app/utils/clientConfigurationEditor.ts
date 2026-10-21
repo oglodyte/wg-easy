@@ -139,12 +139,11 @@ export function blankClientConfiguration(): ClientConfigurationDraft {
 export function clientCreatePayload(
   data: ClientConfigurationDraft,
   credentials: CredentialDraft,
-  options: { interfaceId: string; disableIpv6: boolean; overrideAwg: boolean }
+  options: { interfaceId: string; overrideAwg: boolean }
 ) {
   const body = clientEditPayload(data, credentials);
   if (!data.ipv4Address.trim()) delete body.ipv4Address;
-  if (options.disableIpv6) body.ipv6Address = null;
-  else if (!data.ipv6Address) delete body.ipv6Address;
+  if (!data.ipv6Address) delete body.ipv6Address;
   if (data.mtu === null) delete body.mtu;
   if (data.persistentKeepalive === null) delete body.persistentKeepalive;
   const awgFields = ['jC', 'jMin', 'jMax', 'i1', 'i2', 'i3', 'i4', 'i5'];

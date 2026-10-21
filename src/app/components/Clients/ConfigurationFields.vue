@@ -21,15 +21,9 @@
     <p v-if="creating" class="col-span-full text-sm">
       {{ $t('client.automaticAddresses') }}
     </p>
-    <FormSwitchField
-      v-if="creating"
-      id="disableIpv6"
-      v-model="disableIpv6"
-      :label="$t('client.disableIpv6')"
-    />
+    <p class="col-span-full text-sm">{{ $t('client.ipv6InterfacePolicy') }}</p>
     <FormTextField id="ipv4Address" v-model="data.ipv4Address" label="IPv4" />
     <FormTextField
-      v-if="!creating || !disableIpv6"
       id="ipv6Address"
       :model-value="data.ipv6Address ?? ''"
       label="IPv6"
@@ -201,6 +195,5 @@
 import type { ClientConfigurationDraft } from '~/utils/clientConfigurationEditor';
 defineProps<{ creating?: boolean; awgEnabled: boolean }>();
 const data = defineModel<T>({ required: true });
-const disableIpv6 = defineModel<boolean>('disableIpv6', { default: false });
 const overrideAwg = defineModel<boolean>('overrideAwg', { default: false });
 </script>

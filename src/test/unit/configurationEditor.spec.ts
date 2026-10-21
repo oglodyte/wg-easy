@@ -75,12 +75,11 @@ describe('operator configuration drafts', () => {
     credentials.privateKey = '';
     expect(credentialsValid(credentials)).toBe(false);
   });
-  test('creation defaults remain omitted while zero, explicit empty overrides and disabled IPv6 survive', () => {
+  test('creation inherits automatic addresses while preserving explicit addresses, zero and empty overrides', () => {
     const data = blankClientConfiguration();
     data.name = 'operator';
     const options = {
       interfaceId: 'wg0',
-      disableIpv6: false,
       overrideAwg: false,
     };
     const first = ClientConfigurationCreateSchema.parse(
@@ -98,12 +97,11 @@ describe('operator configuration drafts', () => {
     const next = ClientConfigurationCreateSchema.parse(
       clientCreatePayload(data, blankCredentials(), {
         ...options,
-        disableIpv6: true,
         overrideAwg: true,
       })
     );
     expect(next.persistentKeepalive).toBe(0);
-    expect(next.ipv6Address).toBeNull();
+    expect(next.ipv6Address).toBe('fd42::2');
     expect(next.dns).toEqual([]);
     expect(next.allowedIps).toBeNull();
     expect(next.jMin).toBe(0);

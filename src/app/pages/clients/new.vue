@@ -36,7 +36,6 @@
           </FormGroup>
           <ClientsConfigurationFields
             v-model="data"
-            v-model:disable-ipv6="disableIpv6"
             v-model:override-awg="overrideAwg"
             creating
             :awg-enabled="awgEnabled"
@@ -88,7 +87,6 @@ const awgEnabled = computed(
 );
 const data = ref(blankClientConfiguration());
 const credentials = ref(blankCredentials());
-const disableIpv6 = ref(false);
 const overrideAwg = ref(false);
 const busy = ref(false);
 const formError = ref('');
@@ -105,7 +103,6 @@ async function create() {
       method: 'post',
       body: clientCreatePayload(data.value, credentials.value, {
         interfaceId: interfaceId.value,
-        disableIpv6: disableIpv6.value,
         overrideAwg: overrideAwg.value && awgEnabled.value,
       }),
     });

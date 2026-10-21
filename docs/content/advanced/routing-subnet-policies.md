@@ -56,6 +56,9 @@ replacement or explicit clearing separately. Editing keeps profile IDs and
 routing references. wg-easy does not push updated keys or configuration to the
 remote device. Keep independent management access while applying them.
 
+Address overrides stay inside the selected interface's networks. Creation
+assigns blank addresses automatically; IPv4-only interfaces leave IPv6 empty.
+
 Compare desired and applied revisions after saving. A saved configuration may
 still be pending or degraded. Review interface/group errors and any pending
 transition before relying on the new path. Database configuration alone does
