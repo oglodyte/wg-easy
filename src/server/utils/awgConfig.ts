@@ -8,6 +8,8 @@ export function generateAwgParameterLines(
   }
 
   return Object.entries(parameters)
-    .filter(([_, value]) => !!value)
+    .filter(
+      ([_, value]) => value !== null && value !== undefined && value !== ''
+    )
     .map(([key, value]) => `${key} = ${value}`);
 }

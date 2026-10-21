@@ -160,4 +160,36 @@ describe('Phase 3 assigned-interface config generation', () => {
       })
     ).toThrow('WireGuard export is unavailable for interface awg1');
   });
+
+  test('preserves explicit zero AWG values in client and server configurations', () => {
+    const awgInterface = {
+      ...compatibilityInterface,
+      awgParametersEnabled: true,
+      defaultConfigFormat: 'amneziawg',
+      privateKey: 'server-private',
+      port: 51831,
+      mtu: 1280,
+      ipv4Cidr: '10.252.0.0/24',
+      ipv6Cidr: 'fd42:252::/64',
+      device: 'eth0',
+      jC: 7,
+      jMin: 0,
+      jMax: 1000,
+    } as InterfaceType;
+    const profile = { ...client, jMin: 0 };
+    expect(
+      wg.generateClientConfig(awgInterface, userConfig, profile)
+    ).toContain('\nJmin = 0\n');
+    expect(
+      wg.generateServerInterface(awgInterface, {
+        preUp: '',
+        postUp: '',
+        preDown: '',
+        postDown: '',
+      } as HooksType)
+    ).toContain('\nJmin = 0\n');
+    expect(
+      wg.generateClientConfig(compatibilityInterface, userConfig, profile)
+    ).not.toContain('Jmin');
+  });
 });
