@@ -464,6 +464,7 @@ import {
   mutationErrorData,
   parsePrefixList,
   previewMatches,
+  routingStatusKey,
   withPrivateExclusions,
 } from '~/utils/routingEditor';
 
@@ -542,7 +543,7 @@ type ApiRoutingSettings = {
   routingExitFailbackDelaySeconds: number;
 };
 
-const { t, te } = useI18n();
+const { t } = useI18n();
 const toast = useToast();
 const globalStore = useGlobalStore();
 const {
@@ -847,10 +848,7 @@ function rawStatus(group: Group) {
   return group.runtime?.status ?? (group.enabled ? 'pending' : 'disabled');
 }
 function statusLabel(group: Group) {
-  const status = rawStatus(group);
-  return te(`admin.routing.states.${status}`)
-    ? t(`admin.routing.states.${status}`)
-    : t('admin.routing.states.unavailable');
+  return t(routingStatusKey(rawStatus(group)));
 }
 
 function statusClass(group: Group) {

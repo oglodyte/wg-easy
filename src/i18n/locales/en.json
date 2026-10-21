@@ -384,7 +384,8 @@
         "pending": "Pending",
         "awaiting_exit": "Awaiting exit",
         "selected_pending": "Selected; pending application",
-        "unavailable": "Unavailable"
+        "unavailable": "Unavailable",
+        "draft_invalid": "Draft needs repair"
       },
       "counts": {
         "intervals": "Destination intervals",

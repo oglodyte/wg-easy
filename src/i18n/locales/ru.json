@@ -273,7 +273,8 @@
         "pending": "Ожидание",
         "awaiting_exit": "Ожидание выхода",
         "selected_pending": "Выбрано; ожидается применение",
-        "unavailable": "Недоступно"
+        "unavailable": "Недоступно",
+        "draft_invalid": "Черновик требует исправления"
       },
       "counts": {
         "intervals": "Интервалы назначений",

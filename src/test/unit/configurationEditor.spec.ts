@@ -12,6 +12,7 @@ import {
 import {
   parsePrefixList,
   previewMatches,
+  routingStatusKey,
   withPrivateExclusions,
 } from '../../app/utils/routingEditor';
 
@@ -19,6 +20,19 @@ import { ClientConfigurationCreateSchema } from '#db/repositories/client/types';
 import { RoutingGroupSchema } from '#shared/utils/schemas';
 
 describe('operator configuration drafts', () => {
+  test('runtime states retain truthful translation keys when the locale uses English fallback', () => {
+    expect(routingStatusKey('active')).toBe('admin.routing.states.active');
+    expect(routingStatusKey('host_fallback')).toBe('admin.routing.states.host');
+    expect(routingStatusKey('draft_invalid')).toBe(
+      'admin.routing.states.draft_invalid'
+    );
+    expect(routingStatusKey('unknown')).toBe(
+      'admin.routing.states.unavailable'
+    );
+    expect(routingStatusKey('constructor')).toBe(
+      'admin.routing.states.unavailable'
+    );
+  });
   test('untouched credential fields remain omitted, explicit PSK clearing and replacement are distinct', () => {
     const source = {
       ...blankClientConfiguration(),
