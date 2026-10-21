@@ -102,6 +102,24 @@ async function fixture(version = 2) {
   };
 }
 describe('admin preview and fresh save contracts', () => {
+  test('invalid included or excluded lengths reject preview and mutations without writes', async () => {
+    const f = await fixture(),
+      before = await f.groups.getStatus();
+    for (const field of ['routedIpv4Prefixes', 'excludedIpv4Prefixes']) {
+      for (const prefix of ['192.0.2.8/33', '192.0.2.8/-1']) {
+        const group = { ...f.group, [field]: [prefix] };
+        for (const [url, body] of [
+          ['/api/admin/routing-groups/preview', { groupId: f.groupId, group }],
+          ['/api/admin/routing-groups', group],
+          [`/api/admin/routing-groups/${f.groupId}`, group],
+        ] as const) {
+          expect((await f.request('POST', url, body)).status).toBe(400);
+          expect(await f.groups.getStatus()).toEqual(before);
+        }
+      }
+    }
+    expect(WireGuard.requestReconcile).not.toHaveBeenCalled();
+  });
   test('preview reads the compiler’s original rank, returns bounded safe diagnostics and makes no writes or runtime request', async () => {
     const f = await fixture(),
       before = await f.groups.getStatus(),

@@ -8,12 +8,10 @@
         )
       }}
     </p>
-    <FormInfoField
-      v-if="publicKey && !data.replacePrivateKey"
-      id="publicKey"
-      :label="$t('client.publicKey')"
-      :data="publicKey"
-    />
+    <template v-if="publicKey && !data.replacePrivateKey">
+      <label for="publicKey">{{ $t('client.publicKey') }}</label>
+      <span id="publicKey" class="min-w-0 break-all">{{ publicKey }}</span>
+    </template>
     <FormSwitchField
       id="replacePrivateKey"
       v-model="data.replacePrivateKey"

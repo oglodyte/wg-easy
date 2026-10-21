@@ -43,6 +43,22 @@ describe('shared Phase 1 schemas', () => {
     expect(() => RoutingGroupPrefixSchema.parse('192.0.2.8')).toThrow();
   });
 
+  test('rejects invalid prefix lengths before the CIDR parser can clamp them', () => {
+    for (const length of ['33', '-1', '3.5', '1e1', '']) {
+      const cidr = `192.0.2.8/${length}`;
+      expect(RoutingGroupPrefixSchema.safeParse(cidr).success).toBe(false);
+      expect(Ipv4CidrSchema.safeParse(cidr).success).toBe(false);
+      expect(ServerAllowedIpsSchema.safeParse([cidr]).success).toBe(false);
+    }
+    for (const cidr of ['fd42::/129', 'fd42::/-1', 'fd42::/64.5']) {
+      expect(Ipv6CidrSchema.safeParse(cidr).success).toBe(false);
+      expect(ServerAllowedIpsSchema.safeParse([cidr]).success).toBe(false);
+    }
+    expect(ServerAllowedIpsSchema.parse(['fd42::123/128'])).toEqual([
+      'fd42::123/128',
+    ]);
+  });
+
   test('locks config-format and routing-slot contracts', () => {
     expect(ConfigFormatSchema.parse('auto')).toBe('auto');
     expect(ConfigFormatSchema.parse('wireguard')).toBe('wireguard');

@@ -10,7 +10,11 @@ import type {
   PolicyGroup,
   PolicySnapshot,
 } from '#shared/types/routingPolicy';
-import { InterfaceNameSchema, RoutingSlotSchema } from '#shared/utils/schemas';
+import {
+  InterfaceNameSchema,
+  RoutingGroupPrefixSchema,
+  RoutingSlotSchema,
+} from '#shared/utils/schemas';
 
 export const POLICY_LIMITS = {
   prefixes: 64,
@@ -67,12 +71,12 @@ function limit(
 }
 function prefix(value: string): Prefix {
   try {
-    const p = parseCidr(value);
-    if (p.version !== 4 || !p.prefixPresent) throw new Error();
+    const cidr = RoutingGroupPrefixSchema.parse(value);
+    const p = parseCidr(cidr);
     return {
       start: Number(p.start),
       end: Number(p.end) + 1,
-      cidr: normalizeCidr(value),
+      cidr,
       rank: Number(p.prefix),
     };
   } catch {

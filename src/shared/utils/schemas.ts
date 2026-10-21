@@ -24,6 +24,15 @@ function hasUsableServerAndClientAddresses(value: string) {
 
 function isCidrVersion(value: string, version: 4 | 6) {
   try {
+    // cidr-tools clamps out-of-range lengths. Validate the operator's actual
+    // suffix before parsing so an invalid policy cannot silently change scope.
+    const parts = value.split('/');
+    if (
+      parts.length !== 2 ||
+      !/^\d{1,3}$/.test(parts[1]!) ||
+      Number(parts[1]) > (version === 4 ? 32 : 128)
+    )
+      return false;
     const parsed = parseCidr(value);
     return parsed.version === version && parsed.prefixPresent;
   } catch {
@@ -73,13 +82,10 @@ export const RoutingGroupPrefixSchema = z
 
 export const ServerAllowedIpPrefixSchema = z
   .string()
-  .refine((value) => {
-    try {
-      return parseCidr(value).prefixPresent;
-    } catch {
-      return false;
-    }
-  }, 'zod.client.serverAllowedIps')
+  .refine(
+    (value) => isCidrVersion(value, 4) || isCidrVersion(value, 6),
+    'zod.client.serverAllowedIps'
+  )
   .refine(
     (value) => {
       try {

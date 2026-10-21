@@ -86,6 +86,16 @@ const ip = (value: string) =>
 const privatePrefixes = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
 
 describe('inactive subnet policy compiler', () => {
+  test('rejects invalid lengths in raw snapshots rather than changing policy scope', () => {
+    failure(state([group(1, ['192.0.2.8/33'])]), 'invalid_ipv4_prefix');
+    failure(
+      state([{ ...group(1), excludedIpv4Prefixes: ['192.0.2.8/-1'] }]),
+      'invalid_ipv4_prefix'
+    );
+    const snapshot = state([group(1)]);
+    snapshot.interfaces[0]!.ipv4Cidr = '10.0.0.0/33';
+    failure(snapshot, 'invalid_ipv4_prefix');
+  });
   test('aligned members permit a LAN backup on the internet output interface', () => {
     const s = state([group(1), group(2, ['10.20.0.0/16'], [1, 2], [20, 21])]);
     const p = compileRoutingPolicy(s);
