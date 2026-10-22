@@ -8,7 +8,7 @@ ARG AMNEZIAWG_GO_COMMIT=9f5d948bc72cc554791cfe0fb91527e4acfb6b79
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
     build-base=0.5-r3 \
-    ca-certificates=20260909-r0 \
+    ca-certificates=20261020-r0 \
     git=2.49.1-r0 \
     linux-headers=6.14.2-r0
 
@@ -26,7 +26,7 @@ COPY patch-quick-sysctl.sh /tmp/patch-quick-sysctl.sh
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
     build-base=0.5-r3 \
-    ca-certificates=20260909-r0 \
+    ca-certificates=20261020-r0 \
     git=2.49.1-r0 \
     linux-headers=6.14.2-r0
 
@@ -40,8 +40,8 @@ FROM ${ALPINE_IMAGE} AS vpn-base
 
 RUN apk add --no-cache \
     bash=5.2.37-r0 \
-    ca-certificates=20260909-r0 \
-    curl=8.14.1-r3 \
+    ca-certificates=20261020-r0 \
+    curl=8.14.1-r4 \
     iproute2=6.15.0-r0 \
     iptables=1.8.11-r1 \
     jq=1.8.2-r0 \
@@ -67,7 +67,9 @@ FROM vpn-base AS awg-client
 COPY --from=awg-go-build /src/amneziawg-go/amneziawg-go /usr/bin/amneziawg-go
 COPY --from=awg-tools-build /src/amneziawg-tools/src/wg /usr/bin/awg
 COPY --from=awg-tools-build /src/amneziawg-tools/src/wg-quick/linux.bash /usr/bin/awg-quick
+COPY router-entrypoint.sh /usr/local/bin/router-entrypoint
 RUN chmod 0755 /usr/bin/amneziawg-go /usr/bin/awg /usr/bin/awg-quick
+RUN chmod 0755 /usr/local/bin/router-entrypoint
 
 ENV VPN_TOOL=awg
 LABEL org.opencontainers.image.title="wg-easy Phase 0 pinned AmneziaWG client"

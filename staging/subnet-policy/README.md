@@ -4,6 +4,63 @@ These checks use only the dedicated staging host and restored application-volume
 clones. Preserve the immutable Phase 0 golden archive and the live volume. Keep
 management and console recovery independent of the tunnels under test.
 
+## Dual-profile subnet router lab
+
+`compose.router.yml` overlays the existing Phase 0 lab. The generic WireGuard
+member stays independent of AWG tooling. The additional AWG router has two
+separate read-only exported profiles and no application-data mount. The launcher
+starts both with automatic tables disabled in private runtime copies, and unwinds
+the first tunnel if the second fails. The operator/test driver configures the
+router's forwarding and return routes; the application does not configure remote
+router operating systems.
+
+Before use, collision-check and explicitly reserve/create these external Docker
+networks on dedicated staging:
+
+| Network                     | Addresses                          | Purpose                                                                |
+| --------------------------- | ---------------------------------- | ---------------------------------------------------------------------- |
+| `wg-easy-subnet-router-lan` | `172.30.114.0/24`, `fd42:114::/64` | Internal LAN; router `.2`/`::2`, sink `.100`/`::100`                   |
+| `wg-easy-subnet-host-site`  | `172.30.115.0/24`                  | Internal site path; router `.2`, temporarily attached application `.3` |
+
+Neither member is attached to either network. The router allows forwarding into
+its LAN only from its tunnels or the explicitly configured host/site path. Its
+return rules use private namespace tables 100/101, priorities 1000/1001 and marks
+`0x71`/`0x72`. No host routes, host marks, published ports or host firewall rules
+are installed by the matrix. Sink dual-stack listening is opt-in; the existing
+sink keeps its IPv4 default and IPv4 source-address output.
+
+Run the launcher/failure/real HTTP tests and merged Compose checks locally:
+
+```sh
+python3 staging/subnet-policy/test-router-lab.py
+bash staging/subnet-policy/test-lab-compose.sh
+```
+
+`router-matrix.py` refuses hosts other than `wg-easy-stage`. Start a preserved
+volume clone separately, then pass its server name/address, an immutable
+`phase-images.env`, a restricted artifact directory, and the existing staging-only
+server environment path. It reads authentication privately, generates independent
+fixture keys, and writes client configs with mode 0600; it never prints them.
+For example, with operator-selected absolute evidence paths:
+
+```sh
+sudo python3 staging/subnet-policy/router-matrix.py \
+  --server wg-easy-subnet-p4 --server-ip 172.30.110.42 \
+  --artifacts "$EVIDENCE_ROOT/router-matrix" \
+  --images "$EVIDENCE_ROOT/phase-images.env" \
+  --server-env "$STAGING_SERVER_ENV"
+```
+
+The restored fixture must contain the preserved staging members 1/8, internet
+exits 3/4 and the original disabled group 1. Fixture IDs are lab inputs, not
+product interface constraints. The matrix creates/deletes its own groups/profiles,
+restores health settings and verifies original exports. A failure remains a failed
+gate even if cleanup succeeds. `--development-lab-images` permits only named local
+development lab images on the clone; its result is explicitly development-only.
+Final evidence requires the exact committed source and immutable candidate digests.
+Independent user-device traversal through the published UDP endpoint remains a
+separate required check.
+
 ## Phase 2 application-service integration
 
 `application-probe.ts` uses the actual application policy coordinator operations,

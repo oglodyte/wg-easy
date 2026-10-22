@@ -65,6 +65,7 @@ jobs:
         run: |
           bash staging/subnet-policy/test-quick-sysctl.sh
           bash staging/subnet-policy/test-lab-compose.sh
+          python3 staging/subnet-policy/test-router-lab.py
           bash staging/phase0/tests/test-phase0.sh
           bash staging/phase1/tests/test-phase1.sh
 

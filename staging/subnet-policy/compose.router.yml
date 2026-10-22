@@ -1,0 +1,59 @@
+# Overlay on staging/phase0/compose.lab.yml. Networks must be collision-checked
+# and created explicitly; this file never creates host ports or mounts app data.
+services:
+  subnet-router:
+    image: ${AWG_CLIENT_IMAGE:?Set AWG_CLIENT_IMAGE to an immutable digest}
+    container_name: wg-easy-subnet-router
+    entrypoint: ["/usr/local/bin/router-entrypoint"]
+    restart: "no"
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/run]
+    sysctls:
+      net.ipv4.conf.all.src_valid_mark: 1
+      net.ipv4.conf.all.rp_filter: 0
+      net.ipv4.conf.default.rp_filter: 0
+      net.ipv4.ip_forward: 1
+      net.ipv6.conf.all.forwarding: 1
+    environment:
+      AWG_FORCE_USERSPACE: ${AWG_FORCE_USERSPACE:-false}
+    extra_hosts:
+      - wg-easy-stage.lan:172.30.110.2
+    volumes:
+      - ${LAB_ARTIFACT_ROOT:?Set LAB_ARTIFACT_ROOT}/router-a.conf:/run/wg-easy-lab/router-a.conf:ro
+      - ${LAB_ARTIFACT_ROOT:?Set LAB_ARTIFACT_ROOT}/router-b.conf:/run/wg-easy-lab/router-b.conf:ro
+    networks:
+      underlay:
+        ipv4_address: 172.30.110.30
+      router-lan:
+        ipv4_address: 172.30.114.2
+        ipv6_address: fd42:114::2
+      host-site:
+        ipv4_address: 172.30.115.2
+
+  subnet-sink:
+    image: ${TRAFFIC_SINK_IMAGE:?Set TRAFFIC_SINK_IMAGE to an immutable digest}
+    container_name: wg-easy-subnet-sink
+    restart: "no"
+    cap_add: [NET_ADMIN]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/run]
+    environment:
+      SINK_IPV6_LISTEN: "true"
+      RETURN_ROUTE: 10.251.0.0/16
+      RETURN_VIA: 172.30.114.2
+    networks:
+      router-lan:
+        ipv4_address: 172.30.114.100
+        ipv6_address: fd42:114::100
+
+networks:
+  router-lan:
+    external: true
+    name: wg-easy-subnet-router-lan
+  host-site:
+    external: true
+    name: wg-easy-subnet-host-site
