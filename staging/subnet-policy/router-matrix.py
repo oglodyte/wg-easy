@@ -248,6 +248,10 @@ class Matrix:
         codes: tuple = (409,),
     ) -> None:
         before = self.request(GROUPS)
+        identity_fields = "id enabled interfaceId ipv4Address ipv6Address publicKey serverAllowedIps".split()
+        clients_before = [
+            {k: c[k] for k in identity_fields} for c in self.request("/api/client")
+        ]
         try:
             self.request(path, body, method)
         except urllib.error.HTTPError as error:
@@ -259,6 +263,9 @@ class Matrix:
         fields = "id name enabled natEnabled allExitsDownPolicy routedIpv4Prefixes excludedIpv4Prefixes members exits".split()
         assert [{k: g[k] for k in fields} for g in before["groups"]] == [
             {k: g[k] for k in fields} for g in after["groups"]
+        ]
+        assert clients_before == [
+            {k: c[k] for k in identity_fields} for c in self.request("/api/client")
         ]
 
     def traffic(
@@ -498,10 +505,23 @@ class Matrix:
                 "fd42:114::2",
             )
 
-        for prefix in ("10.251.0.0/24", "10.252.0.0/24"):
+        for prefix in ("10.251.0.0/24", "10.252.0.0/24", "172.30.115.0/24"):
             self.docker(
                 "exec", SINK, "ip", "route", "replace", prefix, "via", "172.30.114.2"
             )
+        for address, gateway in (
+            ("10.251.0.1", "172.30.114.2"),
+            ("10.252.0.1", "172.30.114.2"),
+            ("172.30.115.3", "172.30.114.2"),
+            ("fd42:251::2", "fd42:114::2"),
+            ("fd42:252::2", "fd42:114::2"),
+        ):
+            returned = json.loads(
+                self.docker("exec", SINK, "ip", "-j", "route", "get", address)
+            )[0]
+            assert (
+                returned.get("gateway") == gateway
+            ), "Missing explicit sink return route"
 
     def prepare(self) -> tuple[int, int]:
         existing = set(self.docker("ps", "-a", "--format", "{{.Names}}").splitlines())
@@ -525,6 +545,7 @@ class Matrix:
             },
         )
         router_ids = []
+        credentials_by_id = {}
         for interface in ("wg0", "awg-p2"):
             private = self.docker("exec", self.args.server, "awg", "genkey")
             psk = self.docker("exec", self.args.server, "awg", "genpsk")
@@ -554,6 +575,7 @@ class Matrix:
             identifier = created["clientId"]
             self.created_clients.append(identifier)
             router_ids.append(identifier)
+            credentials_by_id[identifier] = (private, psk)
             assert self.request(f"/api/client/{identifier}")["publicKey"] == public
         for role, identifier in (
             ("wg-member", 1),
@@ -564,6 +586,18 @@ class Matrix:
             ("router-b", router_ids[1]),
         ):
             self.export(role, identifier)
+            if identifier in credentials_by_id:
+                exported = dict(
+                    line.split(" = ", 1)
+                    for line in (self.secrets / (role + ".conf"))
+                    .read_text()
+                    .splitlines()
+                    if " = " in line
+                )
+                assert (
+                    exported["PrivateKey"],
+                    exported["PresharedKey"],
+                ) == credentials_by_id[identifier]
         self.command(*self.lab, "config", "--quiet")
         self.command(*self.lab, "up", "-d")
         for _ in range(90):
@@ -763,7 +797,7 @@ class Matrix:
             **internet,
             "name": "Phase4 original rank",
             "routedIpv4Prefixes": ["128.0.0.0/1"],
-            "excludedIpv4Prefixes": [],
+            "excludedIpv4Prefixes": list(internet["excludedIpv4Prefixes"]),
             "exits": [exit_(4, 0)],
         }
         preview = self.request(
@@ -801,6 +835,15 @@ class Matrix:
         self.traffic(WG, LAN, None, "member-without-tunnel-denied")
         self.docker("exec", WG, "wg-quick", "up", "/run/wg-easy-vpn/client.conf")
         self.traffic(WG, LAN, "10.252.0.1", "member-tunnel-restored")
+        self.traffic(
+            WG, "fd42:114::100", "fd42:251::2", "ipv6-legacy-after-all-transitions"
+        )
+        self.traffic(
+            AWG,
+            "fd42:114::100",
+            "fd42:252::2",
+            "ipv6-cross-interface-after-all-transitions",
+        )
         counters = []
         for container, tool, device in (
             (WG, "wg", "client"),
@@ -867,8 +910,8 @@ class Matrix:
         )
         assert any(
             ipaddress.ip_address(LAN) in ipaddress.ip_network(prefix.strip())
-            for prefix in prefixes.split(",")
-            if ":" not in prefix
+            for prefix in re.split(r"[,\s]+", prefixes.strip())
+            if prefix and ":" not in prefix
         )
 
         # The internet exit has no path into this isolated LAN. Prove the new
@@ -910,6 +953,12 @@ class Matrix:
             "publicKey": saved["publicKey"],
             "preSharedKey": exported.get("PresharedKey"),
         }
+        # Disabled alternatives may share keys/addresses, but legacy subnet
+        # declarations retain their global uniqueness even while disabled.
+        self.reject(
+            "/api/client", {**base, "name": "Phase4 duplicate legacy declaration"}
+        )
+        base["serverAllowedIps"] = []
         alternative = self.request(
             "/api/client", {**base, "name": "Phase4 disabled same-key alternative"}
         )["clientId"]
@@ -959,6 +1008,32 @@ class Matrix:
         )
 
     def credentials(self, client: int, group: int) -> None:
+        saved_group = self.request(f"{GROUPS}/{group}")
+        original = {
+            k: saved_group[k]
+            for k in [
+                "name",
+                "enabled",
+                "natEnabled",
+                "allExitsDownPolicy",
+                "routedIpv4Prefixes",
+                "excludedIpv4Prefixes",
+            ]
+        }
+        original["memberClientIds"] = [m["clientId"] for m in saved_group["members"]]
+        original["exits"] = [
+            {k: e[k] for k in ["clientId", "priority", "enabled"]}
+            for e in saved_group["exits"]
+        ]
+        # Keep this credential-denial test independent of healthy backup a.
+        # The full matrix separately proves automatic failover through a.
+        self.update(
+            group,
+            {
+                **original,
+                "exits": [{"clientId": client, "priority": 0, "enabled": True}],
+            },
+        )
         before = self.request(f"/api/client/{client}")
         self.request(f"/api/client/{client}/generateOneTimeLink", {})
         link = next(c for c in self.request("/api/client") if c["id"] == client)[
@@ -981,6 +1056,27 @@ class Matrix:
             "exec", self.args.server, "awg", "show", "awg-p2", "peers"
         ).split()
         assert before["publicKey"] not in peers and peers.count(public) == 1
+        retired = self.command(
+            "docker",
+            "exec",
+            ROUTER,
+            "curl",
+            "--noproxy",
+            "*",
+            "--interface",
+            "site-b",
+            "--fail",
+            "--silent",
+            "--max-time",
+            "3",
+            "http://10.252.0.1:51821/api/health",
+            check=False,
+        )
+        assert retired.returncode not in (
+            0,
+            126,
+            127,
+        ), "Retired router credential unexpectedly usable"
         self.traffic(
             WG, LAN, None, "retired-router-credentials-denied-before-reconfigure"
         )
@@ -1010,6 +1106,8 @@ class Matrix:
             for k in ("id", "interfaceId", "userId", "ipv4Address", "ipv6Address")
         )
         assert not self.request(f"/api/client/{client}")["hasPreSharedKey"]
+        self.update(group, original)
+        self.selected(group, "active", client)
         emit(
             "credential-matrix-PASS",
             independentSuppliedKey=True,
@@ -1022,6 +1120,10 @@ class Matrix:
         )
 
     def host_path(self, group: int, lan: dict) -> None:
+        # The independent host path must not be shadowed by a legacy site
+        # table route through a tunnel that this test deliberately takes down.
+        a = self.created_clients[0]
+        self.profile(a, serverAllowedIps=["fd42:114::/64"])
         self.docker(
             "network",
             "connect",
@@ -1045,6 +1147,13 @@ class Matrix:
             device,
             "proto",
             "static",
+        )
+        host_route = json.loads(
+            self.docker("exec", self.args.server, "ip", "-j", "route", "get", LAN)
+        )[0]
+        assert (
+            host_route.get("gateway") == "172.30.115.2"
+            and host_route.get("prefsrc") == "172.30.115.3"
         )
         self.traffic(
             self.args.server,
@@ -1105,6 +1214,7 @@ class Matrix:
             "network", "disconnect", "wg-easy-subnet-host-site", self.args.server
         )
         self.site_attached = False
+        self.profile(a, serverAllowedIps=["172.30.114.0/24", "fd42:114::/64"])
 
     def cleanup(self) -> None:
         # Remove the broad group first, so withdrawing LAN ownership is safe.
