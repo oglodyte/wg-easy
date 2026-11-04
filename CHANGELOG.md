@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [15.4.0+mir.4] - 2026-11-03
+
+### Added
+
+- Allow client profiles to belong to multiple IPv4 routing groups, with
+  original-prefix precedence, subnet exclusions and ordered exit failover.
+- Add complete routing-policy editing and packet previews with clear saved,
+  pending and applied status, plus a private-network exclusion preset.
+- Edit all supported client configuration fields, create profiles with an
+  already generated private key, replace credentials and clear preshared keys.
+- Validate every enabled exit candidate and legacy prefix owner before saving
+  policy changes, including deletes, disables and member removal.
+
+### Changed
+
+- Apply peer, firewall, NAT and route changes through guarded transitions with
+  durable recovery across interface restarts and interrupted updates.
+- Preserve disabled alternative profiles, existing keys, IDs, URLs, hooks and
+  legacy IPv6 routes. Common subnet policy remains IPv4 only.
+- Require provably recoverable server hooks during guarded lifecycle changes;
+  unsupported scripts are refused while their saved text is preserved.
+
+### Fixed
+
+- Preserve explicit zero values in AWG configuration and reject invalid IPv4
+  prefix lengths before normalization.
+- Keep independent management and unrelated healthy routing paths available
+  during policy changes and interface failures.
+
+Back up the application volume before upgrading. This release includes database
+migrations and one-way routing-policy activation. Rollback requires the previous
+image and its matching pre-upgrade volume snapshot.
+
 ## [15.4.0+mir.3] - 2026-09-15
 
 ### Added
