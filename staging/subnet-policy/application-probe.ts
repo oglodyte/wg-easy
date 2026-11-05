@@ -223,9 +223,16 @@ async function main() {
       namespaceId: await ports.namespace(),
       enableIpv6: false,
     });
-    await ports.executor.apply(
-      buildRoutingPlan(buildPolicyBootstrapBaseline(g.snapshot, target.record)),
+    const bootstrapPlan = buildRoutingPlan(
+      buildPolicyBootstrapBaseline(g.snapshot, target.record),
     );
+    if (process.env.WG_EASY_TEST_UNINSTALLED_BOOTSTRAP === "1") {
+      assert.equal(bootstrapPlan.routes.length, 0);
+      assert.equal(bootstrapPlan.policyRules.length, 0);
+      assert.deepEqual((await ports.executor.observe()).chains, []);
+    } else {
+      await ports.executor.apply(bootstrapPlan);
+    }
     await p.runtime.markGlobalApplied(g.policy.runtime.desiredRevision);
     checkpoint("real-promotion");
     await app.promote(p);

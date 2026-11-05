@@ -367,7 +367,9 @@ export class RoutingPolicyApplication {
       bootstrap = buildPolicyBootstrapBaseline(g.snapshot, target.record),
       previous = bootstrapPrevious(target.record, bootstrap);
     await this.ports.guard.verify(null, { families: [4, 6] });
-    await this.ports.executor.verify(buildRoutingPlan(bootstrap), null);
+    await this.ports.executor.verify(buildRoutingPlan(bootstrap), null, {
+      allowUninstalledInactiveBaseline: true,
+    });
     const result = await this.apply(
       provider,
       context,

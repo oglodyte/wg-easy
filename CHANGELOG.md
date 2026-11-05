@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [15.4.0+mir.4] - 2026-11-04
+## [15.4.0+mir.5] - 2026-11-04
 
 ### Added
 
@@ -31,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Activate subnet policies on fresh installations with no routing groups or
+  legacy routes, while preserving strict checks on existing routing state.
 - Preserve explicit zero values in AWG configuration and reject invalid IPv4
   prefix lengths before normalization.
 - Keep independent management and unrelated healthy routing paths available

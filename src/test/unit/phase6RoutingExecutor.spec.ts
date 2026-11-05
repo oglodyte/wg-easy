@@ -195,6 +195,30 @@ function plan(
 }
 
 describe('Phase 6 routing execution', () => {
+  test('accepts absent roots only for an inactive bootstrap with verified ownership', async () => {
+    const linux = new FakeLinuxRouting();
+    const executor = new RoutingExecutor(linux.run);
+    const empty = buildRoutingPlan({ interfaces, clients, groups: [] });
+    const bootstrap = { allowUninstalledInactiveBaseline: true };
+
+    await expect(executor.verify(empty, null)).rejects.toThrow('ownership');
+    await expect(
+      executor.verify(empty, null, bootstrap)
+    ).resolves.toBeUndefined();
+    expect(linux.tables).toEqual({ mangle: '', nat: '' });
+    await expect(executor.verify(plan(2), null, bootstrap)).rejects.toThrow(
+      'ownership'
+    );
+
+    linux.tables.mangle = ':WG_ROUTE_MARK - [0:0]\n-A WG_ROUTE_MARK -j ACCEPT';
+    await expect(executor.verify(empty, null, bootstrap)).rejects.toThrow(
+      'ownership'
+    );
+    linux.tables.mangle = '';
+    await executor.apply(empty);
+    await expect(executor.verify(empty, null)).resolves.toBeUndefined();
+  });
+
   test('keeps prior peer ownership while installing transition block policy', () => {
     const previous = plan(2);
     const bootstrap = plan(null);

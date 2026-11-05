@@ -682,15 +682,33 @@ export class RoutingExecutor {
   }
 
   /** Read-only whole Linux verification; an explicit null requires guard absence. */
-  async verify(plan: RoutingPlan, guard?: RoutingGuardPlan | null) {
+  async verify(
+    plan: RoutingPlan,
+    guard?: RoutingGuardPlan | null,
+    { allowUninstalledInactiveBaseline = false } = {}
+  ) {
     if (plan.classifier && guard === undefined)
       throw new Error('Routing policy guard observation is required');
+    // A v1 installation without routing work may lack the inactive roots.
+    // Managed-CIDR bypass rules cannot be reached without their parent jumps.
+    const mayLackRoots =
+      allowUninstalledInactiveBaseline &&
+      guard === null &&
+      !plan.classifier &&
+      plan.routes.length === 0 &&
+      plan.policyRules.length === 0 &&
+      plan.markChainRules.every((rule) => rule.at(-1) === 'RETURN') &&
+      plan.natChainRules.length === 0 &&
+      plan.parentMarkJumps.length === 0 &&
+      plan.parentNatJump === null;
     if (guard !== undefined) await new RoutingGuard(this.#run).verify(guard);
     const verified = await this.observe();
     if (guard !== undefined) {
       if (!verified.rawIptables)
         throw new Error('Routing policy observation is unavailable');
-      assertRoutingPolicyChains(verified.rawIptables, [plan], { final: true });
+      assertRoutingPolicyChains(verified.rawIptables, [plan], {
+        final: !mayLackRoots,
+      });
     }
     const desiredRoutes = new Set(plan.routes.map(routeKey));
     const desiredRules = new Set(plan.policyRules.map(ruleKey));
@@ -720,8 +738,17 @@ export class RoutingExecutor {
         ({ table, line }) => `${table}:${canonicalizeIptablesRule(line)}`
       )
     );
+    const verifiedChains = new Set(
+      verified.chains
+        .filter(({ owner }) => owner === 'wg-easy')
+        .map(({ table, name }) => `${table}:${name}`)
+    );
+    const expectedMarkRules =
+      mayLackRoots && !verifiedChains.has(`mangle:${ROUTING_MARK_CHAIN}`)
+        ? []
+        : plan.markChainRules;
     const desiredChainRules = new Set([
-      ...plan.markChainRules.map(
+      ...expectedMarkRules.map(
         (args) => `mangle:${canonicalizeIptablesRule(restoreRule(args))}`
       ),
       ...(plan.classifier?.children.flatMap((c) => c.rules) ?? []).map(
@@ -739,11 +766,6 @@ export class RoutingExecutor {
       ...plan.parentMarkJumps.map(({ args }) => `mangle:${restoreRule(args)}`),
       ...(plan.parentNatJump ? [`nat:${restoreRule(plan.parentNatJump)}`] : []),
     ]);
-    const verifiedChains = new Set(
-      verified.chains
-        .filter(({ owner }) => owner === 'wg-easy')
-        .map(({ table, name }) => `${table}:${name}`)
-    );
     const verificationIssues = [
       ownedRoutes.length !== desiredRoutes.size
         ? `route count mismatch (observed ${ownedRoutes.length}; desired ${desiredRoutes.size})`
@@ -761,10 +783,10 @@ export class RoutingExecutor {
       setMismatch('rules', observedRuleKeys, desiredRules),
       setMismatch('chain rules', observedChainRules, desiredChainRules),
       setMismatch('parent jumps', observedParentJumps, desiredParentJumps),
-      !verifiedChains.has(`mangle:${ROUTING_MARK_CHAIN}`)
+      !mayLackRoots && !verifiedChains.has(`mangle:${ROUTING_MARK_CHAIN}`)
         ? `missing owned mangle chain ${ROUTING_MARK_CHAIN}`
         : null,
-      !verifiedChains.has(`nat:${ROUTING_NAT_CHAIN}`)
+      !mayLackRoots && !verifiedChains.has(`nat:${ROUTING_NAT_CHAIN}`)
         ? `missing owned nat chain ${ROUTING_NAT_CHAIN}`
         : null,
     ].filter((issue): issue is string => issue !== null);
