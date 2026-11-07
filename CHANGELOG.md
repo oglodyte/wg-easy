@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [15.4.0+mir.6] - 2026-11-07
+
+### Fixed
+
+- Recognize six explicit AmneziaWG 3 runtime defaults during interface
+  verification and recovery, allowing existing routing groups to activate
+  subnet policies successfully.
+- Reject nonzero, malformed, duplicate and misplaced runtime defaults while
+  preserving strict verification of interface and peer configuration.
+
 ## [15.4.0+mir.5] - 2026-11-04
 
 ### Added

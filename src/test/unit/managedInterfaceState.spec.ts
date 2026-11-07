@@ -10,6 +10,17 @@ import {
   verifyRecoverableManagedInterfaceState,
 } from '#server/utils/managedInterfaceState';
 
+const awg3ObservationDefaults = [
+  'ContentPaddingAddition',
+  'RekeyAfterTime',
+  'RekeyTimeout',
+  'RejectAfterTime',
+  'KeepaliveTimeout',
+  'MaxHandshakeAttempts',
+]
+  .map((name) => `${name} = 0\n`)
+  .join('');
+
 function fixture() {
   const privateKey = randomBytes(32).toString('base64'),
     publicKey = deriveClientPublicKey(randomBytes(32).toString('base64'));
@@ -43,6 +54,74 @@ function fixture() {
 }
 
 describe('complete private managed-interface verification', () => {
+  test('verifies the six explicit AWG 3 defaults in live output', () => {
+    const f = fixture();
+    const observed = {
+      ...f.observed,
+      showconf: f.showconf.replace(
+        '[Peer]',
+        awg3ObservationDefaults + '[Peer]'
+      ),
+    };
+
+    expect(() =>
+      verifyManagedInterfaceState('wg0', f.config, observed)
+    ).not.toThrow();
+    expect(() =>
+      verifyRecoverableManagedInterfaceState('wg0', [f.config], {
+        ...observed,
+        showconf: observed.showconf.split('[Peer]')[0]!,
+      })
+    ).not.toThrow();
+  });
+
+  test.each(['1', '0-1', 'invalid', ''])(
+    'rejects an unconfigured AWG 3 value %j in verification and recovery',
+    (value) => {
+      const f = fixture();
+      const observed = {
+        ...f.observed,
+        showconf: f.showconf.replace(
+          '[Peer]',
+          `RekeyTimeout = ${value}\n[Peer]`
+        ),
+      };
+
+      expect(() =>
+        verifyManagedInterfaceState('wg0', f.config, observed)
+      ).toThrow('unsupported_awg_runtime_parameter');
+      expect(() =>
+        verifyRecoverableManagedInterfaceState('wg0', [f.config], observed)
+      ).toThrow('unknown_partial_state');
+    }
+  );
+
+  test('limits AWG 3 defaults to one occurrence per live interface', () => {
+    const f = fixture();
+    expect(() =>
+      parseManagedInterfaceConfig(
+        'wg0',
+        f.config.replace('[Peer]', awg3ObservationDefaults + '[Peer]')
+      )
+    ).toThrow('invalid_configuration');
+
+    for (const showconf of [
+      f.showconf + 'RekeyTimeout = 0\n',
+      f.showconf.replace(
+        '[Peer]',
+        'RekeyTimeout = 0\nRekeyTimeout = 0\n[Peer]'
+      ),
+      f.showconf.replace('[Peer]', 'UnknownField = 0\n[Peer]'),
+    ]) {
+      expect(() =>
+        verifyManagedInterfaceState('wg0', f.config, {
+          ...f.observed,
+          showconf,
+        })
+      ).toThrow('invalid_configuration');
+    }
+  });
+
   test('recognizes only the pinned userspace blank TUN ephemeral listen port during guarded recovery', () => {
     const f = fixture(),
       link = {

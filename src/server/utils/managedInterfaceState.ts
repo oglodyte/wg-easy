@@ -41,6 +41,15 @@ const interfaceFields = new Set([
   'fwmark',
   ...Object.keys(awgDefaults),
 ]);
+// AWG 3 can report explicit zero defaults for options we do not configure.
+const awg3ObservationFields = new Set([
+  'contentpaddingaddition',
+  'rekeyaftertime',
+  'rekeytimeout',
+  'rejectaftertime',
+  'keepalivetimeout',
+  'maxhandshakeattempts',
+]);
 const peerFields = new Set([
   'publickey',
   'presharedkey',
@@ -94,16 +103,22 @@ function parse(
     const match = line.match(/^([A-Za-z][A-Za-z0-9]*)\s*=\s*(.*)$/);
     if (!section || !match) fail('invalid_configuration');
     const name = match[1]!.toLowerCase();
+    const observedAwg3Default =
+      section === fields && !quick && awg3ObservationFields.has(name);
     if (
       section.has(name) ||
       !(section === fields
-        ? interfaceFields.has(name) || (quick && quickFields.has(name))
+        ? interfaceFields.has(name) ||
+          (quick && quickFields.has(name)) ||
+          observedAwg3Default
         : peerFields.has(name))
     )
       fail('invalid_configuration');
     const value = hooks.has(name)
       ? match[2]!.trim()
       : match[2]!.split('#')[0]!.trim();
+    if (observedAwg3Default && value !== '0')
+      fail('unsupported_awg_runtime_parameter');
     section.set(name, value);
   }
   if (!fields.get('privatekey')) {
