@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [15.4.0+mir.7] - 2026-11-26
+
+### Fixed
+
+- Open the client QR code dialog when its trigger is clicked.
+- Allow existing clients to clear their IPv6 address and omit IPv6 from their exported configuration.
+- Explain invalid, default, and overlapping Server Allowed IPs and accept whitespace around pasted CIDRs.
+- Keep interface defaults reactive when editing Allowed IPs and DNS entries.
+
 ## [15.4.0+mir.6] - 2026-11-07
 
 ### Fixed

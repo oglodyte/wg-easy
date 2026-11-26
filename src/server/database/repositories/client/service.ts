@@ -112,7 +112,8 @@ async function assertCredentialIdentityAvailable(
 
 function assertClientAddresses(
   iface: { ipv4Cidr: string; ipv6Cidr: string | null },
-  candidate: { ipv4Address: string; ipv6Address: string | null }
+  candidate: { ipv4Address: string; ipv6Address: string | null },
+  { allowMissingIpv6 = false } = {}
 ) {
   try {
     const network = parseCidr(iface.ipv4Cidr),
@@ -123,6 +124,7 @@ function assertClientAddresses(
     throw new ClientConfigurationError('invalid_address', 'ipv4Address');
   }
   try {
+    if (allowMissingIpv6 && candidate.ipv6Address === null) return;
     if (iface.ipv6Cidr) {
       if (!candidate.ipv6Address) throw new Error();
       const network6 = parseCidr(iface.ipv6Cidr),
@@ -674,7 +676,9 @@ export class ClientService {
       if (!clientInterface) throw new Error();
       const credentials = prepareClientCredentials(data, existingClient),
         candidate = { ...existingClient, ...data, ...credentials };
-      assertClientAddresses(clientInterface, candidate);
+      assertClientAddresses(clientInterface, candidate, {
+        allowMissingIpv6: true,
+      });
       assertClientFormat(
         clientInterface,
         data.preferredConfigFormat ?? existingClient.preferredConfigFormat

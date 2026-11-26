@@ -171,13 +171,22 @@
           id="endpointPort"
           v-model="defaults.port"
           :label="$t('admin.interfaces.endpointPort')"
-          :description="
-            $t('admin.interfaces.endpointPortDesc')
-          " /><FormArrayField
+          :description="$t('admin.interfaces.endpointPortDesc')"
+      /></FormGroup>
+      <FormGroup>
+        <FormHeading>{{ $t('general.allowedIps') }}</FormHeading>
+        <FormArrayField
           v-model="defaults.defaultAllowedIps"
-          name="defaultAllowedIps" /><FormArrayField
-          v-model="defaults.defaultDns"
-          name="defaultDns" /><FormNumberField
+          name="defaultAllowedIps"
+        />
+      </FormGroup>
+      <FormGroup>
+        <FormHeading>{{ $t('general.dns') }}</FormHeading>
+        <FormArrayField v-model="defaults.defaultDns" name="defaultDns" />
+      </FormGroup>
+      <FormGroup>
+        <FormHeading>{{ $t('form.sectionAdvanced') }}</FormHeading>
+        <FormNumberField
           id="defaultMtu"
           v-model="defaults.defaultMtu"
           :label="$t('general.mtu')" /><FormNumberField
@@ -244,7 +253,8 @@ const { data: interfaceData, refresh: refreshInterface } =
   await useFetch<InterfaceDetail>(`/api/admin/interfaces/${interfaceId}`);
 const { data: defaults, refresh: refreshDefaults } =
   await useFetch<UserConfigUpdateType>(
-    `/api/admin/interfaces/${interfaceId}/userconfig`
+    `/api/admin/interfaces/${interfaceId}/userconfig`,
+    { deep: true }
   );
 const { data: hooks, refresh: refreshHooks } = await useFetch<HooksUpdateType>(
   `/api/admin/interfaces/${interfaceId}/hooks`

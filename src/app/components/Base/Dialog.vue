@@ -29,7 +29,14 @@
 </template>
 
 <script lang="ts" setup>
-defineProps<{ triggerClass?: string; open?: boolean; contentClass?: string }>();
+withDefaults(
+  defineProps<{
+    triggerClass?: string;
+    open?: boolean;
+    contentClass?: string;
+  }>(),
+  { triggerClass: undefined, open: undefined, contentClass: undefined }
+);
 
 const emit = defineEmits<{
   'update:open': [open: boolean];
