@@ -2,6 +2,7 @@ import { createApp, createRouter, toWebHandler } from 'h3';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { policyDatabase, syntheticKey } from '../helpers/policyDatabase';
+import { mutationErrorData } from '../../app/utils/routingEditor';
 
 import { ClientUpdateSchema } from '#db/repositories/client/types';
 import { deriveClientPublicKey } from '#server/utils/clientCredentials';
@@ -155,5 +156,54 @@ describe('permission-protected complete client routes', () => {
     expect((await f.clients.get(row.id))!.privateKey === row.privateKey).toBe(
       true
     );
+  });
+
+  test('reports distinct Server Allowed IPs errors and saves a valid CIDR pasted with whitespace', async () => {
+    const f = await fixture();
+    const target = await f.createClient('site');
+    const other = await f.createClient('other site', 'wg0', {
+      serverAllowedIps: ['192.0.2.0/24'],
+    });
+    const url = `/api/client/${target.id}`;
+    const save = (prefix: string) =>
+      f.request('POST', url, {
+        ...ClientUpdateSchema.parse(target),
+        serverAllowedIps: [prefix],
+      });
+    const invalid = await save('192.0.2.1-192.0.2.10');
+    expect(invalid.status).toBe(400);
+    expect(mutationErrorData({ data: await invalid.json() }).message).toBe(
+      'zod.client.serverAllowedIpCidr'
+    );
+
+    const defaultRoute = await save('0.0.0.0/0');
+    expect(defaultRoute.status).toBe(400);
+    expect(mutationErrorData({ data: await defaultRoute.json() }).message).toBe(
+      'zod.client.serverAllowedIpDefaultRoute'
+    );
+
+    const overlap = await save('192.0.2.10/32');
+    expect(overlap.status).toBe(409);
+    const overlapBody = await overlap.json();
+    expect(mutationErrorData({ data: overlapBody }).message).toBe(
+      'client.configurationErrors.server_prefix_overlap'
+    );
+    expect(overlapBody).toMatchObject({
+      data: {
+        issues: [
+          {
+            code: 'server_allowed_ip_conflict',
+            clientIds: [target.id, other.id],
+            prefixes: ['192.0.2.10/32', '192.0.2.0/24'],
+          },
+        ],
+      },
+    });
+    expect((await f.clients.get(target.id))!.serverAllowedIps).toEqual([]);
+
+    expect((await save(' 198.51.100.4/24 ')).status).toBe(200);
+    expect((await f.clients.get(target.id))!.serverAllowedIps).toEqual([
+      '198.51.100.0/24',
+    ]);
   });
 });

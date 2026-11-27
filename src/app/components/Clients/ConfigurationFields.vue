@@ -21,7 +21,9 @@
     <p v-if="creating" class="col-span-full text-sm">
       {{ $t('client.automaticAddresses') }}
     </p>
-    <p class="col-span-full text-sm">{{ $t('client.ipv6InterfacePolicy') }}</p>
+    <p v-else class="col-span-full text-sm">
+      {{ $t('client.ipv6InterfacePolicy') }}
+    </p>
     <FormTextField id="ipv4Address" v-model="data.ipv4Address" label="IPv4" />
     <FormTextField
       id="ipv6Address"
@@ -43,9 +45,13 @@
     <FormNullArrayField v-model="data.allowedIps" name="allowedIps" />
   </FormGroup>
   <FormGroup>
-    <FormHeading :description="$t('client.serverAllowedIpsDesc')">
+    <FormHeading>
       {{ $t('client.serverAllowedIps') }}
     </FormHeading>
+    <p class="col-span-full text-sm">
+      <span class="block">{{ $t('client.serverAllowedIpsDesc') }}</span>
+      <span class="block">{{ $t('client.serverAllowedIpsFormat') }}</span>
+    </p>
     <FormArrayField v-model="data.serverAllowedIps" name="serverAllowedIps" />
   </FormGroup>
   <FormGroup>

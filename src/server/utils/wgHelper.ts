@@ -155,11 +155,10 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
       format
     );
 
+    const hasIpv6 = enableIpv6 && wgInterface.ipv6Cidr && client.ipv6Address;
     const address =
       `${client.ipv4Address}/32` +
-      (enableIpv6 && wgInterface.ipv6Cidr && client.ipv6Address
-        ? `, ${client.ipv6Address}/128`
-        : '');
+      (hasIpv6 ? `, ${client.ipv6Address}/128` : '');
 
     const hookLines = [
       client.preUp ? `PreUp = ${removeNewlines(client.preUp)}` : null,
@@ -169,7 +168,7 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
     ];
 
     const dnsServers = (client.dns ?? userConfig.defaultDns).filter(
-      (value) => wgInterface.ipv6Cidr !== null || !value.includes(':')
+      (value) => hasIpv6 || !value.includes(':')
     );
     const dnsLine =
       dnsServers.length > 0 ? `DNS = ${dnsServers.join(', ')}` : null;
@@ -192,7 +191,7 @@ ${extraLines.length ? `${extraLines.join('\n')}\n` : ''}
 [Peer]
 PublicKey = ${wgInterface.publicKey}
 ${client.preSharedKey ? `PresharedKey = ${client.preSharedKey}` : ''}
-AllowedIPs = ${(client.allowedIps ?? userConfig.defaultAllowedIps).filter((value) => wgInterface.ipv6Cidr !== null || !value.includes(':')).join(', ')}
+AllowedIPs = ${(client.allowedIps ?? userConfig.defaultAllowedIps).filter((value) => hasIpv6 || !value.includes(':')).join(', ')}
 PersistentKeepalive = ${client.persistentKeepalive}
 Endpoint = ${formatEndpoint(userConfig.host, userConfig.port)}`;
   },

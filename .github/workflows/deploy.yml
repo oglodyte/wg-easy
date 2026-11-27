@@ -136,11 +136,12 @@ jobs:
             name=codeberg.org/wg-easy/wg-easy,enable=${{ github.repository_owner == 'wg-easy' }}
           flavor: |
             latest=false
+          # This 15.5 maintenance release keeps the existing aliases pinned.
           tags: |
             type=raw,value=${{ steps.prepare.outputs.docker_version }},priority=1000
-            type=semver,pattern={{major}},priority=800
-            type=semver,pattern={{major}}.{{minor}},priority=850
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }},priority=700
+            type=semver,pattern={{major}},priority=800,enable=${{ github.ref_name != 'v15.5.0+mir.2' }}
+            type=semver,pattern={{major}}.{{minor}},priority=850,enable=${{ github.ref_name != 'v15.5.0+mir.2' }}
+            type=raw,value=latest,enable=${{ github.ref_name != 'v15.5.0+mir.2' && !contains(github.ref_name, '-') }},priority=700
 
       - name: Create manifest list and push
         working-directory: ${{ runner.temp }}/digests

@@ -1,20 +1,21 @@
-import { readValidatedBody } from 'h3';
 import { useTranslation } from '@intlify/h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
-import { validateZod } from '#server/utils/types';
 import { ClientConfigurationCreateSchema } from '#db/repositories/client/types';
-import { clientMutationHttpError } from '#server/utils/clientMutationRequest';
+import {
+  clientMutationHttpError,
+  readClientConfigurationBody,
+} from '#server/utils/clientMutationRequest';
 
 export default definePermissionEventHandler(
   'clients',
   'create',
   async ({ event }) => {
-    const input = await readValidatedBody(
+    const input = await readClientConfigurationBody(
       event,
-      validateZod(ClientConfigurationCreateSchema, event)
+      ClientConfigurationCreateSchema
     );
 
     let result: Awaited<ReturnType<typeof Database.clients.create>>;

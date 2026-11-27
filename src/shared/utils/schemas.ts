@@ -82,21 +82,18 @@ export const RoutingGroupPrefixSchema = z
 
 export const ServerAllowedIpPrefixSchema = z
   .string()
+  .trim()
   .refine(
     (value) => isCidrVersion(value, 4) || isCidrVersion(value, 6),
-    'zod.client.serverAllowedIps'
+    'zod.client.serverAllowedIpCidr'
   )
-  .refine(
-    (value) => {
-      try {
-        return Number(parseCidr(value).prefix) !== 0;
-      } catch {
-        return true;
-      }
-    },
-    {
-      message: 'zod.client.serverAllowedIps',
-    }
+  .pipe(
+    z
+      .string()
+      .refine(
+        (value) => Number(value.split('/')[1]) !== 0,
+        'zod.client.serverAllowedIpDefaultRoute'
+      )
   )
   .transform((value) => normalizeCidr(value));
 

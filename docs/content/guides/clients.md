@@ -20,7 +20,7 @@ behavior.
 ## Address
 
 - **IPv4**: The IPv4 address of the client.
-- **IPv6**: The IPv6 address of the client.
+- **IPv6**: The IPv6 address of the client. Clear it in an existing profile to omit the IPv6 tunnel address, IPv6 destinations, and IPv6 DNS servers from new exports. After saving, download or scan the updated configuration and replace the profile on your device. If you configured IPv6 site routes under **Server Allowed IPs**, remove those separately to stop the server routing IPv6 traffic to this peer.
 
 ## Allowed IPs
 
@@ -85,7 +85,14 @@ To allow clients to reach the VPN server itself (e.g. for DNS), include the serv
 
 ## Server Allowed IPs
 
-Which IPs will be routed to the client.
+These are networks the server can reach **through this client**, such as a LAN
+behind a site gateway. Enter one CIDR per row: `192.168.50.0/24` for a subnet,
+`192.168.50.10/32` for a single IPv4 host, or `fd42::10/128` for a single
+IPv6 host. Use separate rows for multiple CIDRs. Default routes and prefixes
+that overlap another client's Server Allowed IPs cannot be saved here.
+
+To control which destinations the client sends **into** the VPN, use the
+client's **Allowed IPs** field instead.
 
 ## DNS
 

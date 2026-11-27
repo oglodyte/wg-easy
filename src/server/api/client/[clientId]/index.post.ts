@@ -1,10 +1,13 @@
-import { createError, getValidatedRouterParams, readValidatedBody } from 'h3';
+import { createError, getValidatedRouterParams } from 'h3';
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
 import { definePermissionEventHandler } from '#server/utils/handler';
 import { validateZod } from '#server/utils/types';
-import { clientMutationHttpError } from '#server/utils/clientMutationRequest';
+import {
+  clientMutationHttpError,
+  readClientConfigurationBody,
+} from '#server/utils/clientMutationRequest';
 import {
   ClientGetSchema,
   ClientConfigurationUpdateSchema,
@@ -19,9 +22,9 @@ export default definePermissionEventHandler(
       validateZod(ClientGetSchema, event)
     );
 
-    const data = await readValidatedBody(
+    const data = await readClientConfigurationBody(
       event,
-      validateZod(ClientConfigurationUpdateSchema, event)
+      ClientConfigurationUpdateSchema
     );
 
     const client = await Database.clients.get(clientId);

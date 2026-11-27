@@ -6,6 +6,7 @@ import { policyDatabase, syntheticKey } from '../helpers/policyDatabase';
 import { ClientUpdateSchema } from '#db/repositories/client/types';
 import * as schema from '#db/schema';
 import { deriveClientPublicKey } from '#server/utils/clientCredentials';
+import { wg } from '#server/utils/wgHelper';
 
 vi.mock('#server/utils/config', () => ({
   WG_ENV: { WG_EXECUTABLE: 'awg', PORT: 51821 },
@@ -48,7 +49,7 @@ const fields = {
   preferredConfigFormat: 'amneziawg' as const,
 };
 describe('complete client configuration transactions', () => {
-  test('automatic creation and explicit addresses retain the assigned interface IPv6 policy', async () => {
+  test('creation still auto-allocates IPv6 and rejects an explicit null on a dual-stack interface', async () => {
     const f = await fixture();
     await f.db
       .update(schema.wgInterface)
@@ -61,13 +62,7 @@ describe('complete client configuration transactions', () => {
       revision = (await f.db.query.runtimeReconciliationState.findFirst())!
         .desiredRevision;
     await expect(
-      f.clients.create({ name: 'unsupported opt-out', ipv6Address: null })
-    ).rejects.toMatchObject({ code: 'invalid_address', field: 'ipv6Address' });
-    await expect(
-      f.clients.update(row.id, {
-        ...ClientUpdateSchema.parse(row),
-        ipv6Address: null,
-      })
+      f.clients.create({ name: 'explicit null', ipv6Address: null })
     ).rejects.toMatchObject({ code: 'invalid_address', field: 'ipv6Address' });
     expect(JSON.stringify(await f.db.query.client.findMany()) === before).toBe(
       true
@@ -75,6 +70,70 @@ describe('complete client configuration transactions', () => {
     expect(
       (await f.db.query.runtimeReconciliationState.findFirst())?.desiredRevision
     ).toBe(revision);
+  });
+
+  test('clears only the edited client IPv6 address and omits IPv6 from its exported profile', async () => {
+    const f = await fixture();
+    await f.db
+      .update(schema.wgInterface)
+      .set({ ipv6Cidr: 'fd42:8::/64' })
+      .execute();
+    const row = await f.createClient('IPv4 only');
+    const other = await f.createClient('dual stack');
+    const defaults = {
+      ...(await f.db.query.userConfig.findFirst())!,
+      defaultAllowedIps: ['0.0.0.0/0', '::/0'],
+      defaultDns: ['192.0.2.53', '2001:db8::53'],
+    };
+    const iface = (await f.db.query.wgInterface.findFirst())!;
+    const edit = ClientUpdateSchema.parse({
+      ...row,
+      allowedIps: null,
+      dns: null,
+    });
+    for (const ipv6Address of ['fd42:8::1', 'fd42:9::2']) {
+      await expect(
+        f.clients.update(row.id, { ...edit, ipv6Address })
+      ).rejects.toMatchObject({
+        code: 'invalid_address',
+        field: 'ipv6Address',
+      });
+    }
+    const revision = (await f.db.query.runtimeReconciliationState.findFirst())!
+      .desiredRevision;
+    await f.clients.update(
+      row.id,
+      ClientUpdateSchema.parse({ ...edit, ipv6Address: '' })
+    );
+    const updated = (await f.clients.get(row.id))!;
+    expect(updated.ipv6Address).toBeNull();
+    expect((await f.clients.get(other.id))!.ipv6Address).toBe(
+      other.ipv6Address
+    );
+    expect(
+      (await f.db.query.runtimeReconciliationState.findFirst())?.desiredRevision
+    ).toBe(revision + 1);
+    expect(wg.generateServerPeer(updated)).toContain(
+      `AllowedIPs = ${updated.ipv4Address}/32`
+    );
+    const config = wg.generateClientConfig(iface, defaults, updated);
+    expect(config).toContain(`\nAddress = ${updated.ipv4Address}/32\n`);
+    expect(config).toContain('\nAllowedIPs = 0.0.0.0/0\n');
+    expect(config).toContain('\nDNS = 192.0.2.53\n');
+    const dualStack = wg.generateClientConfig(iface, defaults, {
+      ...other,
+      allowedIps: null,
+      dns: null,
+    });
+    expect(dualStack).toContain(', ::/0\n');
+    expect(dualStack).toContain(', 2001:db8::53\n');
+
+    await f.interfaces.updateCidr(iface.name, {
+      ipv4Cidr: iface.ipv4Cidr,
+      ipv6Cidr: 'fd42:9::/64',
+    });
+    expect((await f.clients.get(row.id))!.ipv6Address).toBeNull();
+    expect((await f.clients.get(other.id))!.ipv6Address).toBe('fd42:9::2');
   });
   test('creates with an independently generated private key and every supported override, preserving explicit nulls', async () => {
     const f = await fixture(),

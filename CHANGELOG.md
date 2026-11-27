@@ -1,3 +1,9 @@
+# v15.5.0+mir.2
+
+- Open the client QR code dialog when the QR button is clicked.
+- Allow existing clients to clear their IPv6 address and export an IPv4-only profile.
+- Accept surrounding whitespace in Server Allowed IPs and report invalid, default, or overlapping prefixes.
+
 # v15.5.0+mir.1
 
 - Integrate upstream v15.5.0 while preserving managed interfaces, common routing, subnet policies, legacy import, native SQLite, and guarded runtime recovery.

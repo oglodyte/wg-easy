@@ -65,11 +65,14 @@ export function mutationErrorData(error: unknown): {
 } {
   const response = (
     error as {
-      data?: { message?: string; data?: { code?: string; detail?: object } };
+      data?: {
+        message?: string;
+        data?: { message?: string; code?: string; detail?: object };
+      };
     }
   )?.data;
   return {
-    message: response?.message,
+    message: response?.data?.message ?? response?.message,
     code: response?.data?.code,
     detail: response?.data?.detail,
   };

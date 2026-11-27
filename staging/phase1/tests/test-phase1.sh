@@ -9,13 +9,13 @@ while IFS= read -r script; do
   bash -n "$script"
 done < <(find "$PHASE1_DIR" -type f -name '*.sh' -print | sort)
 
-grep -q 'AMNEZIAWG_GO_VERSION=v3.0.20260805' \
+grep -q 'AMNEZIAWG_GO_VERSION=v3.1.20260828' \
   "$REPOSITORY_ROOT/Dockerfile"
-grep -q 'AMNEZIAWG_GO_COMMIT=08d68cdae27762c3e07f36bbb12d2bad32f81926' \
+grep -q 'AMNEZIAWG_GO_COMMIT=b5928efb6ca19f0153958460c3d141f04abc5c2e' \
   "$REPOSITORY_ROOT/Dockerfile"
-grep -q 'AMNEZIAWG_TOOLS_VERSION=v3.0.20260805' \
+grep -q 'AMNEZIAWG_TOOLS_VERSION=v3.1.20260812' \
   "$REPOSITORY_ROOT/Dockerfile"
-grep -q 'AMNEZIAWG_TOOLS_COMMIT=9f70177d204d5be66c5b043518a57b7d62b3f9d1' \
+grep -q 'AMNEZIAWG_TOOLS_COMMIT=ee0f0a9aa34ff0a0da4b3433b9512781cfe02843' \
   "$REPOSITORY_ROOT/Dockerfile"
 grep -q 'git -C amneziawg-go rev-parse HEAD' "$REPOSITORY_ROOT/Dockerfile"
 grep -q 'git -C amneziawg-tools rev-parse HEAD' "$REPOSITORY_ROOT/Dockerfile"
