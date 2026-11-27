@@ -56,6 +56,14 @@ export const CLIENT_EDIT_FIELDS = [
   'i3',
   'i4',
   'i5',
+  'contentPaddingAddition',
+  'rekeyAfterTime',
+  'rekeyTimeout',
+  'rejectAfterTime',
+  'keepaliveTimeout',
+  'maxHandshakeAttempts',
+  'disableCookies',
+
   'persistentKeepalive',
   'serverEndpoint',
   'dns',
@@ -103,6 +111,14 @@ export type ClientConfigurationDraft = {
   i3: string | null;
   i4: string | null;
   i5: string | null;
+  contentPaddingAddition: string | null;
+  rekeyAfterTime: string | null;
+  rekeyTimeout: string | null;
+  rejectAfterTime: string | null;
+  keepaliveTimeout: string | null;
+  maxHandshakeAttempts: string | null;
+  disableCookies: boolean | null;
+
   preferredConfigFormat: 'auto' | 'wireguard' | 'amneziawg';
 };
 
@@ -132,6 +148,14 @@ export function blankClientConfiguration(): ClientConfigurationDraft {
     i3: null,
     i4: null,
     i5: null,
+    contentPaddingAddition: null,
+    rekeyAfterTime: null,
+    rekeyTimeout: null,
+    rejectAfterTime: null,
+    keepaliveTimeout: null,
+    maxHandshakeAttempts: null,
+    disableCookies: null,
+
     preferredConfigFormat: 'auto',
   };
 }
@@ -146,7 +170,23 @@ export function clientCreatePayload(
   if (!data.ipv6Address) delete body.ipv6Address;
   if (data.mtu === null) delete body.mtu;
   if (data.persistentKeepalive === null) delete body.persistentKeepalive;
-  const awgFields = ['jC', 'jMin', 'jMax', 'i1', 'i2', 'i3', 'i4', 'i5'];
+  const awgFields = [
+    'jC',
+    'jMin',
+    'jMax',
+    'i1',
+    'i2',
+    'i3',
+    'i4',
+    'i5',
+    'contentPaddingAddition',
+    'rekeyAfterTime',
+    'rekeyTimeout',
+    'rejectAfterTime',
+    'keepaliveTimeout',
+    'maxHandshakeAttempts',
+    'disableCookies',
+  ];
   return {
     ...Object.fromEntries(
       Object.entries(body).filter(

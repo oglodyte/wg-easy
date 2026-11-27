@@ -1,3 +1,4 @@
+import { assertSupportedUpgradeDatabase } from '#db/upgradeCompatibility';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 
@@ -221,6 +222,7 @@ export class NodeSqliteStore<
   }
 
   async migrate(config: MigrationConfig): Promise<void> {
+    await assertSupportedUpgradeDatabase(this.raw);
     await drizzleMigrate(
       this.db,
       async (queries) => {

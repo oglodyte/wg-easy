@@ -9,6 +9,7 @@ import {
   AllowedIpsSchema,
   DnsSchema,
   EnabledSchema,
+  AwgRangeSchema,
   FirewallIpsSchema,
   HookSchema,
   ISchema,
@@ -45,7 +46,26 @@ export type UpdateClientType = Omit<
   | 'userId'
   | 'interfaceId'
   | 'preferredConfigFormat'
->;
+  | 'contentPaddingAddition'
+  | 'rekeyAfterTime'
+  | 'rekeyTimeout'
+  | 'rejectAfterTime'
+  | 'keepaliveTimeout'
+  | 'maxHandshakeAttempts'
+  | 'disableCookies'
+> &
+  Partial<
+    Pick<
+      ClientType,
+      | 'contentPaddingAddition'
+      | 'rekeyAfterTime'
+      | 'rekeyTimeout'
+      | 'rejectAfterTime'
+      | 'keepaliveTimeout'
+      | 'maxHandshakeAttempts'
+      | 'disableCookies'
+    >
+  >;
 
 const name = z
   .string({ message: t('zod.client.name') })
@@ -119,6 +139,13 @@ export const ClientUpdateSchema = schemaForType<UpdateClientType>()(
     i3: ISchema,
     i4: ISchema,
     i5: ISchema,
+    contentPaddingAddition: AwgRangeSchema.optional(),
+    rekeyAfterTime: AwgRangeSchema.optional(),
+    rekeyTimeout: AwgRangeSchema.optional(),
+    rejectAfterTime: AwgRangeSchema.optional(),
+    keepaliveTimeout: AwgRangeSchema.optional(),
+    maxHandshakeAttempts: AwgRangeSchema.optional(),
+    disableCookies: EnabledSchema.nullable().optional(),
     persistentKeepalive: PersistentKeepaliveSchema,
     serverEndpoint: AddressSchema.nullable(),
     dns: DnsSchema.nullable(),

@@ -1,3 +1,5 @@
+import { interfaceMutationError } from '#server/utils/interfaceMutationError';
+import { publicInterface } from '#server/utils/publicInterface';
 import { createError, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
@@ -22,12 +24,12 @@ export default definePermissionEventHandler(
       if (error instanceof InterfaceReservationConflictError) {
         throw createError({ statusCode: 409, statusMessage: error.message });
       }
-      throw error;
+      throw await interfaceMutationError(event, error);
     }
     const result = await WireGuard.requestReconcile('create-interface', [
       { interfaceId: wgInterface.name, action: 'none' },
     ]);
-    const { privateKey: _privateKey, ...safeInterface } = wgInterface;
+    const safeInterface = publicInterface(wgInterface);
 
     return {
       ...result,

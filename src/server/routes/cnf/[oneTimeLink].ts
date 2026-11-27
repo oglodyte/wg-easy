@@ -7,6 +7,7 @@ import {
 
 import Database from '#server/utils/Database';
 import WireGuard from '#server/utils/WireGuard';
+import { logSecurityEvent } from '#server/utils/securityLogger';
 import { validateZod } from '#server/utils/types';
 import { ConfigFormatUnavailableError } from '#server/utils/wgHelper';
 import { OneTimeLinkGetSchema } from '#db/repositories/oneTimeLink/types';
@@ -19,6 +20,7 @@ export default defineEventHandler(async (event) => {
 
   const otl = await Database.oneTimeLinks.getByOtl(oneTimeLink);
   if (!otl) {
+    logSecurityEvent(event, 'one-time-link');
     throw createError({
       statusCode: 404,
       statusMessage: 'Invalid One Time Link',

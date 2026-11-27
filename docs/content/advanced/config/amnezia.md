@@ -80,3 +80,27 @@ OpenWRT:
 
 - [AmneziaWG OpenWRT](https://github.com/Slava-Shchipunov/awg-openwrt) - AmneziaWG OpenWRT Packages
 - [AmneziaWG OpenWRT](https://github.com/lolo6oT/awg-openwrt) - AmneziaWG OpenWRT Packages
+
+
+## AWG 3.1 settings in this fork
+
+Managed interfaces and client profiles support the upstream 3.1 settings. The
+six timer/padding/attempt fields accept a decimal number or inclusive range
+between 0 and 65535. Explicit zero and disabled boolean values are retained.
+Unset new fields preserve existing configuration and runtime defaults.
+
+The header protection key is a nonzero 32-byte canonical base64 secret. It is
+never returned by settings APIs or preloaded in the editor. Keep, replace and
+clear are explicit actions. Header protection requires S1–S4 to be at least 12
+bytes. The key and RandomTrailers must match on both tunnel ends and are copied
+to authorized client configuration exports. Redistribute profiles after changing
+shared obfuscation parameters. Interface names remain immutable.
+
+The image provides AWG 3.1 userspace. A host kernel module can support fewer
+parameters; an unsupported setting must fail application verification, and the
+UI must not report it applied. Docker UDP publication remains operator-managed.
+WireGuard compatibility mode omits every AWG-only parameter from exports.
+
+Upgrade this fork using its append-only migration history and a matched volume
+snapshot. A database created directly by native upstream 15.5 is not an upgrade
+input; startup refuses that lineage before migration.

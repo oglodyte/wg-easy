@@ -1,3 +1,4 @@
+import { interfaceMutationError } from '#server/utils/interfaceMutationError';
 import { createError, getValidatedRouterParams, readValidatedBody } from 'h3';
 
 import Database from '#server/utils/Database';
@@ -61,7 +62,7 @@ export default definePermissionEventHandler(
       if (error instanceof InterfaceReservationConflictError) {
         throw createError({ statusCode: 409, statusMessage: error.message });
       }
-      throw error;
+      throw await interfaceMutationError(event, error);
     }
     return WireGuard.requestReconcile('update-interface', [
       { interfaceId, action },

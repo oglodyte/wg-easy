@@ -246,6 +246,9 @@ describe('subnet contract migration', () => {
           'utf8'
         )
       );
+      journal.entries = journal.entries.filter(
+        (e: { idx: number }) => e.idx <= 12
+      );
       for (const e of journal.entries)
         await fs.copyFile(
           path.join(migrationsFolder, `${e.tag}.sql`),

@@ -1,3 +1,12 @@
+# v15.5.0+mir.1
+
+- Integrate upstream v15.5.0 while preserving managed interfaces, common routing, subnet policies, legacy import, native SQLite, and guarded runtime recovery.
+- Add AWG 3.1 ranges, boolean options and private header-protection key controls. Missing options preserve existing state; exports omit AWG options in WireGuard compatibility mode.
+- Append migration 0013 after the fork history; native upstream 15.5 databases require a separate import.
+- Add trusted-proxy authentication helpers, security-event logging and IPv6 endpoint formatting.
+- Expose observed endpoints only in the separate authenticated `wireguard_peer_endpoint_info` metric. Endpoint labels reveal client addresses and change on roaming; restrict metrics access and account for series churn.
+- Pin Node 24.22.1 and the AWG tools/runtime revisions recorded in the Dockerfile.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

@@ -1,3 +1,4 @@
+import { publicInterface } from '#server/utils/publicInterface';
 import { getValidatedRouterParams } from 'h3';
 
 import Database from '#server/utils/Database';
@@ -18,7 +19,7 @@ export default definePermissionEventHandler(
       Database.runtime.getInterface(interfaceId),
       Database.interfaces.getDefault(),
     ]);
-    const { privateKey: _privateKey, ...safeInterface } = wgInterface;
+    const safeInterface = publicInterface(wgInterface);
     return {
       ...safeInterface,
       isDefault: wgInterface.name === defaultInterface.name,

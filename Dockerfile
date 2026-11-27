@@ -1,12 +1,12 @@
-ARG NODE_IMAGE=docker.io/library/node:24.19.0-alpine3.23@sha256:244cc2b53f46f9e876304391d17682b0ddae9ac33491f4857e25e35a36ba7995
+ARG NODE_IMAGE=docker.io/library/node:24.22.1-alpine3.23@sha256:0468540aa58203ff9e40c2aab3907c52644ab818af6176b1c70a026137dc92a2
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app
 
-ARG AMNEZIAWG_GO_VERSION=v3.0.20260805
-ARG AMNEZIAWG_GO_COMMIT=08d68cdae27762c3e07f36bbb12d2bad32f81926
-ARG AMNEZIAWG_TOOLS_VERSION=v3.0.20260805
-ARG AMNEZIAWG_TOOLS_COMMIT=9f70177d204d5be66c5b043518a57b7d62b3f9d1
-ARG PNPM_VERSION=11.21.0
+ARG AMNEZIAWG_GO_VERSION=v3.1.20260828
+ARG AMNEZIAWG_GO_COMMIT=b5928efb6ca19f0153958460c3d141f04abc5c2e
+ARG AMNEZIAWG_TOOLS_VERSION=v3.1.20260812
+ARG AMNEZIAWG_TOOLS_COMMIT=ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
+ARG PNPM_VERSION=12.14.0
 
 # Install the repository-declared package manager without a moving Corepack update.
 RUN corepack enable pnpm && corepack prepare "pnpm@${PNPM_VERSION}" --activate
@@ -89,9 +89,9 @@ ENV INIT_ENABLED=false
 ENV DISABLE_IPV6=false
 
 LABEL org.opencontainers.image.source=https://github.com/wg-easy/wg-easy
-LABEL org.opencontainers.image.node.version="24.19.0"
-LABEL org.opencontainers.image.amneziawg-go.revision="08d68cdae27762c3e07f36bbb12d2bad32f81926"
-LABEL org.opencontainers.image.amneziawg-tools.revision="9f70177d204d5be66c5b043518a57b7d62b3f9d1"
+LABEL org.opencontainers.image.node.version="24.22.1"
+LABEL org.opencontainers.image.amneziawg-go.revision="b5928efb6ca19f0153958460c3d141f04abc5c2e"
+LABEL org.opencontainers.image.amneziawg-tools.revision="ee0f0a9aa34ff0a0da4b3433b9512781cfe02843"
 
 # Run Web UI
 CMD ["/usr/bin/dumb-init", "node", "server/index.mjs"]

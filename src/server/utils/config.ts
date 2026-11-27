@@ -1,5 +1,6 @@
 import { createDebug } from 'obug';
 import packageJson from '@@/package.json';
+import { parseTrustedProxies } from '#server/utils/trustedProxy';
 
 import {
   OAUTH_PROVIDERS,
@@ -24,6 +25,7 @@ const oauthProviders = process.env.OAUTH_PROVIDERS?.split(',')
   .filter((v) => isConfiguredOauthProvider(OAUTH_PROVIDERS[v]));
 
 export const WG_ENV = {
+  TRUSTED_PROXIES: parseTrustedProxies(process.env.TRUSTED_PROXIES),
   /** UI is hosted on HTTP instead of HTTPS */
   INSECURE: process.env.INSECURE === 'true',
   /** Port the UI is listening on */

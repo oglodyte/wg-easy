@@ -1,0 +1,3405 @@
+{
+    "__requires": [
+        {
+            "type": "grafana",
+            "id": "grafana",
+            "name": "Grafana",
+            "version": "11.0.0"
+        },
+        {
+            "type": "datasource",
+            "id": "prometheus",
+            "name": "Prometheus",
+            "version": "1.0.0"
+        }
+    ],
+    "id": null,
+    "uid": "wg-easy-vpn",
+    "title": "wg-easy \u00b7 VPN operations",
+    "description": "Multi-interface VPN traffic, recent client connectivity, routing-group policy health and exit-candidate observability using the existing wg-easy exporter.",
+    "tags": ["wg-easy", "vpn", "wireguard", "amneziawg", "routing"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "editable": true,
+    "graphTooltip": 1,
+    "time": {
+        "from": "now-6h",
+        "to": "now"
+    },
+    "refresh": "30s",
+    "timepicker": {
+        "refresh_intervals": ["30s", "1m", "5m", "15m"]
+    },
+    "annotations": {
+        "list": []
+    },
+    "links": [],
+    "panels": [
+        {
+            "id": 1,
+            "title": "VPN overview",
+            "type": "row",
+            "collapsed": false,
+            "gridPos": {
+                "x": 0,
+                "y": 0,
+                "w": 24,
+                "h": 1
+            },
+            "panels": []
+        },
+        {
+            "id": 2,
+            "title": "Metrics endpoint",
+            "type": "stat",
+            "gridPos": {
+                "x": 0,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "description": "Prometheus scrape success only. A successful scrape is not proof of tunnel or Internet reachability.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "SCRAPE FAILED",
+                                    "color": "red",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "SCRAPING",
+                                    "color": "green",
+                                    "index": 1
+                                }
+                            }
+                        }
+                    ]
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "up{job=\"$job\",instance=\"$instance\"}",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 3,
+            "title": "Enabled interfaces observed up",
+            "type": "stat",
+            "gridPos": {
+                "x": 4,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "description": "Filtered by Interface. Observed device state, not external UDP reachability.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "sum(wg_easy_interface_up{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"} * wg_easy_interface_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"})",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 4,
+            "title": "Enabled clients",
+            "type": "stat",
+            "gridPos": {
+                "x": 8,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "description": "Filtered by Interface and Client.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "sum(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"})",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 5,
+            "title": "Enabled clients with recent handshake",
+            "type": "stat",
+            "gridPos": {
+                "x": 12,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "description": "Enabled peers with a handshake less than 10 minutes old. Idle peers can appear disconnected. Filtered by Interface and Client.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "sum((max by (job, instance, interface, client_id, client_name) (wg_easy_client_connected{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"})) * on (job, instance, interface, client_id) (wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}))",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 6,
+            "title": "Enabled groups not verified active",
+            "type": "stat",
+            "gridPos": {
+                "x": 16,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "description": "Filtered by Routing group only. Zero is healthy; no data is not zero.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 1
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "sum(wg_easy_routing_group_enabled{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"} * (1 - wg_easy_routing_group_active{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"}))",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 7,
+            "title": "Global reconciliation degraded",
+            "type": "stat",
+            "gridPos": {
+                "x": 20,
+                "y": 1,
+                "w": 4,
+                "h": 4
+            },
+            "description": "Global coordinator state. Also check revision backlog and per-interface health below.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "NO DEGRADATION",
+                                    "color": "green",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "DEGRADED",
+                                    "color": "red",
+                                    "index": 1
+                                }
+                            }
+                        }
+                    ]
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_runtime_reconciliation_degraded{job=\"$job\",instance=\"$instance\"}",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 8,
+            "title": "Reading this dashboard",
+            "type": "text",
+            "gridPos": {
+                "x": 0,
+                "y": 5,
+                "w": 24,
+                "h": 6
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "mode": "markdown",
+                "content": "**Traffic is measured at the server.** Client upload = peer \u2192 server; client download = server \u2192 peer. Exit peer traffic also includes forwarding, so summing members and exits counts the routed path twice.\n\n**Filters:** Interface + Client apply to client panels; Routing group applies to group health and exit candidate panels; Interface also limits exit candidates. Global reconciliation and scrape health stay instance-wide. **Recent handshake \u2260 end-to-end health.** Gaps mean missing data. Routing-group byte attribution and per-group selected exits are not exposed by this exporter."
+            }
+        },
+        {
+            "id": 9,
+            "title": "Peer-side throughput \u00b7 all selected peers",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 0,
+                "y": 11,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Sum of selected peer counters. Includes exit forwarding when exits are selected; not unique Internet usage. rate() is calculated before aggregation and handles observed counter resets.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bps",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "axisBorderShow": false,
+                        "stacking": {
+                            "mode": "none",
+                            "group": "A"
+                        }
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": ["lastNotNull", "max"]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "8 * sum(sum by (job, instance, interface, client_id, client_name) (rate(wireguard_received_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}[$__rate_interval])))",
+                    "legendFormat": "Peer \u2192 server",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "B",
+                    "expr": "8 * sum(sum by (job, instance, interface, client_id, client_name) (rate(wireguard_sent_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}[$__rate_interval])))",
+                    "legendFormat": "Server \u2192 peer",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 10,
+            "title": "Client connectivity over time",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 12,
+                "y": 11,
+                "w": 12,
+                "h": 8
+            },
+            "description": "The application uses a fixed 10-minute handshake threshold. Disabled clients are excluded from recent-handshake and stale counts.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "axisBorderShow": false,
+                        "stacking": {
+                            "mode": "none",
+                            "group": "A"
+                        }
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": ["lastNotNull", "max"]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "sum(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"})",
+                    "legendFormat": "Enabled",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "B",
+                    "expr": "sum((max by (job, instance, interface, client_id, client_name) (wg_easy_client_connected{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"})) * on (job, instance, interface, client_id) (wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}))",
+                    "legendFormat": "Recent handshake",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "C",
+                    "expr": "sum(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}) - sum((max by (job, instance, interface, client_id, client_name) (wg_easy_client_connected{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"})) * on (job, instance, interface, client_id) (wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}))",
+                    "legendFormat": "Enabled without recent handshake",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 11,
+            "title": "Clients \u00b7 traffic and connectivity",
+            "type": "row",
+            "collapsed": false,
+            "gridPos": {
+                "x": 0,
+                "y": 19,
+                "w": 24,
+                "h": 1
+            },
+            "panels": []
+        },
+        {
+            "id": 12,
+            "title": "Client upload \u00b7 peer \u2192 server",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 0,
+                "y": 20,
+                "w": 12,
+                "h": 9
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bps",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "axisBorderShow": false,
+                        "stacking": {
+                            "mode": "none",
+                            "group": "A"
+                        }
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": ["lastNotNull", "max"]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "8 * (sum by (job, instance, interface, client_id, client_name) (rate(wireguard_received_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}[$__rate_interval])))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 13,
+            "title": "Client download \u00b7 server \u2192 peer",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 12,
+                "y": 20,
+                "w": 12,
+                "h": 9
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bps",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "axisBorderShow": false,
+                        "stacking": {
+                            "mode": "none",
+                            "group": "A"
+                        }
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": ["lastNotNull", "max"]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "8 * (sum by (job, instance, interface, client_id, client_name) (rate(wireguard_sent_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}[$__rate_interval])))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 14,
+            "title": "Top 10 upload volumes \u00b7 selected time range",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 0,
+                "y": 29,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Estimated transferred bytes during the selected range, not lifetime counters. Counter resets are handled; missed scrapes, label changes and unseen resets can undercount. Includes whole-peer traffic for exit clients.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bytes",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "topk(10, sum by (job, instance, interface, client_id, client_name) (increase(wireguard_received_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}[$__range])))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 15,
+            "title": "Top 10 download volumes \u00b7 selected time range",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 12,
+                "y": 29,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Estimated transferred bytes during the selected range, not lifetime counters. Counter resets are handled; missed scrapes, label changes and unseen resets can undercount. Includes whole-peer traffic for exit clients.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bytes",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "topk(10, sum by (job, instance, interface, client_id, client_name) (increase(wireguard_sent_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}[$__range])))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 16,
+            "title": "Client state history",
+            "type": "state-timeline",
+            "gridPos": {
+                "x": 0,
+                "y": 37,
+                "w": 24,
+                "h": 9
+            },
+            "description": "Disabled takes precedence over an old/recent handshake. The recent threshold is 10 minutes; sleeping clients are not necessarily faulty.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "Disabled",
+                                    "color": "gray",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "No recent handshake",
+                                    "color": "orange",
+                                    "index": 1
+                                },
+                                "2": {
+                                    "text": "Recent handshake",
+                                    "color": "green",
+                                    "index": 2
+                                }
+                            }
+                        }
+                    ],
+                    "custom": {
+                        "lineWidth": 0,
+                        "fillOpacity": 90,
+                        "spanNulls": false
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "mergeValues": true,
+                "showValue": "auto",
+                "alignValue": "left",
+                "rowHeight": 0.8,
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}) * on (job, instance, interface, client_id) (1 + (max by (job, instance, interface, client_id, client_name) (wg_easy_client_connected{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"})))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 17,
+            "title": "Current client inventory",
+            "type": "table",
+            "gridPos": {
+                "x": 0,
+                "y": 46,
+                "w": 24,
+                "h": 10
+            },
+            "description": "Enabled is configuration; Recent handshake is the exporter\u2019s observation, which may briefly persist after disabling. An address identifies the client profile, not its current public endpoint.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "auto"
+                        },
+                        "inspect": false
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Recent handshake"
+                        },
+                        "properties": [
+                            {
+                                "id": "mappings",
+                                "value": [
+                                    {
+                                        "type": "value",
+                                        "options": {
+                                            "0": {
+                                                "text": "No",
+                                                "color": "orange",
+                                                "index": 0
+                                            },
+                                            "1": {
+                                                "text": "Yes",
+                                                "color": "green",
+                                                "index": 1
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "id": "custom.cellOptions",
+                                "value": {
+                                    "type": "color-text"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Interface"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Client ID"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 70
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Client"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 155
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Enabled"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 75
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Tunnel IPv4"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 125
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Recent handshake"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 140
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_client_connected{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "table"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "job": true,
+                            "instance": true,
+                            "name": true,
+                            "ipv6Address": true
+                        },
+                        "renameByName": {
+                            "interface": "Interface",
+                            "client_id": "Client ID",
+                            "client_name": "Client",
+                            "enabled": "Enabled",
+                            "ipv4Address": "Tunnel IPv4",
+                            "Value": "Recent handshake"
+                        },
+                        "indexByName": {
+                            "client_name": 0,
+                            "interface": 1,
+                            "client_id": 2,
+                            "enabled": 3,
+                            "Value": 4,
+                            "ipv4Address": 5
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "id": 18,
+            "title": "Time since last observed handshake",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 0,
+                "y": 56,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Computed from timestamps at query time. Clients with no observed handshake are absent here and listed alongside.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 600
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "sort_desc(max by (job, instance, interface, client_id, client_name) (time() - wireguard_latest_handshake_timestamp_seconds{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 19,
+            "title": "Enabled clients with no observed handshake",
+            "type": "table",
+            "gridPos": {
+                "x": 12,
+                "y": 56,
+                "w": 12,
+                "h": 8
+            },
+            "description": "No current handshake timestamp. This can mean never connected, a recreated interface, or unavailable peer runtime data. Empty is expected when every enabled client has a timestamp.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "auto"
+                        },
+                        "inspect": false
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Interface"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Client ID"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 70
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Client"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 155
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Enabled"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 75
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"} == 1) unless on (job, instance, interface, client_id) wireguard_latest_handshake_timestamp_seconds{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\",client_id=~\"${client:regex}\"}",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "table"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "job": true,
+                            "instance": true,
+                            "name": true,
+                            "ipv6Address": true
+                        },
+                        "renameByName": {
+                            "interface": "Interface",
+                            "client_id": "Client ID",
+                            "client_name": "Client",
+                            "Value": "Enabled"
+                        },
+                        "indexByName": {
+                            "client_name": 0,
+                            "interface": 1,
+                            "client_id": 2,
+                            "Value": 3
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "id": 20,
+            "title": "Routing groups \u00b7 verified policy health",
+            "type": "row",
+            "collapsed": false,
+            "gridPos": {
+                "x": 0,
+                "y": 64,
+                "w": 24,
+                "h": 1
+            },
+            "panels": []
+        },
+        {
+            "id": 21,
+            "title": "Routing-group state history",
+            "type": "state-timeline",
+            "gridPos": {
+                "x": 0,
+                "y": 65,
+                "w": 24,
+                "h": 9
+            },
+            "description": "Active means the latest desired policy is verified. No selected exit covers awaiting_exit, blocked and host_fallback; these cannot be distinguished with current metrics. Group health ignores Interface and Client filters.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "Disabled",
+                                    "color": "gray",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "Verified active",
+                                    "color": "green",
+                                    "index": 1
+                                },
+                                "2": {
+                                    "text": "Not verified active",
+                                    "color": "orange",
+                                    "index": 2
+                                },
+                                "3": {
+                                    "text": "No selected exit",
+                                    "color": "red",
+                                    "index": 3
+                                }
+                            }
+                        }
+                    ],
+                    "custom": {
+                        "lineWidth": 0,
+                        "fillOpacity": 90,
+                        "spanNulls": false
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "mergeValues": true,
+                "showValue": "auto",
+                "alignValue": "left",
+                "rowHeight": 0.8,
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_routing_group_enabled{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"} * (2 - wg_easy_routing_group_active{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"} + wg_easy_routing_group_all_exits_down{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"})",
+                    "legendFormat": "{{group_name}} \u00b7 #{{group_id}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 22,
+            "title": "Current routing-group state",
+            "type": "table",
+            "gridPos": {
+                "x": 0,
+                "y": 74,
+                "w": 12,
+                "h": 8
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "auto"
+                        },
+                        "inspect": false
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "State"
+                        },
+                        "properties": [
+                            {
+                                "id": "mappings",
+                                "value": [
+                                    {
+                                        "type": "value",
+                                        "options": {
+                                            "0": {
+                                                "text": "Disabled",
+                                                "color": "gray",
+                                                "index": 0
+                                            },
+                                            "1": {
+                                                "text": "Verified active",
+                                                "color": "green",
+                                                "index": 1
+                                            },
+                                            "2": {
+                                                "text": "Not verified active",
+                                                "color": "orange",
+                                                "index": 2
+                                            },
+                                            "3": {
+                                                "text": "No selected exit",
+                                                "color": "red",
+                                                "index": 3
+                                            }
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "id": "custom.cellOptions",
+                                "value": {
+                                    "type": "color-text"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Group ID"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 70
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Routing group"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 150
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "State"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 150
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_routing_group_enabled{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"} * (2 - wg_easy_routing_group_active{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"} + wg_easy_routing_group_all_exits_down{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"})",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "table"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "job": true,
+                            "instance": true,
+                            "name": true,
+                            "ipv6Address": true
+                        },
+                        "renameByName": {
+                            "group_id": "Group ID",
+                            "group_name": "Routing group",
+                            "Value": "State"
+                        },
+                        "indexByName": {
+                            "group_name": 0,
+                            "group_id": 1,
+                            "Value": 2
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "id": 23,
+            "title": "Configured members per group",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 12,
+                "y": 74,
+                "w": 6,
+                "h": 8
+            },
+            "description": "Configured membership count, not the number online. No membership-to-client mapping is exported.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_routing_group_members{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"}",
+                    "legendFormat": "{{group_name}} \u00b7 #{{group_id}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 24,
+            "title": "Routed IPv4 prefixes per group",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 18,
+                "y": 74,
+                "w": 6,
+                "h": 8
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_routing_group_prefixes{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\"}",
+                    "legendFormat": "{{group_name}} \u00b7 #{{group_id}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 25,
+            "title": "Routing-group traffic \u00b7 exporter limitation",
+            "type": "text",
+            "gridPos": {
+                "x": 0,
+                "y": 82,
+                "w": 24,
+                "h": 4
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "mode": "markdown",
+                "content": "### Per-group member traffic is not available\nThe current exporter provides neither client-to-group membership nor routing-rule byte counters. A truthful member-traffic total per group therefore cannot be calculated. Even with membership labels, summing client traffic would measure **all traffic of the members**, not just traffic matching routed prefixes.\n\nBelow, choose a **Routing group** to inspect the **whole-peer traffic of its configured exit candidates**. Shared exits appear once; their bytes are not attributed to the selected group. Primary and backup candidates are both included."
+            }
+        },
+        {
+            "id": 26,
+            "title": "Exit clients \u00b7 candidates for selected routing groups",
+            "type": "row",
+            "collapsed": false,
+            "gridPos": {
+                "x": 0,
+                "y": 86,
+                "w": 24,
+                "h": 1
+            },
+            "panels": []
+        },
+        {
+            "id": 27,
+            "title": "Traffic sent to exit peers \u00b7 server \u2192 exit",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 0,
+                "y": 87,
+                "w": 12,
+                "h": 9
+            },
+            "description": "Whole-peer server TX, typically including forwarded member uploads. Filters to configured candidates, not only active exits. Includes traffic from other groups and the exit\u2019s own traffic.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bps",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "axisBorderShow": false,
+                        "stacking": {
+                            "mode": "none",
+                            "group": "A"
+                        }
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": ["lastNotNull", "max"]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "8 * ((sum by (job, instance, interface, client_id, client_name) (rate(wireguard_sent_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}[$__rate_interval]))) and on (job, instance, interface, client_id) (max by (job, instance, interface, client_id, client_name) (wg_easy_exit_client_candidate_priority{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\",interface=~\"${interface:regex}\"} >= bool 0)))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 28,
+            "title": "Traffic received from exit peers \u00b7 exit \u2192 server",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 12,
+                "y": 87,
+                "w": 12,
+                "h": 9
+            },
+            "description": "Whole-peer server RX, typically including return traffic to members. Shared candidates are deduplicated by job, instance, interface and client ID. No per-group byte attribution.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "bps",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "axisBorderShow": false,
+                        "stacking": {
+                            "mode": "none",
+                            "group": "A"
+                        }
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": ["lastNotNull", "max"]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "8 * ((sum by (job, instance, interface, client_id, client_name) (rate(wireguard_received_bytes{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}[$__rate_interval]))) and on (job, instance, interface, client_id) (max by (job, instance, interface, client_id, client_name) (wg_easy_exit_client_candidate_priority{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\",interface=~\"${interface:regex}\"} >= bool 0)))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 29,
+            "title": "Exit candidate handshake history",
+            "type": "state-timeline",
+            "gridPos": {
+                "x": 0,
+                "y": 96,
+                "w": 24,
+                "h": 8
+            },
+            "description": "Uses the generic 10-minute client threshold, not the routing health timeout. A recent handshake alone does not prove an exit is eligible or selected.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "Disabled",
+                                    "color": "gray",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "No recent handshake",
+                                    "color": "orange",
+                                    "index": 1
+                                },
+                                "2": {
+                                    "text": "Recent handshake",
+                                    "color": "green",
+                                    "index": 2
+                                }
+                            }
+                        }
+                    ],
+                    "custom": {
+                        "lineWidth": 0,
+                        "fillOpacity": 90,
+                        "spanNulls": false
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "mergeValues": true,
+                "showValue": "auto",
+                "alignValue": "left",
+                "rowHeight": 0.8,
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"} * on (job, instance, interface, client_id) (1 + (max by (job, instance, interface, client_id, client_name) (wg_easy_client_connected{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"})))) and on (job, instance, interface, client_id) (max by (job, instance, interface, client_id, client_name) (wg_easy_exit_client_candidate_priority{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\",interface=~\"${interface:regex}\"} >= bool 0))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 30,
+            "title": "Configured exit priority by group",
+            "type": "table",
+            "gridPos": {
+                "x": 0,
+                "y": 104,
+                "w": 12,
+                "h": 9
+            },
+            "description": "Lower priority is preferred. Configuration only: the exporter does not identify the selected exit for each group. Client filter does not apply.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "auto"
+                        },
+                        "inspect": false
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Group ID"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 70
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Interface"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Exit client ID"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 90
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Exit client"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 155
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_exit_client_candidate_priority{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\",interface=~\"${interface:regex}\"}",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "table"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "job": true,
+                            "instance": true,
+                            "name": true,
+                            "ipv6Address": true
+                        },
+                        "renameByName": {
+                            "group_id": "Group ID",
+                            "interface": "Interface",
+                            "client_id": "Exit client ID",
+                            "client_name": "Exit client",
+                            "Value": "Priority"
+                        },
+                        "indexByName": {
+                            "client_name": 0,
+                            "interface": 1,
+                            "client_id": 2,
+                            "group_id": 3,
+                            "Value": 4
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "id": 31,
+            "title": "Active group count per exit \u00b7 all groups",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 12,
+                "y": 104,
+                "w": 12,
+                "h": 9
+            },
+            "description": "The Routing group filter selects candidate clients, but each exported count covers ALL groups for that exit. This runtime count does not independently prove the latest desired revision is active; use group health above.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "(wg_easy_exit_client_active_groups{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}) and on (job, instance, interface, client_id) (max by (job, instance, interface, client_id, client_name) (wg_easy_exit_client_candidate_priority{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\",interface=~\"${interface:regex}\"} >= bool 0))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 32,
+            "title": "Configured groups depending on exit \u00b7 all groups",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 0,
+                "y": 113,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Includes primary/backup candidacy and disabled groups. Count covers all configured groups, even when a single group is selected.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "(wg_easy_exit_client_groups{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}) and on (job, instance, interface, client_id) (max by (job, instance, interface, client_id, client_name) (wg_easy_exit_client_candidate_priority{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\",interface=~\"${interface:regex}\"} >= bool 0))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 33,
+            "title": "Configured members depending on exit \u00b7 all groups",
+            "type": "bargauge",
+            "gridPos": {
+                "x": 12,
+                "y": 113,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Potential dependency count across all groups configuring this exit. Not active forwarding clients; not additive across primary/backup exits.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": false,
+                "valueMode": "color"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "(wg_easy_exit_client_members{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}) and on (job, instance, interface, client_id) (max by (job, instance, interface, client_id, client_name) (wg_easy_exit_client_candidate_priority{job=\"$job\",instance=\"$instance\",group_id=~\"${group:regex}\",interface=~\"${interface:regex}\"} >= bool 0))",
+                    "legendFormat": "{{client_name}} \u00b7 #{{client_id}} \u00b7 {{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 34,
+            "title": "Interfaces and reconciliation \u00b7 diagnostics",
+            "type": "row",
+            "collapsed": false,
+            "gridPos": {
+                "x": 0,
+                "y": 121,
+                "w": 24,
+                "h": 1
+            },
+            "panels": []
+        },
+        {
+            "id": 35,
+            "title": "Interface observed state",
+            "type": "state-timeline",
+            "gridPos": {
+                "x": 0,
+                "y": 122,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Enabled and observed-up state only. Does not prove configuration convergence or published UDP reachability.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "Disabled",
+                                    "color": "gray",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "Enabled / down",
+                                    "color": "red",
+                                    "index": 1
+                                },
+                                "2": {
+                                    "text": "Enabled / up",
+                                    "color": "green",
+                                    "index": 2
+                                }
+                            }
+                        }
+                    ],
+                    "custom": {
+                        "lineWidth": 0,
+                        "fillOpacity": 90,
+                        "spanNulls": false
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "mergeValues": true,
+                "showValue": "auto",
+                "alignValue": "left",
+                "rowHeight": 0.8,
+                "legend": {
+                    "displayMode": "list",
+                    "placement": "bottom"
+                },
+                "tooltip": {
+                    "mode": "single"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_interface_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"} * (1 + wg_easy_interface_up{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"})",
+                    "legendFormat": "{{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 36,
+            "title": "Interface revision backlog",
+            "type": "timeseries",
+            "gridPos": {
+                "x": 12,
+                "y": 122,
+                "w": 12,
+                "h": 8
+            },
+            "description": "Desired minus applied revision. Zero means no revision backlog; check degraded and restart-required flags separately.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "min": 0,
+                    "custom": {
+                        "drawStyle": "line",
+                        "lineInterpolation": "linear",
+                        "lineWidth": 2,
+                        "fillOpacity": 10,
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "axisBorderShow": false,
+                        "stacking": {
+                            "mode": "none",
+                            "group": "A"
+                        }
+                    }
+                },
+                "overrides": []
+            },
+            "options": {
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                },
+                "legend": {
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "calcs": ["lastNotNull", "max"]
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "clamp_min(wg_easy_interface_desired_revision{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"} - wg_easy_interface_applied_revision{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}, 0)",
+                    "legendFormat": "{{interface}}",
+                    "editorMode": "code",
+                    "range": true,
+                    "instant": false,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 37,
+            "title": "Interface reconciliation degraded",
+            "type": "stat",
+            "gridPos": {
+                "x": 0,
+                "y": 130,
+                "w": 6,
+                "h": 5
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "OK",
+                                    "color": "green",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "Degraded",
+                                    "color": "red",
+                                    "index": 1
+                                }
+                            }
+                        }
+                    ]
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_interface_reconciliation_degraded{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}",
+                    "legendFormat": "{{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 38,
+            "title": "Interface restart required",
+            "type": "stat",
+            "gridPos": {
+                "x": 6,
+                "y": 130,
+                "w": 6,
+                "h": 5
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [
+                        {
+                            "type": "value",
+                            "options": {
+                                "0": {
+                                    "text": "No restart pending",
+                                    "color": "green",
+                                    "index": 0
+                                },
+                                "1": {
+                                    "text": "Restart required",
+                                    "color": "orange",
+                                    "index": 1
+                                }
+                            }
+                        }
+                    ]
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_interface_restart_required{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}",
+                    "legendFormat": "{{interface}}",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 39,
+            "title": "Global revision backlog",
+            "type": "stat",
+            "gridPos": {
+                "x": 12,
+                "y": 130,
+                "w": 6,
+                "h": 5
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "orange",
+                                "value": 1
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "clamp_min(wg_easy_runtime_desired_revision{job=\"$job\",instance=\"$instance\"} - wg_easy_runtime_applied_revision{job=\"$job\",instance=\"$instance\"}, 0)",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 40,
+            "title": "Time since last successful reconcile",
+            "type": "stat",
+            "gridPos": {
+                "x": 18,
+                "y": 130,
+                "w": 6,
+                "h": 5
+            },
+            "description": "Informational: an idle system may not need a new reconcile. No data means there is no successful timestamp, or the metric is unavailable. No age-based failure threshold is implied.",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "s",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "fixed",
+                        "fixedColor": "blue"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": []
+                },
+                "overrides": []
+            },
+            "options": {
+                "reduceOptions": {
+                    "calcs": ["lastNotNull"],
+                    "fields": "",
+                    "values": false
+                },
+                "colorMode": "background_solid",
+                "graphMode": "none",
+                "justifyMode": "auto",
+                "textMode": "auto",
+                "orientation": "auto"
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "time() - (wg_easy_runtime_last_success_timestamp_seconds{job=\"$job\",instance=\"$instance\"} > 0)",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "time_series"
+                }
+            ]
+        },
+        {
+            "id": 41,
+            "title": "Current interface runtime status",
+            "type": "table",
+            "gridPos": {
+                "x": 0,
+                "y": 135,
+                "w": 12,
+                "h": 7
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "auto"
+                        },
+                        "inspect": false
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Interface"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Runtime status"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 150
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "AWG parameters"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 125
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Default export"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 140
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_interface_runtime_status{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "table"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "job": true,
+                            "instance": true,
+                            "name": true,
+                            "ipv6Address": true,
+                            "Value": true
+                        },
+                        "renameByName": {
+                            "interface": "Interface",
+                            "status": "Runtime status",
+                            "Value": "Present"
+                        },
+                        "indexByName": {
+                            "interface": 0,
+                            "Value": 1,
+                            "status": 2
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "id": 42,
+            "title": "Interface compatibility and export defaults",
+            "type": "table",
+            "gridPos": {
+                "x": 12,
+                "y": 135,
+                "w": 12,
+                "h": 7
+            },
+            "description": "",
+            "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+            },
+            "fieldConfig": {
+                "defaults": {
+                    "unit": "short",
+                    "noValue": "No data",
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "mappings": [],
+                    "custom": {
+                        "align": "auto",
+                        "cellOptions": {
+                            "type": "auto"
+                        },
+                        "inspect": false
+                    }
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Interface"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 85
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Runtime status"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 150
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "AWG parameters"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 125
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Default export"
+                        },
+                        "properties": [
+                            {
+                                "id": "custom.width",
+                                "value": 140
+                            }
+                        ]
+                    }
+                ]
+            },
+            "options": {
+                "showHeader": true,
+                "cellHeight": "sm",
+                "footer": {
+                    "show": false
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "${datasource}"
+                    },
+                    "refId": "A",
+                    "expr": "wg_easy_interface_info{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}",
+                    "legendFormat": "",
+                    "editorMode": "code",
+                    "range": false,
+                    "instant": true,
+                    "format": "table"
+                }
+            ],
+            "transformations": [
+                {
+                    "id": "organize",
+                    "options": {
+                        "excludeByName": {
+                            "Time": true,
+                            "__name__": true,
+                            "job": true,
+                            "instance": true,
+                            "name": true,
+                            "ipv6Address": true,
+                            "Value": true
+                        },
+                        "renameByName": {
+                            "interface": "Interface",
+                            "awg_parameters_enabled": "AWG parameters",
+                            "default_config_format": "Default export",
+                            "Value": "Present"
+                        },
+                        "indexByName": {
+                            "interface": 0,
+                            "Value": 1,
+                            "awg_parameters_enabled": 2,
+                            "default_config_format": 3
+                        }
+                    }
+                }
+            ]
+        }
+    ],
+    "templating": {
+        "list": [
+            {
+                "name": "datasource",
+                "label": "Prometheus",
+                "type": "datasource",
+                "query": "prometheus",
+                "refresh": 1,
+                "options": [],
+                "current": {},
+                "hide": 0
+            },
+            {
+                "name": "job",
+                "label": "Job",
+                "type": "query",
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                },
+                "definition": "label_values(wg_easy_runtime_desired_revision, job)",
+                "query": {
+                    "query": "label_values(wg_easy_runtime_desired_revision, job)",
+                    "refId": "StandardVariableQuery"
+                },
+                "refresh": 1,
+                "sort": 1,
+                "multi": false,
+                "includeAll": false,
+                "allValue": null,
+                "options": [],
+                "current": {},
+                "hide": 0
+            },
+            {
+                "name": "instance",
+                "label": "Instance",
+                "type": "query",
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                },
+                "definition": "label_values(wg_easy_runtime_desired_revision{job=\"$job\"}, instance)",
+                "query": {
+                    "query": "label_values(wg_easy_runtime_desired_revision{job=\"$job\"}, instance)",
+                    "refId": "StandardVariableQuery"
+                },
+                "refresh": 1,
+                "sort": 1,
+                "multi": false,
+                "includeAll": false,
+                "allValue": null,
+                "options": [],
+                "current": {},
+                "hide": 0
+            },
+            {
+                "name": "interface",
+                "label": "Interface",
+                "type": "query",
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                },
+                "definition": "label_values(wg_easy_interface_enabled{job=\"$job\",instance=\"$instance\"}, interface)",
+                "query": {
+                    "query": "label_values(wg_easy_interface_enabled{job=\"$job\",instance=\"$instance\"}, interface)",
+                    "refId": "StandardVariableQuery"
+                },
+                "refresh": 1,
+                "sort": 1,
+                "multi": true,
+                "includeAll": true,
+                "allValue": ".*",
+                "options": [],
+                "current": {
+                    "text": "All",
+                    "value": "$__all"
+                },
+                "hide": 0
+            },
+            {
+                "name": "client",
+                "label": "Client ID",
+                "type": "query",
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                },
+                "definition": "label_values(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}, client_id)",
+                "query": {
+                    "query": "label_values(wg_easy_client_enabled{job=\"$job\",instance=\"$instance\",interface=~\"${interface:regex}\"}, client_id)",
+                    "refId": "StandardVariableQuery"
+                },
+                "refresh": 1,
+                "sort": 1,
+                "multi": true,
+                "includeAll": true,
+                "allValue": ".*",
+                "options": [],
+                "current": {
+                    "text": "All",
+                    "value": "$__all"
+                },
+                "hide": 0
+            },
+            {
+                "name": "group",
+                "label": "Routing group ID",
+                "type": "query",
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                },
+                "definition": "label_values(wg_easy_routing_group_enabled{job=\"$job\",instance=\"$instance\"}, group_id)",
+                "query": {
+                    "query": "label_values(wg_easy_routing_group_enabled{job=\"$job\",instance=\"$instance\"}, group_id)",
+                    "refId": "StandardVariableQuery"
+                },
+                "refresh": 1,
+                "sort": 1,
+                "multi": true,
+                "includeAll": true,
+                "allValue": ".*",
+                "options": [],
+                "current": {
+                    "text": "All",
+                    "value": "$__all"
+                },
+                "hide": 0
+            }
+        ]
+    }
+}

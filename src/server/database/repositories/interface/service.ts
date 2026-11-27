@@ -1,3 +1,7 @@
+import {
+  HeaderProtectionConfigurationError,
+  assertHeaderProtectionConfiguration,
+} from '#server/utils/headerProtection';
 import { eq, ne, sql } from 'drizzle-orm';
 import { containsCidr, parseCidr } from 'cidr-tools';
 
@@ -158,16 +162,33 @@ export class InterfaceService {
 
   async update(interfaceId: string, data: InterfaceUpdateType) {
     await this.assertCidrAndPortAvailable(data, interfaceId);
-    return this.#db.transaction(async (tx) => {
-      await this.assertCidrAndPortAvailable(data, interfaceId, tx);
-      const result = await tx
-        .update(wgInterface)
-        .set(data)
-        .where(eq(wgInterface.name, interfaceId))
-        .execute();
-      await bumpDesiredRevision(tx, [interfaceId]);
-      return result;
-    });
+    return this.#db
+      .transaction(async (tx) => {
+        await this.assertCidrAndPortAvailable(data, interfaceId, tx);
+        const previous = await tx.query.wgInterface.findFirst({
+          where: eq(wgInterface.name, interfaceId),
+        });
+        if (!previous) throw new Error('Interface not found');
+        const changes = Object.fromEntries(
+          Object.entries(data).filter(([, value]) => value !== undefined)
+        );
+        assertHeaderProtectionConfiguration({ ...previous, ...changes });
+        const result = await tx
+          .update(wgInterface)
+          .set(data)
+          .where(eq(wgInterface.name, interfaceId))
+          .execute();
+        await bumpDesiredRevision(tx, [interfaceId]);
+        return result;
+      })
+      .catch((error: unknown) => {
+        if (
+          error instanceof HeaderProtectionConfigurationError ||
+          error instanceof InterfaceReservationConflictError
+        )
+          throw error;
+        throw new Error('Interface configuration could not be saved');
+      });
   }
 
   setFirewallEnabled(interfaceId: string, firewallEnabled: boolean) {

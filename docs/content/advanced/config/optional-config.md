@@ -27,3 +27,11 @@ You will however still see a IPv6 address in the Web UI, but it won't be used.
 This option can be removed in the future, as more devices support IPv6.
 
 ///
+
+
+### Trusted proxies
+
+`TRUSTED_PROXIES` is a comma-separated list of numeric IP addresses or CIDRs.
+It is empty by default. Only requests arriving from these peers may supply
+forwarded host and client-address headers. Configure the actual reverse proxy
+addresses; client-supplied forwarding headers from other peers are ignored.

@@ -92,6 +92,13 @@
       "when": 1792298469363,
       "tag": "0012_subnet_policy_contracts",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1794114105354,
+      "tag": "0013_awg31_parameters",
+      "breakpoints": true
     }
   ]
 }

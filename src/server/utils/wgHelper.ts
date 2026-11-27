@@ -2,6 +2,8 @@ import { parseCidr } from 'cidr-tools';
 import { stringifyIp } from 'ip-bigint';
 
 import { removeNewlines, iptablesTemplate } from '#server/utils/template';
+import { interfaceAwgParameters, clientAwgParameters } from '#server/utils/awg';
+import { formatEndpoint } from '#server/utils/endpoint';
 import { generateAwgParameterLines } from '#server/utils/awgConfig';
 import { execFile, withSecureInputFile } from '#server/utils/cmd';
 import { WG_ENV } from '#server/utils/config';
@@ -117,24 +119,7 @@ AllowedIPs = ${allowedIps.join(', ')}${extraLines.length ? `\n${extraLines.join(
 
     const awgLines = generateAwgParameterLines(
       wgInterface.awgParametersEnabled,
-      {
-        Jc: wgInterface.jC,
-        Jmin: wgInterface.jMin,
-        Jmax: wgInterface.jMax,
-        S1: wgInterface.s1,
-        S2: wgInterface.s2,
-        S3: wgInterface.s3,
-        S4: wgInterface.s4,
-        H1: wgInterface.h1,
-        H2: wgInterface.h2,
-        H3: wgInterface.h3,
-        H4: wgInterface.h4,
-        I1: wgInterface.i1,
-        I2: wgInterface.i2,
-        I3: wgInterface.i3,
-        I4: wgInterface.i4,
-        I5: wgInterface.i5,
-      },
+      interfaceAwgParameters(wgInterface),
       wgExecutable
     );
 
@@ -191,24 +176,7 @@ PostDown = ${iptablesTemplate(hooks.postDown, wgInterface)}`;
 
     const awgLines = generateAwgParameterLines(
       resolvedFormat === 'amneziawg' && wgInterface.awgParametersEnabled,
-      {
-        Jc: client.jC,
-        Jmin: client.jMin,
-        Jmax: client.jMax,
-        S1: wgInterface.s1,
-        S2: wgInterface.s2,
-        S3: wgInterface.s3,
-        S4: wgInterface.s4,
-        H1: wgInterface.h1,
-        H2: wgInterface.h2,
-        H3: wgInterface.h3,
-        H4: wgInterface.h4,
-        I1: client.i1,
-        I2: client.i2,
-        I3: client.i3,
-        I4: client.i4,
-        I5: client.i5,
-      },
+      clientAwgParameters(wgInterface, client),
       wgExecutable
     );
 
@@ -226,7 +194,7 @@ PublicKey = ${wgInterface.publicKey}
 ${client.preSharedKey ? `PresharedKey = ${client.preSharedKey}` : ''}
 AllowedIPs = ${(client.allowedIps ?? userConfig.defaultAllowedIps).filter((value) => wgInterface.ipv6Cidr !== null || !value.includes(':')).join(', ')}
 PersistentKeepalive = ${client.persistentKeepalive}
-Endpoint = ${userConfig.host}:${userConfig.port}`;
+Endpoint = ${formatEndpoint(userConfig.host, userConfig.port)}`;
   },
 
   generatePrivateKey: () => {

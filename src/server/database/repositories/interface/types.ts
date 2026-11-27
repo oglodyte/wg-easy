@@ -5,6 +5,8 @@ import type { wgInterface } from './schema';
 
 import {
   EnabledSchema,
+  AwgRangeSchema,
+  HeaderProtectionKeySchema,
   HSchema,
   ISchema,
   JcSchema,
@@ -14,6 +16,7 @@ import {
   PortSchema,
   SSchema,
   schemaForType,
+  t,
 } from '#server/utils/types';
 import {
   Ipv4CidrSchema,
@@ -52,7 +55,30 @@ export type InterfaceUpdateType = Omit<
   | 'privateKey'
   | 'publicKey'
   | 'pendingDelete'
->;
+  | 'headerProtectionKey'
+  | 'contentPaddingAddition'
+  | 'rekeyAfterTime'
+  | 'rekeyTimeout'
+  | 'rejectAfterTime'
+  | 'keepaliveTimeout'
+  | 'maxHandshakeAttempts'
+  | 'randomTrailers'
+  | 'disableCookies'
+> &
+  Partial<
+    Pick<
+      InterfaceType,
+      | 'headerProtectionKey'
+      | 'contentPaddingAddition'
+      | 'rekeyAfterTime'
+      | 'rekeyTimeout'
+      | 'rejectAfterTime'
+      | 'keepaliveTimeout'
+      | 'maxHandshakeAttempts'
+      | 'randomTrailers'
+      | 'disableCookies'
+    >
+  >;
 
 const device = NetworkDeviceSchema;
 
@@ -77,6 +103,15 @@ export const InterfaceUpdateSchema = schemaForType<InterfaceUpdateType>()(
     i3: ISchema,
     i4: ISchema,
     i5: ISchema,
+    headerProtectionKey: HeaderProtectionKeySchema.optional(),
+    contentPaddingAddition: AwgRangeSchema.optional(),
+    rekeyAfterTime: AwgRangeSchema.optional(),
+    rekeyTimeout: AwgRangeSchema.optional(),
+    rejectAfterTime: AwgRangeSchema.optional(),
+    keepaliveTimeout: AwgRangeSchema.optional(),
+    maxHandshakeAttempts: AwgRangeSchema.optional(),
+    randomTrailers: EnabledSchema.nullable().optional(),
+    disableCookies: EnabledSchema.nullable().optional(),
     port: PortSchema,
     device: device,
     enabled: EnabledSchema,
@@ -85,6 +120,20 @@ export const InterfaceUpdateSchema = schemaForType<InterfaceUpdateType>()(
     defaultConfigFormat: z.enum(['wireguard', 'amneziawg']),
   })
 ).superRefine((value, context) => {
+  if (value.headerProtectionKey) {
+    for (const field of ['s1', 's2', 's3', 's4'] as const) {
+      if (
+        value[field] === null ||
+        !Number.isInteger(value[field]) ||
+        value[field] < 12
+      )
+        context.addIssue({
+          code: 'custom',
+          path: [field],
+          message: t('zod.interface.headerProtectionJunkSize'),
+        });
+    }
+  }
   if (value.awgParametersEnabled && value.defaultConfigFormat === 'wireguard') {
     context.addIssue({
       code: 'custom',

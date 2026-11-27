@@ -243,7 +243,7 @@ export function buildRoutingPolicyTransition(
     const any = family === 4 ? '0.0.0.0/0' : '::/0';
     const siteRanges = [...new Set([...oldSites.keys(), ...newSites.keys()])]
       .filter((prefix) => oldSites.get(prefix) !== newSites.get(prefix))
-      .map(parseCidr)
+      .map((prefix) => parseCidr(prefix))
       .filter((p) => p.version === family)
       .map((p) => ({ start: p.start, end: p.end + 1n }));
     for (const prefix of claimRangeCidrs(siteRanges, family)) {

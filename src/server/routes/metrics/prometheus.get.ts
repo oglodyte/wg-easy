@@ -103,6 +103,7 @@ export async function getPrometheusResponse() {
   const connected: string[] = [];
   const clientEnabled: string[] = [];
   const clientInfo: string[] = [];
+  const endpointInfo: string[] = [];
   let totalEnabled = 0;
   let totalConnected = 0;
 
@@ -142,6 +143,10 @@ export async function getPrometheusResponse() {
         ipv6_address: client.ipv6Address ?? '',
       })}} 1`
     );
+    if (client.endpoint)
+      endpointInfo.push(
+        `wireguard_peer_endpoint_info{${formatPrometheusLabels({ interface: client.interfaceId, client_id: client.id, endpoint: client.endpoint })}} 1`
+      );
     if (client.latestHandshakeAt) {
       handshakeAge.push(
         `wireguard_latest_handshake_seconds{${labels}} ${(Date.now() - client.latestHandshakeAt.getTime()) / 1000}`
@@ -260,6 +265,9 @@ export async function getPrometheusResponse() {
     '# HELP wg_easy_client_info Client profile addresses and stable identity',
     '# TYPE wg_easy_client_info gauge',
     ...clientInfo,
+    '# HELP wireguard_peer_endpoint_info Current observed peer endpoint (address and port)',
+    '# TYPE wireguard_peer_endpoint_info gauge',
+    ...endpointInfo,
     '',
     '# HELP wg_easy_routing_groups_total Configured routing groups',
     '# TYPE wg_easy_routing_groups_total gauge',

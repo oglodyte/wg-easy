@@ -146,9 +146,126 @@
           :label="$t('awg.h3Label')" /><FormNullTextField
           id="h4"
           v-model="interfaceData.h4"
-          :label="$t('awg.h4Label')" /><FormPrimaryActionField
-          type="submit"
-          :label="$t('form.save')"
+          :label="$t('awg.h4Label')" />
+        <FormNullNumberField
+          id="s1"
+          v-model="interfaceData.s1"
+          :label="$t('awg.s1Label')"
+          :description="$t('awg.s1Description')" />
+        <FormNullNumberField
+          id="s2"
+          v-model="interfaceData.s2"
+          :label="$t('awg.s2Label')"
+          :description="$t('awg.s2Description')" />
+        <FormNullNumberField
+          id="s3"
+          v-model="interfaceData.s3"
+          :label="$t('awg.s3Label')"
+          :description="$t('awg.s3Description')" />
+        <FormNullNumberField
+          id="s4"
+          v-model="interfaceData.s4"
+          :label="$t('awg.s4Label')"
+          :description="$t('awg.s4Description')" />
+        <FormNullTextField
+          id="i1"
+          v-model="interfaceData.i1"
+          :label="$t('awg.i1Label')"
+          :description="$t('awg.i1Description')" />
+        <FormNullTextField
+          id="i2"
+          v-model="interfaceData.i2"
+          :label="$t('awg.i2Label')"
+          :description="$t('awg.i2Description')" />
+        <FormNullTextField
+          id="i3"
+          v-model="interfaceData.i3"
+          :label="$t('awg.i3Label')"
+          :description="$t('awg.i3Description')" />
+        <FormNullTextField
+          id="i4"
+          v-model="interfaceData.i4"
+          :label="$t('awg.i4Label')"
+          :description="$t('awg.i4Description')" />
+        <FormNullTextField
+          id="i5"
+          v-model="interfaceData.i5"
+          :label="$t('awg.i5Label')"
+          :description="$t('awg.i5Description')" />
+        <FormNullTextField
+          id="contentPaddingAddition"
+          v-model="interfaceData.contentPaddingAddition"
+          :label="$t('awg.contentPaddingAdditionLabel')"
+          :description="$t('awg.contentPaddingAdditionDescription')" />
+        <FormNullTextField
+          id="rekeyAfterTime"
+          v-model="interfaceData.rekeyAfterTime"
+          :label="$t('awg.rekeyAfterTimeLabel')"
+          :description="$t('awg.rekeyAfterTimeDescription')" />
+        <FormNullTextField
+          id="rekeyTimeout"
+          v-model="interfaceData.rekeyTimeout"
+          :label="$t('awg.rekeyTimeoutLabel')"
+          :description="$t('awg.rekeyTimeoutDescription')" />
+        <FormNullTextField
+          id="rejectAfterTime"
+          v-model="interfaceData.rejectAfterTime"
+          :label="$t('awg.rejectAfterTimeLabel')"
+          :description="$t('awg.rejectAfterTimeDescription')" />
+        <FormNullTextField
+          id="keepaliveTimeout"
+          v-model="interfaceData.keepaliveTimeout"
+          :label="$t('awg.keepaliveTimeoutLabel')"
+          :description="$t('awg.keepaliveTimeoutDescription')" />
+        <FormNullTextField
+          id="maxHandshakeAttempts"
+          v-model="interfaceData.maxHandshakeAttempts"
+          :label="$t('awg.maxHandshakeAttemptsLabel')"
+          :description="$t('awg.maxHandshakeAttemptsDescription')" />
+        <FormNullSwitchField
+          id="randomTrailers"
+          v-model="interfaceData.randomTrailers"
+          :label="$t('awg.randomTrailersLabel')"
+          :description="$t('awg.randomTrailersDescription')" />
+        <FormNullSwitchField
+          id="disableCookies"
+          v-model="interfaceData.disableCookies"
+          :label="$t('awg.disableCookiesLabel')"
+          :description="$t('awg.disableCookiesDescription')" />
+        <label for="headerProtectionAction">{{
+          $t('awg.headerProtectionKeyLabel')
+        }}</label>
+        <select id="headerProtectionAction" v-model="headerProtectionAction">
+          <option value="preserve">
+            {{ $t('awg.preserveHeaderProtectionKey') }}
+          </option>
+          <option value="replace">
+            {{ $t('awg.replaceHeaderProtectionKey') }}
+          </option>
+          <option value="clear">
+            {{ $t('awg.clearHeaderProtectionKey') }}
+          </option>
+        </select>
+        <template v-if="headerProtectionAction === 'replace'"
+          ><FormLabel for="headerProtectionKey">{{
+            $t('awg.headerProtectionKeyLabel')
+          }}</FormLabel
+          ><BaseInput
+            id="headerProtectionKey"
+            v-model.trim="headerProtectionKey"
+            type="password"
+            autocomplete="new-password"
+        /></template>
+        <p class="col-span-full">
+          {{
+            $t(
+              interfaceData.hasHeaderProtectionKey
+                ? 'awg.headerProtectionKeyConfigured'
+                : 'awg.headerProtectionKeyAbsent'
+            )
+          }}
+        </p>
+        <FormPrimaryActionField type="submit" :label="$t('form.save')"
       /></FormGroup>
       <FormGroup v-if="tab === 'firewall'"
         ><FormHeading>{{ $t('admin.interface.firewall') }}</FormHeading
@@ -171,13 +288,22 @@
           id="endpointPort"
           v-model="defaults.port"
           :label="$t('admin.interfaces.endpointPort')"
-          :description="
-            $t('admin.interfaces.endpointPortDesc')
-          " /><FormArrayField
+          :description="$t('admin.interfaces.endpointPortDesc')"
+      /></FormGroup>
+      <FormGroup>
+        <FormHeading>{{ $t('general.allowedIps') }}</FormHeading>
+        <FormArrayField
           v-model="defaults.defaultAllowedIps"
-          name="defaultAllowedIps" /><FormArrayField
-          v-model="defaults.defaultDns"
-          name="defaultDns" /><FormNumberField
+          name="defaultAllowedIps"
+        />
+      </FormGroup>
+      <FormGroup>
+        <FormHeading>{{ $t('general.dns') }}</FormHeading>
+        <FormArrayField v-model="defaults.defaultDns" name="defaultDns" />
+      </FormGroup>
+      <FormGroup>
+        <FormHeading>{{ $t('form.sectionAdvanced') }}</FormHeading>
+        <FormNumberField
           id="defaultMtu"
           v-model="defaults.defaultMtu"
           :label="$t('general.mtu')" /><FormNumberField
@@ -230,7 +356,8 @@ type InterfaceRuntime = {
   desiredRevision?: number;
   appliedRevision?: number;
 };
-type InterfaceDetail = InterfaceUpdateType & {
+type InterfaceDetail = Omit<InterfaceUpdateType, 'headerProtectionKey'> & {
+  hasHeaderProtectionKey: boolean;
   name: string;
   isDefault: boolean;
   runtime?: InterfaceRuntime;
@@ -241,15 +368,22 @@ const interfaceId = route.params.interfaceId as string;
 const { t } = useI18n();
 const globalStore = useGlobalStore();
 const { data: interfaceData, refresh: refreshInterface } =
-  await useFetch<InterfaceDetail>(`/api/admin/interfaces/${interfaceId}`);
+  await useFetch<InterfaceDetail>(`/api/admin/interfaces/${interfaceId}`, {
+    deep: true,
+  });
 const { data: defaults, refresh: refreshDefaults } =
   await useFetch<UserConfigUpdateType>(
-    `/api/admin/interfaces/${interfaceId}/userconfig`
+    `/api/admin/interfaces/${interfaceId}/userconfig`,
+    { deep: true }
   );
 const { data: hooks, refresh: refreshHooks } = await useFetch<HooksUpdateType>(
   `/api/admin/interfaces/${interfaceId}/hooks`
 );
 const tab = ref('overview');
+const headerProtectionAction = ref<'preserve' | 'replace' | 'clear'>(
+  'preserve'
+);
+const headerProtectionKey = ref('');
 const hooksReviewed = ref(false);
 const needsHookReview = computed(() => route.query.reviewHooks === '1');
 const tabs = computed(() => [
@@ -280,10 +414,25 @@ const saveInterface = useSubmit(
       throw new Error(t('admin.interfaces.hookReviewRequired'));
     return $fetch(`/api/admin/interfaces/${interfaceId}`, {
       method: 'post',
-      body: interfaceData.value,
+      body: {
+        ...interfaceData.value,
+        ...(headerProtectionAction.value === 'replace'
+          ? { headerProtectionKey: headerProtectionKey.value.trim() }
+          : headerProtectionAction.value === 'clear'
+            ? { headerProtectionKey: null }
+            : {}),
+      },
     });
   },
-  { revert: async () => refreshInterface(), successMsg: t('toast.saved') }
+  {
+    revert: async (success) => {
+      headerProtectionKey.value = '';
+      headerProtectionAction.value = 'preserve';
+      await refreshInterface();
+      if (!success) return;
+    },
+    successMsg: t('toast.saved'),
+  }
 );
 const saveDefaults = useSubmit(
   () =>

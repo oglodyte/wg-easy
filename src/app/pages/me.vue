@@ -125,7 +125,11 @@
                   class="h-4 w-4"
                 />
                 <span>
-                  {{ $t('me.linkedWith', [oauthProviderInfo.friendlyName]) }}
+                  {{
+                    $t('me.linkedWith', {
+                      provider: oauthProviderInfo.friendlyName,
+                    })
+                  }}
                 </span>
               </div>
               <div>
@@ -176,6 +180,8 @@
 
 <script setup lang="ts">
 import { encodeQR } from 'qr';
+
+import { $fetch } from '#imports';
 
 const authStore = useAuthStore();
 

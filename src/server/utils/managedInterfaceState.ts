@@ -24,6 +24,15 @@ const awgDefaults: Readonly<Record<string, string>> = {
   i3: '',
   i4: '',
   i5: '',
+  headerprotectionkey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+  contentpaddingaddition: '0',
+  rekeyaftertime: '0',
+  rekeytimeout: '0',
+  rejectaftertime: '0',
+  keepalivetimeout: '0',
+  maxhandshakeattempts: '0',
+  randomtrailers: 'off',
+  disablecookies: 'off',
 };
 const quickFields = new Set([
   'address',
@@ -41,8 +50,8 @@ const interfaceFields = new Set([
   'fwmark',
   ...Object.keys(awgDefaults),
 ]);
-// AWG 3 can report explicit zero defaults for options we do not configure.
-const awg3ObservationFields = new Set([
+// AWG 3.1 range fields use uint16 inclusive bounds.
+const awgRangeFields = new Set([
   'contentpaddingaddition',
   'rekeyaftertime',
   'rekeytimeout',
@@ -103,22 +112,16 @@ function parse(
     const match = line.match(/^([A-Za-z][A-Za-z0-9]*)\s*=\s*(.*)$/);
     if (!section || !match) fail('invalid_configuration');
     const name = match[1]!.toLowerCase();
-    const observedAwg3Default =
-      section === fields && !quick && awg3ObservationFields.has(name);
     if (
       section.has(name) ||
       !(section === fields
-        ? interfaceFields.has(name) ||
-          (quick && quickFields.has(name)) ||
-          observedAwg3Default
+        ? interfaceFields.has(name) || (quick && quickFields.has(name))
         : peerFields.has(name))
     )
       fail('invalid_configuration');
     const value = hooks.has(name)
       ? match[2]!.trim()
       : match[2]!.split('#')[0]!.trim();
-    if (observedAwg3Default && value !== '0')
-      fail('unsupported_awg_runtime_parameter');
     section.set(name, value);
   }
   if (!fields.get('privatekey')) {
@@ -167,11 +170,20 @@ function mark(value: string | undefined) {
 }
 function awgValue(name: string, fields: Map<string, string>) {
   const value = fields.get(name) ?? awgDefaults[name]!;
+  if (name === 'headerprotectionkey') {
+    if (!/^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$/.test(value))
+      fail('invalid_configuration');
+    return value;
+  }
+  if (name === 'randomtrailers' || name === 'disablecookies')
+    return String(boolean(value));
   if (name.startsWith('i')) return value;
-  if (name.startsWith('h')) {
+  if (name.startsWith('h') || awgRangeFields.has(name)) {
     const parts = value.split('-');
     if (parts.length > 2) fail('invalid_configuration');
-    const values = parts.map((p) => integer(p, 0xffffffff));
+    const values = parts.map((p) =>
+      integer(p, awgRangeFields.has(name) ? 65535 : 0xffffffff)
+    );
     if (values.length === 2 && values[0]! > values[1]!)
       fail('invalid_configuration');
     return values.length === 2 && values[0] === values[1]
@@ -179,6 +191,17 @@ function awgValue(name: string, fields: Map<string, string>) {
       : values.join('-');
   }
   return String(integer(value, 65535));
+}
+function sameAwgValue(
+  name: string,
+  a: Map<string, string>,
+  b: Map<string, string>
+) {
+  const left = awgValue(name, a),
+    right = awgValue(name, b);
+  return name === 'headerprotectionkey'
+    ? timingSafeEqual(Buffer.from(left, 'base64'), Buffer.from(right, 'base64'))
+    : left === right;
 }
 function address(value: string) {
   const [host, length, extra] = value.trim().split('/');
@@ -298,8 +321,7 @@ export function verifyManagedInterfaceState(
       mark(expected.fields.get('fwmark')) !==
         mark(actual.fields.get('fwmark')) ||
       Object.keys(awgDefaults).some(
-        (name) =>
-          awgValue(name, expected.fields) !== awgValue(name, actual.fields)
+        (name) => !sameAwgValue(name, expected.fields, actual.fields)
       )
     )
       fail('interface_parameters_unverified');
@@ -469,10 +491,9 @@ export function verifyRecoverableManagedInterfaceState(
       fail('unknown_partial_state');
     scope = 'interface_parameters';
     for (const name of Object.keys(awgDefaults)) {
-      const value = awgValue(name, actual.fields);
       if (
-        !expected.some((e) => awgValue(name, e.fields) === value) &&
-        !(allowPartialStart && awgValue(name, new Map()) === value)
+        !expected.some((e) => sameAwgValue(name, e.fields, actual.fields)) &&
+        !(allowPartialStart && sameAwgValue(name, new Map(), actual.fields))
       )
         fail('unknown_partial_state');
     }
@@ -483,7 +504,7 @@ export function verifyRecoverableManagedInterfaceState(
         integer(actual.fields.get('listenport'), 65535, 0) !== 0) ||
         mark(actual.fields.get('fwmark')) !== 0 ||
         Object.keys(awgDefaults).some(
-          (name) => awgValue(name, actual.fields) !== awgValue(name, new Map())
+          (name) => !sameAwgValue(name, actual.fields, new Map())
         ))
     )
       fail('unknown_partial_state');

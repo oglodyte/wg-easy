@@ -398,18 +398,6 @@
                 @click="runPreview"
                 >{{ $t('admin.routing.preview') }}</BaseSecondaryButton
               >
-              <p
-                v-if="draftStale"
-                class="col-span-full text-sm text-amber-700 dark:text-amber-200"
-              >
-                {{ $t('admin.routing.draftStale') }}
-              </p>
-              <p
-                v-if="preview && !previewCurrent"
-                class="col-span-full text-sm"
-              >
-                {{ $t('admin.routing.previewStale') }}
-              </p>
               <RoutingPolicyPreview
                 v-if="preview"
                 :preview="preview"
@@ -419,10 +407,20 @@
             </FormGroup>
             <FormGroup>
               <FormHeading>{{ $t('form.actions') }}</FormHeading>
+              <p
+                v-if="saveHint"
+                id="routing-save-hint"
+                role="status"
+                class="col-span-full text-sm text-amber-700 dark:text-amber-200"
+              >
+                {{ saveHint }}
+              </p>
               <FormPrimaryActionField
                 type="submit"
                 :disabled="!previewCurrent || busy"
+                :aria-describedby="saveHint ? 'routing-save-hint' : undefined"
                 :label="$t('form.save')"
+                class="disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-red-800 disabled:hover:bg-red-800"
               />
               <FormSecondaryActionField
                 :label="$t('form.revert')"
@@ -614,6 +612,20 @@ const previewCurrent = computed(() =>
 const draftStale = computed(
   () => baseRevision.value !== routingData.value?.desiredRevision
 );
+const saveHint = computed(() => {
+  if (
+    busy.value ||
+    previewCurrent.value ||
+    !routingData.value?.capabilities?.advancedGroupEditing
+  )
+    return '';
+
+  return t(
+    draftStale.value
+      ? 'admin.routing.draftStale'
+      : 'admin.routing.previewBeforeSave'
+  );
+});
 watch(
   draftKey,
   () => {

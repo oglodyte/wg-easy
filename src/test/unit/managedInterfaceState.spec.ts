@@ -54,6 +54,59 @@ function fixture() {
 }
 
 describe('complete private managed-interface verification', () => {
+  test('verifies every AWG 3.1 setting exactly and admits only known recovery values', () => {
+    const f = fixture();
+    const key = randomBytes(32).toString('base64');
+    const settings = `HeaderProtectionKey = ${key}\nContentPaddingAddition = 0\nRekeyAfterTime = 60-90\nRekeyTimeout = 5\nRejectAfterTime = 180\nKeepaliveTimeout = 10\nMaxHandshakeAttempts = 20\nRandomTrailers = on\nDisableCookies = off\n`;
+    const target = f.config.replace('[Peer]', settings + '[Peer]');
+    const observed = {
+      ...f.observed,
+      showconf: f.showconf.replace(
+        '[Peer]',
+        settings.replace('RekeyTimeout = 5', 'RekeyTimeout = 5-5') + '[Peer]'
+      ),
+    };
+    expect(() =>
+      verifyManagedInterfaceState('wg0', target, observed)
+    ).not.toThrow();
+    expect(() =>
+      verifyRecoverableManagedInterfaceState('wg0', [target], observed)
+    ).not.toThrow();
+    for (const changed of [
+      observed.showconf.replace(key, randomBytes(32).toString('base64')),
+      observed.showconf.replace('60-90', '60-91'),
+      observed.showconf.replace('RandomTrailers = on', 'RandomTrailers = off'),
+      observed.showconf.replace('DisableCookies = off', 'DisableCookies = on'),
+      observed.showconf.replace(
+        'MaxHandshakeAttempts = 20',
+        'MaxHandshakeAttempts = 65536'
+      ),
+      observed.showconf.replace('[Peer]', 'DisableCookies = off\n[Peer]'),
+    ]) {
+      expect(() =>
+        verifyManagedInterfaceState('wg0', target, {
+          ...observed,
+          showconf: changed,
+        })
+      ).toThrow();
+      expect(() =>
+        verifyRecoverableManagedInterfaceState('wg0', [target], {
+          ...observed,
+          showconf: changed,
+        })
+      ).toThrow();
+    }
+    expect(() =>
+      verifyManagedInterfaceState('wg0', target, f.observed)
+    ).toThrow();
+    expect(
+      managedInterfaceRequiresRestart(
+        parseManagedInterfaceConfig('wg0', f.config),
+        parseManagedInterfaceConfig('wg0', target)
+      )
+    ).toBe(true);
+  });
+
   test('verifies the six explicit AWG 3 defaults in live output', () => {
     const f = fixture();
     const observed = {
@@ -89,7 +142,7 @@ describe('complete private managed-interface verification', () => {
 
       expect(() =>
         verifyManagedInterfaceState('wg0', f.config, observed)
-      ).toThrow('unsupported_awg_runtime_parameter');
+      ).toThrow();
       expect(() =>
         verifyRecoverableManagedInterfaceState('wg0', [f.config], observed)
       ).toThrow('unknown_partial_state');
@@ -103,7 +156,7 @@ describe('complete private managed-interface verification', () => {
         'wg0',
         f.config.replace('[Peer]', awg3ObservationDefaults + '[Peer]')
       )
-    ).toThrow('invalid_configuration');
+    ).not.toThrow();
 
     for (const showconf of [
       f.showconf + 'RekeyTimeout = 0\n',

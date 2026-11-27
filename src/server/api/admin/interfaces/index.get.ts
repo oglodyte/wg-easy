@@ -1,3 +1,4 @@
+import { publicInterface } from '#server/utils/publicInterface';
 import Database from '#server/utils/Database';
 import { definePermissionEventHandler } from '#server/utils/handler';
 
@@ -11,9 +12,9 @@ export default definePermissionEventHandler('admin', 'any', async () => {
     runtimeStates.map((runtime) => [runtime.interfaceId, runtime])
   );
 
-  return interfaces.map(({ privateKey: _privateKey, ...wgInterface }) => ({
-    ...wgInterface,
-    isDefault: wgInterface.name === defaultInterface.name,
-    runtime: runtimeByInterface.get(wgInterface.name),
+  return interfaces.map((value) => ({
+    ...publicInterface(value),
+    isDefault: value.name === defaultInterface.name,
+    runtime: runtimeByInterface.get(value.name),
   }));
 });

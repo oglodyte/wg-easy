@@ -355,6 +355,12 @@ if (process.argv[2] === "--worker") {
         });
       keys.set(name, { privateKey, publicKey });
     }
+    const awg31 = process.env.WG_EASY_LIFECYCLE_AWG31;
+    if (awg31) assert.equal(process.env.AWG_FORCE_USERSPACE, "true");
+    const extended = (target: boolean) =>
+      awg31
+        ? `S3 = 12\nS4 = 12\n${target && awg31 === "clear" ? "" : `HeaderProtectionKey = ${keys.get(target ? "server1" : "member")!.privateKey}\n`}ContentPaddingAddition = ${target ? "4-8" : "0"}\nRekeyAfterTime = 120-150\nRekeyTimeout = 5\nRejectAfterTime = 180\nKeepaliveTimeout = 10\nMaxHandshakeAttempts = 18\nRandomTrailers = ${target ? "off" : "on"}\nDisableCookies = ${target ? "on" : "off"}\n`
+        : "";
     const awg =
         "Jc = 3\nJmin = 20\nJmax = 40\nS1 = 64\nS2 = 32\nH1 = 11111111\nH2 = 22222222\nH3 = 33333333\nH4 = 44444444\n",
       identical = process.env.WG_EASY_LIFECYCLE_IDENTICAL === "1";
@@ -367,7 +373,7 @@ if (process.argv[2] === "--worker") {
       const index = id === "wg0" ? 1 : 2,
         port = index === 1 ? (target && !identical ? 62003 : 62001) : 62002;
       const up = `OUT_IF=$(ip -4 route show default | awk "NR == 1 {print \\$5}"); test -n "$OUT_IF" || exit 1; iptables -t nat -A POSTROUTING -s 10.243.${index}.0/24 -o "$OUT_IF" -j MASQUERADE; iptables -A INPUT -p udp -m udp --dport ${port} -j ACCEPT; iptables -A FORWARD -i ${id} -j ACCEPT; iptables -A FORWARD -o ${id} -j ACCEPT; ip6tables -t nat -A POSTROUTING -s fd43:${index}::/64 -o "$OUT_IF" -j MASQUERADE; ip6tables -A INPUT -p udp -m udp --dport ${port} -j ACCEPT; ip6tables -A FORWARD -i ${id} -j ACCEPT; ip6tables -A FORWARD -o ${id} -j ACCEPT;`;
-      return `[Interface]\nPrivateKey = ${keys.get(index === 1 ? "server0" : "server1")!.privateKey}\nListenPort = ${port}\nAddress = 10.243.${index}.1/24, fd43:${index}::1/64\nMTU = 1420\nTable = off\n${index === 2 ? awg : ""}PreUp = : phase0-baseline\nPostUp = ${up}\nPreDown = \nPostDown = ${up.replaceAll(" -A ", " -D ")}\n[Peer]\nPublicKey = ${keys.get(index === 1 ? "member" : "other")!.publicKey}\nAllowedIPs = 10.243.${index}.2/32, fd43:${index}::2/128\n${identical ? "# wg-easy managed hook egress: mgmt0\n" : ""}`;
+      return `[Interface]\nPrivateKey = ${keys.get(index === 1 ? "server0" : "server1")!.privateKey}\nListenPort = ${port}\nAddress = 10.243.${index}.1/24, fd43:${index}::1/64\nMTU = 1420\nTable = off\n${index === 2 || awg31 ? awg : ""}${extended(target && index === 1)}PreUp = : phase0-baseline\nPostUp = ${up}\nPreDown = \nPostDown = ${up.replaceAll(" -A ", " -D ")}\n[Peer]\nPublicKey = ${keys.get(index === 1 ? "member" : "other")!.publicKey}\nAllowedIPs = 10.243.${index}.2/32, fd43:${index}::2/128\n${identical ? "# wg-easy managed hook egress: mgmt0\n" : ""}`;
     }
     for (const id of ["wg0", "awg1"])
       for (const dir of ["app", "original", "target"])
@@ -503,8 +509,15 @@ if (process.argv[2] === "--worker") {
       [ns.member, "vpn0", 1, "member"],
       [ns.other, "vpn1", 2, "other"],
     ] as const) {
-      await inside(space, "ip", ["link", "add", name, "type", "amneziawg"]);
-      const config = `[Interface]\nPrivateKey = ${keys.get(role)!.privateKey}\n${index === 2 ? awg : ""}[Peer]\nPublicKey = ${keys.get(index === 1 ? "server0" : "server1")!.publicKey}\nEndpoint = ${index === 1 ? "192.0.2.1:62001" : "192.0.2.5:62002"}\nAllowedIPs = 10.243.${index}.1/32, fd43:${index}::1/128\nPersistentKeepalive = 1\n`;
+      if (awg31)
+        await inside(space, "env", [
+          "WG_I_PREFER_BUGGY_USERSPACE_TO_POLISHED_KMOD=1",
+          "amneziawg-go",
+          name,
+        ]);
+      else
+        await inside(space, "ip", ["link", "add", name, "type", "amneziawg"]);
+      const config = `[Interface]\nPrivateKey = ${keys.get(role)!.privateKey}\n${index === 2 || awg31 ? awg : ""}${extended(false)}[Peer]\nPublicKey = ${keys.get(index === 1 ? "server0" : "server1")!.publicKey}\nEndpoint = ${index === 1 ? "192.0.2.1:62001" : "192.0.2.5:62002"}\nAllowedIPs = 10.243.${index}.1/32, fd43:${index}::1/128\nPersistentKeepalive = 1\n`;
       await withSecureInputFile(config, (file) =>
         inside(space, "awg", ["setconf", name, file]),
       );
@@ -656,6 +669,9 @@ if (process.argv[2] === "--worker") {
       JSON.stringify({
         interfaceLifecycleProbe: diagnosticOnly ? "DIAGNOSTIC_PASS" : "PASS",
         completeMatrix: !diagnosticOnly,
+        awg31: awg31 ?? null,
+        headerKeyRotationOrRemoval: Boolean(awg31),
+        nondefaultRangesAndBooleans: Boolean(awg31),
         implementation:
           process.env.AWG_FORCE_USERSPACE === "true"
             ? "pinned-userspace"
